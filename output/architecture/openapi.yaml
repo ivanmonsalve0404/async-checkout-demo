@@ -1,0 +1,1712 @@
+openapi: 3.1.2
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Checkout sandbox API
+  version: 1.0.0
+  summary: Contrato HTTP del checkout invitado asíncrono
+  description: |
+    Contrato contract-first de Etapa 3. Está diseñado, no implementado.
+    El servidor es autoridad de precio, moneda, stock, cotización y estado.
+    Los datos completos de tarjeta nunca forman parte de esta API. Los valores
+    efímeros de pago y aceptación sólo aparecen como campos de escritura sin
+    ejemplos, defaults ni persistencia.
+  x-status: DESIGNED_NOT_IMPLEMENTED
+  x-source-baseline:
+    requirements: 33 RF identities and 28 RNF identities
+    acceptanceCriteria: 45
+    scenarios: 51
+    errors: 24
+    dataFields: 72
+    uat: 48
+  x-design-decisions:
+    oasVersion: OpenAPI 3.1.2 for reversible toolchain interoperability
+    customerRoute: One nested PUT route under the checkout; no duplicate top-level write route
+    stockRoute: Kept as a separate nominal read resource for the challenge rubric
+    webhookRoute: One singular optional P1 route
+    capability: HttpOnly cookie; raw value never enters JSON, URLs, logs or examples
+    paymentSubmission: Every locally accepted payment submission and its semantic replay return the same 202 body and Location
+    asyncOutcomes: Provider uncertainty and later incidents are represented by the local transaction resource
+    localStateVocabulary: E0-E2 values NOT_SENT and ACKNOWLEDGED are preserved
+servers:
+  - url: https://checkout.example.invalid
+    description: Symbolic HTTPS demo host; reserved invalid domain
+  - url: http://localhost:3000
+    description: Local fake-only environment; no external payment provider
+tags:
+  - { name: Products, description: Public seeded catalog }
+  - { name: Stock, description: Public availability projection; internal counters are never exposed }
+  - { name: Checkouts, description: Capability-bound checkout session and quote }
+  - { name: Customers, description: Minimum guest customer data bound to one checkout }
+  - { name: Payments, description: Ephemeral capture configuration and accepted submission }
+  - { name: Transactions, description: Local canonical payment state; reads never call the provider }
+  - { name: Deliveries, description: Delivery created only after a consistent approval }
+  - { name: Webhooks, description: Optional P1 signed event accelerator; polling remains mandatory }
+  - { name: Operations, description: Sanitized documentation and technical health }
+security: []
+x-canonical-error-catalog:
+  - { id: ERR-01, code: REQUEST_MALFORMED, disposition: PROBLEM_400 }
+  - { id: ERR-02, code: ORIGIN_FORBIDDEN, disposition: PROBLEM_403 }
+  - { id: ERR-03, code: CHECKOUT_NOT_FOUND_OR_FORBIDDEN, disposition: PROBLEM_404_INDISTINGUISHABLE }
+  - { id: ERR-04, code: PRODUCT_NOT_FOUND, disposition: PROBLEM_404 }
+  - { id: ERR-05, code: FIELD_INVALID, disposition: PROBLEM_422 }
+  - { id: ERR-06, code: OUT_OF_STOCK, disposition: PROBLEM_409 }
+  - { id: ERR-07, code: QUOTE_STALE, disposition: PROBLEM_409 }
+  - { id: ERR-08, code: CHECKOUT_EXPIRED, disposition: PROBLEM_410 }
+  - { id: ERR-09, code: PRECONDITION_FAILED, disposition: PROBLEM_412 }
+  - { id: ERR-10, code: IDEMPOTENCY_CONFLICT, disposition: PROBLEM_409 }
+  - { id: ERR-11, code: PAYMENT_ALREADY_IN_PROGRESS, disposition: PROBLEM_409_WITH_LOCATION }
+  - { id: ERR-12, code: PAYMENT_TOKEN_REJECTED, disposition: TRANSACTION_200_AFTER_ACCEPTED_SUBMISSION }
+  - { id: ERR-13, code: PROVIDER_NOT_SENT, disposition: TRANSACTION_200_AFTER_ACCEPTED_SUBMISSION }
+  - { id: ERR-14, code: PROVIDER_OUTCOME_UNKNOWN, disposition: SUBMISSION_202_AND_TRANSACTION_200 }
+  - { id: ERR-15, code: WEBHOOK_SIGNATURE_INVALID, disposition: PROBLEM_401 }
+  - { id: ERR-16, code: WEBHOOK_DUPLICATE, disposition: WEBHOOK_204_NO_OP }
+  - { id: ERR-17, code: WEBHOOK_OUT_OF_ORDER, disposition: WEBHOOK_204_NO_OP }
+  - { id: ERR-18, code: STATE_TRANSITION_CONFLICT, disposition: PROBLEM_409_OR_TRANSACTION_200_INCIDENT }
+  - { id: ERR-19, code: RATE_LIMITED, disposition: PROBLEM_429 }
+  - { id: ERR-20, code: INTERNAL_ERROR, disposition: PROBLEM_500_ONLY_BEFORE_AMBIGUOUS_EXTERNAL_IO }
+  - { id: ERR-21, code: FINAL_STATE_CONFLICT, disposition: TRANSACTION_200_INCIDENT }
+  - { id: ERR-22, code: APPROVED_INVENTORY_CONFLICT, disposition: TRANSACTION_200_INCIDENT }
+  - { id: ERR-23, code: ENVIRONMENT_MISMATCH, disposition: PROBLEM_503_FAIL_CLOSED_BEFORE_ACCEPTANCE }
+  - { id: ERR-24, code: PROVIDER_AUTH_OR_CONFIG_INVALID, disposition: PROBLEM_503_ONLY_BEFORE_ACCEPTANCE }
+paths:
+  /api/v1/products:
+    get:
+      operationId: listProducts
+      tags: [Products]
+      summary: Listar productos activos y disponibilidad pública
+      description: Consulta pública sin efectos de negocio ni contadores internos.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      x-api-id: API-01
+      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-trace:
+        requirements: [RF-01, RF-25, RF-16]
+        acceptanceCriteria: [AC-US-01-01, AC-US-01-02]
+        scenarios: [SC-US-01-01, SC-US-01-02]
+        uat: [UAT-18, UAT-38]
+        data: [DAT-01, DAT-02, DAT-03, DAT-04, DAT-05, DAT-06, DAT-07, DAT-10]
+        errors: [ERR-19, ERR-20]
+        uxFlows: [UXF-01, UXF-02]
+      responses:
+        '200':
+          description: Colección pública de productos activos
+          headers:
+            Cache-Control: { $ref: '#/components/headers/PublicCatalogCache' }
+            X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+            X-RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            X-RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductCollectionResponse' }
+              examples:
+                availableProduct:
+                  value:
+                    items:
+                      - productId: PRODUCT_ID_OPAQUE
+                        sku: SKU_SYNTHETIC
+                        name: PRODUCT_AVAILABLE
+                        description: Producto sintético para la demostración.
+                        imageUrl: https://assets.example.invalid/product.svg
+                        unitPrice: { amountInCents: 2500000, currency: COP }
+                        available: 1
+                    count: 1
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/products/{productId}:
+    get:
+      operationId: getProduct
+      tags: [Products]
+      summary: Obtener un producto activo
+      description: Consulta pública sin efectos; un ID nunca concede acceso privado.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+        - $ref: '#/components/parameters/CorrelationId'
+      x-api-id: API-02
+      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-trace:
+        requirements: [RF-01, RF-25]
+        acceptanceCriteria: [AC-US-01-01, AC-US-01-03]
+        scenarios: [SC-US-01-01, SC-US-01-03]
+        uat: [UAT-37]
+        data: [DAT-01, DAT-02, DAT-03, DAT-04, DAT-05, DAT-06, DAT-07, DAT-10]
+        errors: [ERR-04, ERR-19, ERR-20]
+        uxFlows: [UXF-01, UXF-02]
+      responses:
+        '200':
+          description: Producto público
+          headers:
+            Cache-Control: { $ref: '#/components/headers/PublicCatalogCache' }
+            X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponse' }
+        '404': { $ref: '#/components/responses/ProductNotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/stock/{productId}:
+    get:
+      operationId: getProductStock
+      tags: [Stock]
+      summary: Consultar disponibilidad pública
+      description: Expone únicamente available; onHand y reserved son internos.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+        - $ref: '#/components/parameters/CorrelationId'
+      x-api-id: API-03
+      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-trace:
+        requirements: [RF-25, RF-29]
+        acceptanceCriteria: [AC-US-01-02, AC-US-11-01, AC-US-11-02]
+        scenarios: [SC-US-01-02, SC-US-11-01, SC-US-11-02]
+        uat: [UAT-06, UAT-38]
+        data: [DAT-01, DAT-10]
+        errors: [ERR-04, ERR-19, ERR-20]
+        uxFlows: [UXF-02]
+      responses:
+        '200':
+          description: Proyección no autoritativa para decidir la reserva
+          headers:
+            Cache-Control: { $ref: '#/components/headers/RevalidateCache' }
+            X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockResponse' }
+              examples:
+                oneAvailable:
+                  value:
+                    productId: PRODUCT_ID_OPAQUE
+                    available: 1
+                    asOf: '2026-01-01T00:00:00Z'
+        '404': { $ref: '#/components/responses/ProductNotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/checkouts:
+    post:
+      operationId: createCheckout
+      tags: [Checkouts]
+      summary: Crear checkout, cotización y capability
+      description: |
+        Crea el recurso local sincrónicamente. La capability cruda se entrega
+        exclusivamente mediante Set-Cookie HttpOnly; nunca aparece en JSON.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCheckoutRequest' }
+            examples:
+              oneProduct:
+                value: { productId: PRODUCT_ID_OPAQUE }
+      x-api-id: API-04
+      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-browser-security:
+        csrf: Same-origin plus Origin and Fetch Metadata validation
+        cookie: HttpOnly; Secure; SameSite=Strict; Path=/api/v1
+        cache: No shared storage of Set-Cookie responses
+      x-trace:
+        requirements: [RF-02, RF-13, RF-24, RF-32]
+        acceptanceCriteria: [AC-US-02-01, AC-US-04-01]
+        scenarios: [SC-US-02-01, SC-US-04-01, SC-EN-11-03]
+        uat: [UAT-17, UAT-21]
+        data: [DAT-01, DAT-06, DAT-07, DAT-10, DAT-11, DAT-12, DAT-13, DAT-14, DAT-15, DAT-16, DAT-17, DAT-18, DAT-19, DAT-20, DAT-21, DAT-22]
+        errors: [ERR-01, ERR-02, ERR-04, ERR-05, ERR-06, ERR-19, ERR-20]
+        uxFlows: [UXF-01, UXF-03]
+      responses:
+        '201':
+          description: Checkout creado
+          headers:
+            Location: { $ref: '#/components/headers/Location' }
+            Set-Cookie: { $ref: '#/components/headers/CheckoutCapabilityCookie' }
+            ETag: { $ref: '#/components/headers/StrongETag' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Vary: { $ref: '#/components/headers/VaryOrigin' }
+            X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckoutCreatedResponse' }
+              examples:
+                created:
+                  value:
+                    checkoutId: CHECKOUT_ID_OPAQUE
+                    status: DRAFT
+                    version: 1
+                    quote:
+                      quoteId: QUOTE_ID_OPAQUE
+                      version: 1
+                      productId: PRODUCT_ID_OPAQUE
+                      quantity: 1
+                      subtotal: { amountInCents: 2500000, currency: COP }
+                      baseFee: { amountInCents: 200000, currency: COP }
+                      deliveryFee: { amountInCents: 500000, currency: COP }
+                      total: { amountInCents: 3200000, currency: COP }
+                      expiresAt: '2026-01-01T00:15:00Z'
+                    expiresAt: '2026-01-01T00:30:00Z'
+        '400': { $ref: '#/components/responses/RequestMalformed' }
+        '403': { $ref: '#/components/responses/OriginForbidden' }
+        '404': { $ref: '#/components/responses/ProductNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/FieldInvalid' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/checkouts/{checkoutId}:
+    get:
+      operationId: getCheckout
+      tags: [Checkouts]
+      summary: Recuperar el checkout canónico
+      description: |
+        Lectura local sin efectos ni consulta al proveedor. Inexistencia,
+        capability inválida y relación ajena producen el mismo 404.
+      security:
+        - CheckoutCapability: []
+      parameters:
+        - $ref: '#/components/parameters/CheckoutId'
+        - $ref: '#/components/parameters/OptionalOrigin'
+        - $ref: '#/components/parameters/CorrelationId'
+      x-api-id: API-05
+      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-trace:
+        requirements: [RF-13, RF-32]
+        acceptanceCriteria: [AC-US-09-01, AC-US-09-02, AC-US-09-05]
+        scenarios: [SC-US-09-01, SC-US-09-03, SC-EN-11-02, SC-EN-11-04]
+        uat: [UAT-17, UAT-25, UAT-26, UAT-28]
+        data: [DAT-11, DAT-12, DAT-13, DAT-15, DAT-16, DAT-17, DAT-18, DAT-19, DAT-20, DAT-21, DAT-22, DAT-29, DAT-32, DAT-42, DAT-43, DAT-44, DAT-45, DAT-46, DAT-47, DAT-48, DAT-49, DAT-50]
+        errors: [ERR-02, ERR-03, ERR-08, ERR-19, ERR-20]
+        uxFlows: [UXF-12, UXF-13]
+      responses:
+        '200':
+          description: Checkout autorizado
+          headers:
+            ETag: { $ref: '#/components/headers/StrongETag' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckoutResponse' }
+        '403': { $ref: '#/components/responses/OriginForbidden' }
+        '404': { $ref: '#/components/responses/CheckoutHidden' }
+        '410': { $ref: '#/components/responses/CheckoutExpired' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/checkouts/{checkoutId}/customer:
+    put:
+      operationId: replaceCheckoutCustomer
+      tags: [Customers]
+      summary: Guardar o reemplazar el cliente del checkout
+      description: Reemplazo idempotente protegido por capability, relación y ETag fuerte.
+      security:
+        - CheckoutCapability: []
+      parameters:
+        - $ref: '#/components/parameters/CheckoutId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReplaceCustomerRequest' }
+      x-api-id: API-06
+      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-decision-status: ASSUMED_FIELDS_FROM_DEC-07
+      x-trace:
+        requirements: [RF-21, RF-27, RF-32]
+        acceptanceCriteria: [AC-US-03-03]
+        scenarios: [SC-US-03-01, SC-EN-11-02, SC-EN-11-03]
+        uat: [UAT-17, UAT-19, UAT-44]
+        data: [DAT-11, DAT-13, DAT-15, DAT-41, DAT-42, DAT-43, DAT-44]
+        errors: [ERR-01, ERR-02, ERR-03, ERR-05, ERR-08, ERR-09, ERR-19, ERR-20]
+        uxFlows: [UXF-05, UXF-12]
+      responses:
+        '200':
+          description: Cliente guardado
+          headers:
+            ETag: { $ref: '#/components/headers/StrongETag' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerResponse' }
+        '400': { $ref: '#/components/responses/RequestMalformed' }
+        '403': { $ref: '#/components/responses/OriginForbidden' }
+        '404': { $ref: '#/components/responses/CheckoutHidden' }
+        '410': { $ref: '#/components/responses/CheckoutExpired' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '422': { $ref: '#/components/responses/FieldInvalid' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/checkouts/{checkoutId}/delivery-details:
+    put:
+      operationId: replaceCheckoutDeliveryDetails
+      tags: [Deliveries]
+      summary: Guardar o reemplazar la intención de entrega
+      description: Reemplazo idempotente protegido por capability, relación y ETag fuerte.
+      security:
+        - CheckoutCapability: []
+      parameters:
+        - $ref: '#/components/parameters/CheckoutId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReplaceDeliveryDetailsRequest' }
+      x-api-id: API-07
+      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-decision-status: ASSUMED_FIELDS_FROM_DEC-07
+      x-trace:
+        requirements: [RF-22, RF-28, RF-32]
+        acceptanceCriteria: [AC-US-03-04]
+        scenarios: [SC-US-03-01, SC-EN-11-02, SC-EN-11-03]
+        uat: [UAT-17, UAT-19, UAT-44]
+        data: [DAT-11, DAT-13, DAT-15, DAT-45, DAT-46, DAT-47, DAT-48, DAT-49, DAT-50]
+        errors: [ERR-01, ERR-02, ERR-03, ERR-05, ERR-08, ERR-09, ERR-19, ERR-20]
+        uxFlows: [UXF-05, UXF-12]
+      responses:
+        '200':
+          description: Detalles de entrega guardados
+          headers:
+            ETag: { $ref: '#/components/headers/StrongETag' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryDetailsResponse' }
+        '400': { $ref: '#/components/responses/RequestMalformed' }
+        '403': { $ref: '#/components/responses/OriginForbidden' }
+        '404': { $ref: '#/components/responses/CheckoutHidden' }
+        '410': { $ref: '#/components/responses/CheckoutExpired' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '422': { $ref: '#/components/responses/FieldInvalid' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/payment-configuration:
+    get:
+      operationId: getPaymentConfiguration
+      tags: [Payments]
+      summary: Obtener configuración de captura y aceptaciones efímeras
+      description: |
+        Endpoint público controlado. Los tokens de aceptación son C3 efímeros:
+        la respuesta completa usa no-store, no se registra y no tiene ejemplos.
+        La captura real permanece bloqueada hasta SPK-02.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/OptionalOrigin'
+        - $ref: '#/components/parameters/CorrelationId'
+      x-api-id: API-08
+      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-decision-status: BLOCKED_REAL_PROVIDER_UNTIL_SPK-02
+      x-trace:
+        requirements: [RF-17, RF-23]
+        acceptanceCriteria: [AC-US-03-05, AC-US-03-06]
+        scenarios: [SC-US-03-03, SC-EN-24-01]
+        uat: [UAT-19, UAT-20, UAT-32]
+        data: [DAT-35, DAT-36, DAT-37, DAT-38, DAT-39, DAT-60]
+        errors: [ERR-02, ERR-19, ERR-20, ERR-23, ERR-24]
+        uxFlows: [UXF-04, UXF-13]
+      responses:
+        '200':
+          description: Configuración efímera de sandbox o fake
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Vary: { $ref: '#/components/headers/VaryOrigin' }
+            X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentConfigurationResponse' }
+        '403': { $ref: '#/components/responses/OriginForbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /api/v1/checkouts/{checkoutId}/transactions:
+    post:
+      operationId: submitCheckoutTransaction
+      tags: [Payments, Transactions]
+      summary: Aceptar una intención de pago
+      description: |
+        If-Match, Idempotency-Key, capability y relación son obligatorios.
+        Reserva, idempotencia y transacción local PENDING quedan durables antes
+        del I/O externo. Toda intención local aceptada y todo replay semántico
+        devuelven el mismo 202, body y Location originales. El estado vigente se
+        consulta mediante GET; no se deduce del status HTTP de este POST.
+      security:
+        - CheckoutCapability: []
+      parameters:
+        - $ref: '#/components/parameters/CheckoutId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PaymentSubmissionRequest' }
+      x-api-id: API-09
+      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-stable-accepted-response:
+        status: 202
+        replayInvariantFields: [transactionId, statusUrl, submissionState, acceptedAt, Location]
+        perRequestField: X-Correlation-Id
+      x-trace:
+        requirements: [RF-07, RF-08, RF-24, RF-29, RF-30, RF-32]
+        acceptanceCriteria: [AC-US-05-01, AC-US-05-02, AC-US-05-03, AC-US-05-04, AC-US-05-05, AC-US-10-01, AC-US-10-02, AC-US-10-03, AC-US-10-04]
+        scenarios: [SC-US-05-01, SC-US-05-02, SC-US-05-03, SC-US-05-04, SC-US-10-01, SC-US-10-02, SC-US-10-03]
+        uat: [UAT-01, UAT-04, UAT-05, UAT-06, UAT-07, UAT-08, UAT-22, UAT-23, UAT-24, UAT-45, UAT-48]
+        data: [DAT-11, DAT-13, DAT-15, DAT-16, DAT-17, DAT-22, DAT-23, DAT-24, DAT-26, DAT-27, DAT-28, DAT-29, DAT-30, DAT-31, DAT-32, DAT-33, DAT-34, DAT-35, DAT-36, DAT-37, DAT-38, DAT-39, DAT-40, DAT-57]
+        errors: [ERR-01, ERR-02, ERR-03, ERR-05, ERR-06, ERR-07, ERR-08, ERR-09, ERR-10, ERR-11, ERR-12, ERR-13, ERR-14, ERR-18, ERR-19, ERR-20, ERR-23, ERR-24]
+        uxFlows: [UXF-01, UXF-06, UXF-07, UXF-08, UXF-09]
+      responses:
+        '202':
+          description: Intención local aceptada; usar Location para consultar
+          headers:
+            Location: { $ref: '#/components/headers/Location' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentSubmissionResponse' }
+              examples:
+                accepted:
+                  value:
+                    transactionId: TRANSACTION_LOCAL_ID
+                    statusUrl: /api/v1/transactions/TRANSACTION_LOCAL_ID
+                    submissionState: ACCEPTED
+                    acceptedAt: '2026-01-01T00:00:00Z'
+        '400': { $ref: '#/components/responses/RequestMalformed' }
+        '403': { $ref: '#/components/responses/OriginForbidden' }
+        '404': { $ref: '#/components/responses/CheckoutHidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/CheckoutExpired' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '422': { $ref: '#/components/responses/FieldInvalid' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /api/v1/transactions/{transactionId}:
+    get:
+      operationId: getTransaction
+      tags: [Transactions]
+      summary: Consultar el estado local canónico
+      description: |
+        Sólo lee estado local. Nunca llama al proveedor, finaliza, libera,
+        reserva ni crea otro pago. PENDING, APPROVED, DECLINED, VOIDED y ERROR
+        se representan con 200; UNKNOWN es una fase de despacho, no un final.
+      security:
+        - CheckoutCapability: []
+      parameters:
+        - $ref: '#/components/parameters/TransactionId'
+        - $ref: '#/components/parameters/OptionalOrigin'
+        - $ref: '#/components/parameters/CorrelationId'
+      x-api-id: API-10
+      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-trace:
+        requirements: [RF-09, RF-13, RF-26, RF-31, RF-32]
+        acceptanceCriteria: [AC-US-06-01, AC-US-06-02, AC-US-06-03, AC-US-09-03, AC-US-09-04]
+        scenarios: [SC-US-06-01, SC-US-06-02, SC-US-09-02]
+        uat: [UAT-03, UAT-23, UAT-27, UAT-34, UAT-35, UAT-40, UAT-41, UAT-42]
+        data: [DAT-11, DAT-15, DAT-23, DAT-24, DAT-29, DAT-30, DAT-31, DAT-32, DAT-33, DAT-34, DAT-35, DAT-51, DAT-52, DAT-69]
+        errors: [ERR-02, ERR-03, ERR-12, ERR-13, ERR-14, ERR-18, ERR-19, ERR-20, ERR-21, ERR-22]
+        uxFlows: [UXF-09, UXF-10, UXF-11, UXF-12, UXF-13]
+      responses:
+        '200':
+          description: Recurso de transacción local, terminal o no terminal
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+            Retry-After: { $ref: '#/components/headers/OptionalRetryAfter' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransactionResponse' }
+              examples:
+                unknown:
+                  value:
+                    transactionId: TRANSACTION_LOCAL_ID
+                    checkoutId: CHECKOUT_ID_OPAQUE
+                    checkoutStatus: PAYMENT_PENDING
+                    paymentStatus: PENDING
+                    dispatchPhase: UNKNOWN
+                    providerStatus: null
+                    reservationStatus: ACTIVE
+                    integrityStatus: OK
+                    recoveryCode: PROVIDER_OUTCOME_UNKNOWN
+                    statusUrl: /api/v1/transactions/TRANSACTION_LOCAL_ID
+                    allowedActions: [QUERY, WAIT, RETURN_TO_PRODUCT]
+                    acceptedAt: '2026-01-01T00:00:00Z'
+                    updatedAt: '2026-01-01T00:00:30Z'
+        '403': { $ref: '#/components/responses/OriginForbidden' }
+        '404': { $ref: '#/components/responses/CheckoutHidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/webhooks/payment:
+    post:
+      operationId: receivePaymentWebhook
+      tags: [Webhooks]
+      summary: Recibir un evento de pago opcional
+      description: |
+        Operación P1 diferida. Firma, ambiente, monto, moneda, referencia y
+        estado se verifican antes del finalizador idempotente. El body y la
+        firma crudos sólo existen en memoria. Duplicados y eventos fuera de
+        orden son 204 sin efecto; polling sigue siendo obligatorio.
+      security:
+        - ProviderWebhookSignature: []
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PaymentWebhookRequest' }
+      x-api-id: API-11
+      x-status: DEFERRED_P1_DESIGNED_NOT_IMPLEMENTED
+      x-decision-status: BLOCKED_REAL_PROVIDER_UNTIL_SPK-02_AND_ISOLATION
+      x-trace:
+        requirements: [RF-33]
+        acceptanceCriteria: []
+        scenarios: [SC-EN-10-01, SC-EN-10-02]
+        uat: [UAT-14]
+        data: [DAT-30, DAT-31, DAT-32, DAT-64, DAT-65, DAT-66]
+        errors: [ERR-01, ERR-15, ERR-16, ERR-17, ERR-18, ERR-19, ERR-20, ERR-21]
+        uxFlows: []
+      responses:
+        '204':
+          description: Evento aceptado, duplicado o fuera de orden; sin body y sin efecto duplicado
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+        '400': { $ref: '#/components/responses/RequestMalformed' }
+        '401': { $ref: '#/components/responses/WebhookSignatureInvalid' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/deliveries/{deliveryId}:
+    get:
+      operationId: getDelivery
+      tags: [Deliveries]
+      summary: Consultar una entrega autorizada
+      description: La relación delivery-checkout se valida con la capability; no existen listados públicos.
+      security:
+        - CheckoutCapability: []
+      parameters:
+        - $ref: '#/components/parameters/DeliveryId'
+        - $ref: '#/components/parameters/OptionalOrigin'
+        - $ref: '#/components/parameters/CorrelationId'
+      x-api-id: API-12
+      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-trace:
+        requirements: [RF-10, RF-28, RF-32]
+        acceptanceCriteria: [AC-US-07-01, AC-US-07-02]
+        scenarios: [SC-US-07-01, SC-US-07-02, SC-EN-11-02]
+        uat: [UAT-01, UAT-17, UAT-43]
+        data: [DAT-11, DAT-15, DAT-29, DAT-41, DAT-45, DAT-46, DAT-47, DAT-48, DAT-49, DAT-50, DAT-51, DAT-52]
+        errors: [ERR-02, ERR-03, ERR-19, ERR-20]
+        uxFlows: [UXF-01, UXF-11]
+      responses:
+        '200':
+          description: Entrega autorizada
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryResponse' }
+        '403': { $ref: '#/components/responses/OriginForbidden' }
+        '404': { $ref: '#/components/responses/CheckoutHidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/docs:
+    get:
+      operationId: getApiDocumentation
+      tags: [Operations]
+      summary: Abrir la documentación API sanitizada
+      description: Superficie pública sin valores de capability, secretos ni tokens.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      x-api-id: API-13
+      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-trace:
+        requirements: [RF-15, RNF-11]
+        acceptanceCriteria: []
+        scenarios: [SC-EN-07-01]
+        uat: [UAT-30]
+        data: []
+        errors: [ERR-19, ERR-20]
+        uxFlows: []
+      responses:
+        '200':
+          description: Interfaz HTML de documentación
+          headers:
+            Cache-Control: { $ref: '#/components/headers/PublicDocsCache' }
+            X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+          content:
+            text/html:
+              schema: { type: string }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/health:
+    get:
+      operationId: getHealth
+      tags: [Operations]
+      summary: Consultar salud técnica mínima
+      description: No revela dependencias, hosts, llaves, secretos, topología ni versiones internas.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      x-api-id: API-14
+      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-trace:
+        requirements: [RNF-14, RNF-23]
+        acceptanceCriteria: []
+        scenarios: [SC-EN-24-01]
+        uat: [UAT-32, UAT-47]
+        data: [DAT-69]
+        errors: [ERR-20, ERR-23, ERR-24]
+        uxFlows: [UXF-13]
+      responses:
+        '200':
+          description: Proceso disponible para servir tráfico permitido
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+              examples:
+                healthy:
+                  value:
+                    status: ok
+                    checkedAt: '2026-01-01T00:00:00Z'
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+components:
+  securitySchemes:
+    CheckoutCapability:
+      type: apiKey
+      in: cookie
+      name: checkout_capability
+      description: |
+        Capability aleatoria de al menos 256 bits emitida sólo mediante una
+        cookie HttpOnly, Secure, SameSite=Strict y Path=/api/v1. El servidor
+        conserva únicamente su HMAC/hash. Ausencia, expiración, alteración o
+        relación ajena producen el mismo 404. No hay valores ni ejemplos.
+      x-data-class: C3
+      x-raw-storage: COOKIE_AND_EPHEMERAL_GUARD_MEMORY_ONLY
+    ProviderWebhookSignature:
+      type: apiKey
+      in: header
+      name: X-Webhook-Signature
+      description: |
+        Contrato abstracto P1 para una firma de evento. El nombre y algoritmo
+        del adapter real permanecen bloqueados hasta SPK-02; nunca se registra
+        ni se ejemplifica el valor.
+      x-data-class: C3
+      x-status: BLOCKED_REAL_PROVIDER
+  parameters:
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      description: Identificador público opaco; no concede autorización.
+      schema: { $ref: '#/components/schemas/OpaqueId' }
+      example: PRODUCT_ID_OPAQUE
+    CheckoutId:
+      name: checkoutId
+      in: path
+      required: true
+      description: Identificador opaco; la cookie relacionada sigue siendo obligatoria.
+      schema: { $ref: '#/components/schemas/OpaqueId' }
+      example: CHECKOUT_ID_OPAQUE
+    TransactionId:
+      name: transactionId
+      in: path
+      required: true
+      description: Identificador local opaco; nunca es un ID del proveedor.
+      schema: { $ref: '#/components/schemas/OpaqueId' }
+      example: TRANSACTION_LOCAL_ID
+    DeliveryId:
+      name: deliveryId
+      in: path
+      required: true
+      description: Identificador opaco ligado al checkout autorizado.
+      schema: { $ref: '#/components/schemas/OpaqueId' }
+      example: DELIVERY_ID_OPAQUE
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: ETag fuerte del checkout. Ausencia o mismatch produce ERR-09 y cero mutación.
+      schema:
+        type: string
+        minLength: 3
+        maxLength: 128
+        pattern: '^"[^"]+"$'
+      example: '"checkout-v7"'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Clave opaca de 16 a 128 caracteres para checkout+submit-payment.
+        La clave cruda sólo existe durante la request; se persiste un HMAC.
+        No se proporciona ejemplo o default.
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._~-]+$'
+      x-data-class: C3
+      x-loggable: false
+    Origin:
+      name: Origin
+      in: header
+      required: true
+      description: Origen HTTPS exacto de la SPA; se valida con allowlist y Fetch Metadata.
+      schema:
+        type: string
+        format: uri
+        maxLength: 256
+    OptionalOrigin:
+      name: Origin
+      in: header
+      required: false
+      description: Si está presente debe pertenecer a la allowlist; Fetch Metadata complementa la política.
+      schema:
+        type: string
+        format: uri
+        maxLength: 256
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: ID opaco opcional; el servidor genera uno seguro si falta.
+      schema: { $ref: '#/components/schemas/CorrelationId' }
+  headers:
+    CorrelationId:
+      description: Identificador opaco de la request; puede cambiar entre replays.
+      schema: { $ref: '#/components/schemas/CorrelationId' }
+      example: CORRELATION_ID_SAFE
+    Location:
+      description: URI relativa del recurso canónico creado o ya existente.
+      schema:
+        type: string
+        format: uri-reference
+        maxLength: 256
+    CheckoutCapabilityCookie:
+      description: |
+        Cookie de capability con HttpOnly; Secure; SameSite=Strict; Path=/api/v1.
+        La respuesta no se almacena en caches compartidas. El valor se omite.
+      schema:
+        type: string
+      x-sensitive: true
+      x-loggable: false
+    StrongETag:
+      description: ETag fuerte de la versión del checkout.
+      schema:
+        type: string
+        pattern: '^"[^"]+"$'
+      example: '"checkout-v7"'
+    NoStore:
+      description: Prohíbe almacenamiento de la respuesta.
+      schema:
+        type: string
+        const: no-store
+      example: no-store
+    PublicCatalogCache:
+      description: Cache pública breve; una reserva siempre revalida stock en backend.
+      schema:
+        type: string
+        const: public, max-age=30
+      example: public, max-age=30
+    RevalidateCache:
+      description: La disponibilidad se revalida y nunca autoriza una reserva.
+      schema:
+        type: string
+        const: no-cache
+      example: no-cache
+    PublicDocsCache:
+      description: Cache breve sólo para la interfaz documental sanitizada.
+      schema:
+        type: string
+        const: public, max-age=300
+      example: public, max-age=300
+    VaryOrigin:
+      description: Evita mezclar respuestas entre orígenes.
+      schema:
+        type: string
+        const: Origin
+      example: Origin
+    RateLimitLimit:
+      description: Límite de la ventana aplicable.
+      schema:
+        type: integer
+        minimum: 1
+    RateLimitRemaining:
+      description: Solicitudes restantes en la ventana.
+      schema:
+        type: integer
+        minimum: 0
+    OptionalRetryAfter:
+      description: Segundos sugeridos antes de otra consulta GET; nunca autoriza repetir el POST.
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 300
+  responses:
+    RequestMalformed:
+      description: ERR-01 REQUEST_MALFORMED
+      headers:
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            malformed:
+              value:
+                type: https://checkout.example.invalid/problems/request-malformed
+                title: Solicitud inválida
+                status: 400
+                detail: No pudimos leer la solicitud.
+                instance: urn:problem-instance:CORRELATION_ID_SAFE
+                code: REQUEST_MALFORMED
+                correlationId: CORRELATION_ID_SAFE
+                retryable: false
+    OriginForbidden:
+      description: ERR-02 ORIGIN_FORBIDDEN; no revela recursos.
+      headers:
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    CheckoutHidden:
+      description: ERR-03 indistinguible para inexistente, capability inválida o relación ajena.
+      headers:
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            unavailable:
+              value:
+                type: https://checkout.example.invalid/problems/checkout-unavailable
+                title: Checkout no disponible
+                status: 404
+                detail: El recurso no está disponible.
+                instance: urn:problem-instance:CORRELATION_ID_SAFE
+                code: CHECKOUT_NOT_FOUND_OR_FORBIDDEN
+                correlationId: CORRELATION_ID_SAFE
+                retryable: false
+    ProductNotFound:
+      description: ERR-04 PRODUCT_NOT_FOUND
+      headers:
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: |
+        Conflicto de negocio con precondición técnicamente válida. El code
+        distingue ERR-06, ERR-07, ERR-10, ERR-11 o ERR-18.
+      headers:
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        Location: { $ref: '#/components/headers/Location' }
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    CheckoutExpired:
+      description: ERR-08 CHECKOUT_EXPIRED; sólo aplica sin pago activo.
+      headers:
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    PreconditionFailed:
+      description: ERR-09 PRECONDITION_FAILED; ausencia o mismatch de If-Match.
+      headers:
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        ETag: { $ref: '#/components/headers/StrongETag' }
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    FieldInvalid:
+      description: ERR-05 FIELD_INVALID; no representa un conflicto concurrente.
+      headers:
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            invalidField:
+              value:
+                type: https://checkout.example.invalid/problems/field-invalid
+                title: Revisa los campos
+                status: 422
+                detail: Hay campos que requieren tu atención.
+                instance: urn:problem-instance:CORRELATION_ID_SAFE
+                code: FIELD_INVALID
+                correlationId: CORRELATION_ID_SAFE
+                retryable: false
+                errors:
+                  - path: installments
+                    code: unsupported_value
+                    reason: Elige una opción disponible.
+    RateLimited:
+      description: ERR-19 RATE_LIMITED; el retry sólo aplica al mismo método cuando sea seguro.
+      headers:
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        Retry-After: { $ref: '#/components/headers/OptionalRetryAfter' }
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    InternalError:
+      description: |
+        ERR-20 antes de I/O externo ambiguo. Si pudo existir envío, el recurso
+        aceptado permanece consultable y se proyecta como ERR-14, no como 500.
+      headers:
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ServiceUnavailable:
+      description: |
+        ERR-23 o ERR-24 fail-closed antes de aceptar una intención local. Nunca
+        autoriza retry automático y no revela ambiente, host, llave o secreto.
+      headers:
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        Retry-After: { $ref: '#/components/headers/OptionalRetryAfter' }
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    WebhookSignatureInvalid:
+      description: ERR-15 WEBHOOK_SIGNATURE_INVALID; respuesta no enumerable.
+      headers:
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+  schemas:
+    OpaqueId:
+      type: string
+      minLength: 8
+      maxLength: 128
+      pattern: '^[A-Za-z0-9_-]+$'
+      description: Identificador opaco, no secuencial y no autorizante.
+    CorrelationId:
+      type: string
+      minLength: 8
+      maxLength: 128
+      pattern: '^[A-Za-z0-9._:-]+$'
+      description: Identificador seguro sin datos personales.
+    Money:
+      type: object
+      additionalProperties: false
+      required: [amountInCents, currency]
+      properties:
+        amountInCents:
+          type: integer
+          minimum: 0
+          maximum: 999999999999
+          description: Importe entero; nunca float.
+        currency:
+          type: string
+          const: COP
+      example: { amountInCents: 2500000, currency: COP }
+    ProductPublic:
+      type: object
+      additionalProperties: false
+      required: [productId, sku, name, description, imageUrl, unitPrice, available]
+      properties:
+        productId:
+          $ref: '#/components/schemas/OpaqueId'
+        sku:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z0-9_-]+$'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        imageUrl:
+          type: string
+          format: uri
+          maxLength: 2048
+        unitPrice:
+          $ref: '#/components/schemas/Money'
+        available:
+          type: integer
+          minimum: 0
+          maximum: 999999
+          readOnly: true
+          description: Proyección pública derivada; no es autoridad para reservar.
+    ProductResponse:
+      $ref: '#/components/schemas/ProductPublic'
+    ProductCollectionResponse:
+      type: object
+      additionalProperties: false
+      required: [items, count]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/ProductPublic' }
+        count:
+          type: integer
+          minimum: 0
+          maximum: 100
+    StockResponse:
+      type: object
+      additionalProperties: false
+      required: [productId, available, asOf]
+      properties:
+        productId:
+          $ref: '#/components/schemas/OpaqueId'
+        available:
+          type: integer
+          minimum: 0
+          maximum: 999999
+          readOnly: true
+        asOf:
+          type: string
+          format: date-time
+          readOnly: true
+    CreateCheckoutRequest:
+      type: object
+      additionalProperties: false
+      required: [productId]
+      properties:
+        productId:
+          $ref: '#/components/schemas/OpaqueId'
+    CheckoutStatus:
+      type: string
+      enum: [DRAFT, READY, PAYMENT_PENDING, PAID, PAYMENT_FAILED, EXPIRED]
+      description: Estados efectivos de la baseline E0-E2.
+    Quote:
+      type: object
+      additionalProperties: false
+      required: [quoteId, version, productId, quantity, subtotal, baseFee, deliveryFee, total, expiresAt]
+      properties:
+        quoteId:
+          $ref: '#/components/schemas/OpaqueId'
+        version:
+          type: integer
+          minimum: 1
+        productId:
+          $ref: '#/components/schemas/OpaqueId'
+        quantity:
+          type: integer
+          const: 1
+          description: Baseline reversible de un SKU y una unidad.
+        subtotal:
+          $ref: '#/components/schemas/Money'
+        baseFee:
+          $ref: '#/components/schemas/Money'
+        deliveryFee:
+          $ref: '#/components/schemas/Money'
+        total:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: Igual a subtotal más baseFee más deliveryFee; servidor autoritativo.
+        expiresAt:
+          type: string
+          format: date-time
+    CheckoutCreatedResponse:
+      type: object
+      additionalProperties: false
+      required: [checkoutId, status, version, quote, expiresAt]
+      properties:
+        checkoutId:
+          $ref: '#/components/schemas/OpaqueId'
+        status:
+          type: string
+          const: DRAFT
+        version:
+          type: integer
+          minimum: 1
+        quote:
+          $ref: '#/components/schemas/Quote'
+        expiresAt:
+          type: string
+          format: date-time
+    ReplaceCustomerRequest:
+      type: object
+      additionalProperties: false
+      required: [fullName, email, phone]
+      properties:
+        fullName:
+          type: string
+          minLength: 2
+          maxLength: 120
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        phone:
+          type: string
+          minLength: 8
+          maxLength: 16
+          pattern: '^\+?[0-9]{8,15}$'
+      x-data-class: C2
+      x-decision-status: ASSUMED_DEC-07
+    CustomerResponse:
+      type: object
+      additionalProperties: false
+      required: [customerId, checkoutId, version, fullName, email, phone]
+      properties:
+        customerId:
+          $ref: '#/components/schemas/OpaqueId'
+        checkoutId:
+          $ref: '#/components/schemas/OpaqueId'
+        version:
+          type: integer
+          minimum: 1
+        fullName:
+          type: string
+          minLength: 2
+          maxLength: 120
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        phone:
+          type: string
+          minLength: 8
+          maxLength: 16
+          pattern: '^\+?[0-9]{8,15}$'
+      x-data-class: C2
+      x-cache: no-store
+    ReplaceDeliveryDetailsRequest:
+      type: object
+      additionalProperties: false
+      required: [addressLine1, city, region]
+      properties:
+        addressLine1:
+          type: string
+          minLength: 5
+          maxLength: 160
+        addressLine2:
+          type: string
+          maxLength: 160
+        city:
+          type: string
+          minLength: 2
+          maxLength: 80
+        region:
+          type: string
+          minLength: 2
+          maxLength: 80
+        postalCode:
+          type: string
+          minLength: 3
+          maxLength: 12
+          pattern: '^[A-Za-z0-9 -]+$'
+        deliveryInstructions:
+          type: string
+          maxLength: 250
+      x-data-class: C2
+      x-decision-status: ASSUMED_DEC-07
+    DeliveryDetailsResponse:
+      type: object
+      additionalProperties: false
+      required: [checkoutId, version, addressLine1, city, region]
+      properties:
+        checkoutId:
+          $ref: '#/components/schemas/OpaqueId'
+        version:
+          type: integer
+          minimum: 1
+        addressLine1:
+          type: string
+          minLength: 5
+          maxLength: 160
+        addressLine2:
+          type: string
+          maxLength: 160
+        city:
+          type: string
+          minLength: 2
+          maxLength: 80
+        region:
+          type: string
+          minLength: 2
+          maxLength: 80
+        postalCode:
+          type: string
+          minLength: 3
+          maxLength: 12
+        deliveryInstructions:
+          type: string
+          maxLength: 250
+      x-data-class: C2
+      x-cache: no-store
+    CheckoutResponse:
+      type: object
+      additionalProperties: false
+      required: [checkoutId, status, version, product, quote, expiresAt]
+      properties:
+        checkoutId:
+          $ref: '#/components/schemas/OpaqueId'
+        status:
+          $ref: '#/components/schemas/CheckoutStatus'
+        version:
+          type: integer
+          minimum: 1
+        product:
+          $ref: '#/components/schemas/ProductPublic'
+        quote:
+          $ref: '#/components/schemas/Quote'
+        customer:
+          oneOf:
+            - $ref: '#/components/schemas/CustomerResponse'
+            - type: 'null'
+        deliveryDetails:
+          oneOf:
+            - $ref: '#/components/schemas/DeliveryDetailsResponse'
+            - type: 'null'
+        activeTransactionId:
+          oneOf:
+            - $ref: '#/components/schemas/OpaqueId'
+            - type: 'null'
+        expiresAt:
+          type: string
+          format: date-time
+      x-data-class: C2
+      x-cache: no-store
+    AcceptanceContract:
+      type: object
+      additionalProperties: false
+      required: [type, permalink, version, acceptanceToken]
+      properties:
+        type:
+          type: string
+          enum: [TERMS, PERSONAL_DATA]
+        permalink:
+          type: string
+          format: uri
+          maxLength: 2048
+        version:
+          type: string
+          minLength: 1
+          maxLength: 128
+        acceptanceToken:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: C3 efímero para tránsito inmediato; no se persiste ni registra.
+          x-data-class: C3
+          x-ephemeral: true
+          x-loggable: false
+          x-persisted: false
+    PaymentConfigurationResponse:
+      type: object
+      additionalProperties: false
+      required: [captureVariant, sandboxPublicKey, allowedInstallments, acceptanceContracts, expiresAt]
+      properties:
+        captureVariant:
+          type: string
+          enum: [DIRECT_JWE, HOSTED_COMPONENT, FAKE_CONTRACT]
+          description: Las variantes reales siguen bloqueadas hasta SPK-02.
+        sandboxPublicKey:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Llave pública C0 del ambiente permitido; sin ejemplo ni default.
+          x-data-class: C0
+          x-loggable: false
+        allowedInstallments:
+          type: array
+          minItems: 1
+          maxItems: 36
+          uniqueItems: true
+          items:
+            type: integer
+            minimum: 1
+            maximum: 36
+        acceptanceContracts:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { $ref: '#/components/schemas/AcceptanceContract' }
+        expiresAt:
+          type: string
+          format: date-time
+      x-cache: no-store
+    PaymentAcceptanceTokens:
+      type: object
+      additionalProperties: false
+      required: [termsAcceptanceToken, personalDataAcceptanceToken]
+      properties:
+        termsAcceptanceToken:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          writeOnly: true
+          description: C3 efímero; no se persiste, registra ni incluye en el digest.
+          x-data-class: C3
+          x-ephemeral: true
+          x-loggable: false
+        personalDataAcceptanceToken:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          writeOnly: true
+          description: C3 efímero; no se persiste, registra ni incluye en el digest.
+          x-data-class: C3
+          x-ephemeral: true
+          x-loggable: false
+    PaymentSubmissionRequest:
+      type: object
+      additionalProperties: false
+      required: [quoteId, paymentMethodToken, installments, acceptances]
+      properties:
+        quoteId:
+          $ref: '#/components/schemas/OpaqueId'
+        paymentMethodToken:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          writeOnly: true
+          description: Token C3 efímero, de uso único y persistencia cero; sin ejemplo.
+          x-data-class: C3
+          x-ephemeral: true
+          x-loggable: false
+          x-persisted: false
+        installments:
+          type: integer
+          minimum: 1
+          maximum: 36
+        acceptances:
+          $ref: '#/components/schemas/PaymentAcceptanceTokens'
+      x-rejected-properties:
+        - amount
+        - amountInCents
+        - subtotal
+        - fees
+        - total
+        - currency
+        - paymentStatus
+        - providerStatus
+        - providerReference
+        - providerTransactionId
+        - cardNumber
+        - securityCode
+        - expiry
+    PaymentSubmissionResponse:
+      type: object
+      additionalProperties: false
+      required: [transactionId, statusUrl, submissionState, acceptedAt]
+      properties:
+        transactionId:
+          $ref: '#/components/schemas/OpaqueId'
+        statusUrl:
+          type: string
+          format: uri-reference
+          pattern: '^/api/v1/transactions/[A-Za-z0-9_-]+$'
+        submissionState:
+          type: string
+          const: ACCEPTED
+        acceptedAt:
+          type: string
+          format: date-time
+      description: Snapshot inmutable para el replay semántico de la intención aceptada.
+    PaymentStatus:
+      type: string
+      enum: [PENDING, APPROVED, DECLINED, VOIDED, ERROR]
+    DispatchPhase:
+      type: string
+      enum: [NOT_SENT, SENDING, ACKNOWLEDGED, UNKNOWN, NOT_SENT_FAILED]
+      description: Vocabulario efectivo E0-E2; UNKNOWN nunca habilita otro POST.
+    ProviderStatus:
+      type:
+        - string
+        - 'null'
+      enum: [null, PENDING, APPROVED, DECLINED, VOIDED, ERROR]
+      description: Último estado externo allowlisted; null cuando no existe confirmación.
+    ReservationStatus:
+      type: string
+      enum: [ACTIVE, CONSUMED, RELEASED]
+    IntegrityStatus:
+      type: string
+      enum: [OK, APPROVED_INVENTORY_CONFLICT, FINAL_STATE_CONFLICT]
+      description: No reemplaza paymentStatus; un cobro aprobado permanece APPROVED.
+    RecoveryCode:
+      type: string
+      enum: [PAYMENT_TOKEN_REJECTED, PROVIDER_NOT_SENT, PROVIDER_OUTCOME_UNKNOWN, STATE_TRANSITION_CONFLICT, RATE_LIMITED, INTERNAL_ERROR]
+    AllowedAction:
+      type: string
+      enum: [QUERY, WAIT, RETURN_TO_PRODUCT, START_NEW_CHECKOUT, CONTACT_SUPPORT]
+    TransactionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - transactionId
+        - checkoutId
+        - checkoutStatus
+        - paymentStatus
+        - dispatchPhase
+        - providerStatus
+        - reservationStatus
+        - integrityStatus
+        - statusUrl
+        - allowedActions
+        - acceptedAt
+        - updatedAt
+      properties:
+        transactionId:
+          $ref: '#/components/schemas/OpaqueId'
+        checkoutId:
+          $ref: '#/components/schemas/OpaqueId'
+        checkoutStatus:
+          $ref: '#/components/schemas/CheckoutStatus'
+        paymentStatus:
+          $ref: '#/components/schemas/PaymentStatus'
+        dispatchPhase:
+          $ref: '#/components/schemas/DispatchPhase'
+        providerStatus:
+          $ref: '#/components/schemas/ProviderStatus'
+        reservationStatus:
+          $ref: '#/components/schemas/ReservationStatus'
+        integrityStatus:
+          $ref: '#/components/schemas/IntegrityStatus'
+        recoveryCode:
+          $ref: '#/components/schemas/RecoveryCode'
+        deliveryId:
+          $ref: '#/components/schemas/OpaqueId'
+        statusUrl:
+          type: string
+          format: uri-reference
+          pattern: '^/api/v1/transactions/[A-Za-z0-9_-]+$'
+        allowedActions:
+          type: array
+          minItems: 1
+          maxItems: 5
+          uniqueItems: true
+          items: { $ref: '#/components/schemas/AllowedAction' }
+        retryAfterSeconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+        acceptedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      x-state-rules:
+        pendingOrUnknown: reservationStatus ACTIVE and no START_NEW_CHECKOUT action
+        approvedConflict: paymentStatus APPROVED and integrityStatus APPROVED_INVENTORY_CONFLICT
+        finalConflict: first terminal remains unchanged and integrityStatus FINAL_STATE_CONFLICT
+      x-cache: no-store
+    PaymentWebhookRequest:
+      type: object
+      additionalProperties: false
+      required: [eventId, occurredAt, providerTransactionId, providerReference, status, amountInCents, currency]
+      properties:
+        eventId:
+          $ref: '#/components/schemas/OpaqueId'
+        occurredAt:
+          type: string
+          format: date-time
+        providerTransactionId:
+          $ref: '#/components/schemas/OpaqueId'
+        providerReference:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_-]+$'
+        status:
+          type: string
+          enum: [PENDING, APPROVED, DECLINED, VOIDED, ERROR]
+        amountInCents:
+          type: integer
+          minimum: 0
+          maximum: 999999999999
+        currency:
+          type: string
+          const: COP
+      description: |
+        Envelope allowlisted provisional. El payload/firma externos reales
+        permanecen bloqueados hasta SPK-02; no se persiste el body crudo.
+      x-status: DEFERRED_P1
+    DeliveryDestination:
+      type: object
+      additionalProperties: false
+      required: [addressLine1, city, region]
+      properties:
+        addressLine1:
+          type: string
+          minLength: 5
+          maxLength: 160
+        addressLine2:
+          type: string
+          maxLength: 160
+        city:
+          type: string
+          minLength: 2
+          maxLength: 80
+        region:
+          type: string
+          minLength: 2
+          maxLength: 80
+        postalCode:
+          type: string
+          minLength: 3
+          maxLength: 12
+        deliveryInstructions:
+          type: string
+          maxLength: 250
+      x-data-class: C2
+    DeliveryStatus:
+      type: string
+      enum: [CREATED, ASSIGNED, CANCELLED]
+      description: Estados efectivos de entrega en E0-E2.
+    DeliveryResponse:
+      type: object
+      additionalProperties: false
+      required: [deliveryId, checkoutId, transactionId, status, destination, createdAt, updatedAt]
+      properties:
+        deliveryId:
+          $ref: '#/components/schemas/OpaqueId'
+        checkoutId:
+          $ref: '#/components/schemas/OpaqueId'
+        transactionId:
+          $ref: '#/components/schemas/OpaqueId'
+        status:
+          $ref: '#/components/schemas/DeliveryStatus'
+        destination:
+          $ref: '#/components/schemas/DeliveryDestination'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      x-data-class: C2
+      x-cache: no-store
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, checkedAt]
+      properties:
+        status:
+          type: string
+          const: ok
+        checkedAt:
+          type: string
+          format: date-time
+    CanonicalErrorCode:
+      type: string
+      enum:
+        - REQUEST_MALFORMED
+        - ORIGIN_FORBIDDEN
+        - CHECKOUT_NOT_FOUND_OR_FORBIDDEN
+        - PRODUCT_NOT_FOUND
+        - FIELD_INVALID
+        - OUT_OF_STOCK
+        - QUOTE_STALE
+        - CHECKOUT_EXPIRED
+        - PRECONDITION_FAILED
+        - IDEMPOTENCY_CONFLICT
+        - PAYMENT_ALREADY_IN_PROGRESS
+        - PAYMENT_TOKEN_REJECTED
+        - PROVIDER_NOT_SENT
+        - PROVIDER_OUTCOME_UNKNOWN
+        - WEBHOOK_SIGNATURE_INVALID
+        - WEBHOOK_DUPLICATE
+        - WEBHOOK_OUT_OF_ORDER
+        - STATE_TRANSITION_CONFLICT
+        - RATE_LIMITED
+        - INTERNAL_ERROR
+        - FINAL_STATE_CONFLICT
+        - APPROVED_INVENTORY_CONFLICT
+        - ENVIRONMENT_MISMATCH
+        - PROVIDER_AUTH_OR_CONFIG_INVALID
+    ProblemField:
+      type: object
+      additionalProperties: false
+      required: [path, code, reason]
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_.\[\]-]+$'
+        code:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z0-9_]+$'
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Razón allowlisted; nunca contiene el valor rechazado.
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, detail, instance, code, correlationId, retryable]
+      properties:
+        type:
+          type: string
+          format: uri
+          maxLength: 2048
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Detalle seguro sin PII, secretos, stack ni respuesta cruda externa.
+        instance:
+          type: string
+          format: uri-reference
+          maxLength: 2048
+        code:
+          $ref: '#/components/schemas/CanonicalErrorCode'
+        correlationId:
+          $ref: '#/components/schemas/CorrelationId'
+        retryAfterSeconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+        errors:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/ProblemField' }
+        retryable:
+          type: boolean
+          description: Se refiere a repetir el mismo método y URI; nunca autoriza un POST ambiguo.
+        currentState:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Z0-9_]+$'
+      description: RFC 9457 exclusivamente para respuestas HTTP 4xx y 5xx.

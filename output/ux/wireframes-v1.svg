@@ -1,0 +1,307 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="2440" viewBox="0 0 2400 2440" role="img" aria-labelledby="svg-title svg-desc">
+  <title id="svg-title">Storyboard mobile-first del checkout, UXWF-01 a UXWF-12, versión 1.0.0</title>
+  <desc id="svg-desc">Doce wireframes anotados para producto, captura directa y alojada, cliente y entrega, revisión, envío, pago pendiente, resultado desconocido, aprobado, conflicto y retorno al producto. Todos los datos son alias simbólicos.</desc>
+  <metadata>
+    artifact=ART-UX-04; version=1.0.0; status=DESIGNED_NOT_IMPLEMENTED; locale=es-CO;
+    fixtures=SYMBOLIC_ONLY; network=NONE; generated=2026-08-14; viewports=UXVP-01..UXVP-07
+  </metadata>
+  <defs>
+    <style>
+      .canvas{fill:#f3f1eb}.panel{fill:#fff;stroke:#c8cec9;stroke-width:2}.phone{fill:#fbfcfa;stroke:#17201c;stroke-width:3}.bar{fill:#e8eee9}.surface{fill:#fff;stroke:#bcc7c1;stroke-width:1.5}.mutedbox{fill:#edf1ee}.primary{fill:#145b49}.secondary{fill:#fff;stroke:#145b49;stroke-width:2}.warning{fill:#fff4d6;stroke:#a66a00;stroke-width:2}.danger{fill:#fff0ee;stroke:#a23b32;stroke-width:2}.success{fill:#e6f5ee;stroke:#15704f;stroke-width:2}.focus{fill:none;stroke:#0047ab;stroke-width:4}.divider{stroke:#d5dbd6;stroke-width:1}.flow{stroke:#697871;stroke-width:2;stroke-dasharray:6 6}.title{font:700 27px system-ui,sans-serif;fill:#17201c}.subtitle{font:600 18px system-ui,sans-serif;fill:#145b49}.label{font:700 15px system-ui,sans-serif;fill:#17201c}.body{font:14px system-ui,sans-serif;fill:#29362f}.small{font:12px system-ui,sans-serif;fill:#47574f}.tiny{font:11px ui-monospace,SFMono-Regular,Consolas,monospace;fill:#394a42}.inverse{font:700 14px system-ui,sans-serif;fill:#fff}.note{font:13px system-ui,sans-serif;fill:#29362f}.notekey{font:700 12px ui-monospace,SFMono-Regular,Consolas,monospace;fill:#145b49}.tag{fill:#e7f1ed;stroke:#8cab9f}.tagwarn{fill:#fff4d6;stroke:#c78a1e}.tagdanger{fill:#fff0ee;stroke:#bf716a}.dot{fill:#145b49}.dotmuted{fill:#aeb9b3}.cross{stroke:#a23b32;stroke-width:3}.arrow{fill:#697871}
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrow"/></marker>
+  </defs>
+
+  <rect class="canvas" width="2400" height="2440"/>
+  <text x="32" y="44" class="title">ART-UX-04 · Storyboard checkout mobile-first</text>
+  <text x="32" y="72" class="body">v1.0.0 · DESIGNED_NOT_IMPLEMENTED · alias simbólicos · sin red · referencia primaria UXVP-01 (320×568)</text>
+
+  <!-- UXWF-01 -->
+  <g id="UXWF-01" transform="translate(25 100)">
+    <rect class="panel" width="560" height="720" rx="18"/>
+    <text x="18" y="34" class="subtitle">UXWF-01 · PRODUCT_READY</text>
+    <text x="18" y="56" class="tiny">UXSCR-01 · UXST-02 · UXF-01/02 · v1.0.0</text>
+    <rect x="18" y="78" width="300" height="580" rx="24" class="phone"/>
+    <rect x="30" y="92" width="276" height="48" rx="8" class="bar"/>
+    <text x="44" y="121" class="label">Tienda de prueba</text>
+    <rect x="38" y="158" width="260" height="170" rx="12" class="mutedbox"/>
+    <text x="104" y="236" class="label">PRODUCT_MEDIA</text>
+    <text x="92" y="258" class="small">ratio reservado · LCP</text>
+    <text x="38" y="360" class="title">PRODUCT_ALIAS</text>
+    <text x="38" y="392" class="body">Descripción breve y neutral.</text>
+    <text x="38" y="432" class="label">AMOUNT_PRODUCT_CANONICAL</text>
+    <rect x="38" y="450" width="146" height="28" rx="14" class="tag"/>
+    <text x="52" y="469" class="small">STOCK_AVAILABLE</text>
+    <rect x="38" y="546" width="260" height="52" rx="10" class="primary"/>
+    <text x="103" y="578" class="inverse">Iniciar compra</text>
+    <rect x="34" y="542" width="268" height="60" rx="12" class="focus"/>
+    <text x="38" y="628" class="tiny">safe-bottom + CTA 44px mínimo</text>
+    <text x="338" y="102" class="notekey">DOM</text><text x="338" y="124" class="note">1 header · 2 media ·</text><text x="338" y="144" class="note">3 título/precio/stock ·</text><text x="338" y="164" class="note">4 acción primaria.</text>
+    <text x="338" y="202" class="notekey">FOCO</text><text x="338" y="224" class="note">Al cargar: documento.</text><text x="338" y="244" class="note">Al volver: CTA o</text><text x="338" y="264" class="note">estado de stock.</text>
+    <text x="338" y="302" class="notekey">SCROLL</text><text x="338" y="324" class="note">Página única; CTA no</text><text x="338" y="344" class="note">oculta contenido.</text>
+    <text x="338" y="382" class="notekey">RESPONSIVE</text><text x="338" y="404" class="note">Media 1:1; a ≥768 px,</text><text x="338" y="424" class="note">dos columnas sin alterar</text><text x="338" y="444" class="note">el orden significativo.</text>
+    <text x="338" y="482" class="notekey">DATOS</text><text x="338" y="504" class="note">Sólo catálogo y stock</text><text x="338" y="524" class="note">canónicos; 0 PII.</text>
+    <text x="338" y="562" class="notekey">TRAZA</text><text x="338" y="584" class="note">RF-01 · AC-US-01-01/02/03</text><text x="338" y="604" class="note">SC-US-01-01/02/03 · UAT-18/37/38</text>
+  </g>
+
+  <!-- UXWF-02 -->
+  <g id="UXWF-02" transform="translate(620 100)">
+    <rect class="panel" width="560" height="720" rx="18"/>
+    <text x="18" y="34" class="subtitle">UXWF-02 · CAPTURE_DIRECT</text>
+    <text x="18" y="56" class="tiny">UXSCR-02/03 · UXST-04 · UXF-03/04 · v1.0.0</text>
+    <rect x="18" y="78" width="300" height="580" rx="24" class="phone"/>
+    <rect x="18" y="78" width="300" height="580" rx="24" fill="#17201c" opacity=".12"/>
+    <rect x="30" y="116" width="276" height="530" rx="20" class="surface"/>
+    <text x="48" y="154" class="small">Paso 1 de 3</text><text x="48" y="184" class="title">Medio de pago</text>
+    <rect x="258" y="134" width="32" height="32" rx="16" class="secondary"/><text x="269" y="156" class="label">×</text>
+    <rect x="48" y="205" width="76" height="5" rx="3" class="primary"/><rect x="130" y="205" width="76" height="5" rx="3" class="bar"/><rect x="212" y="205" width="76" height="5" rx="3" class="bar"/>
+    <text x="48" y="248" class="label">Datos de pago</text>
+    <rect x="48" y="264" width="240" height="104" rx="10" class="surface"/>
+    <text x="62" y="294" class="small">Superficie segura del proveedor</text><text x="62" y="324" class="label">CARD_ALIAS</text><text x="62" y="348" class="tiny">browser → provider · 0 backend</text>
+    <rect x="44" y="260" width="248" height="112" rx="12" class="focus"/>
+    <text x="48" y="400" class="label">Cuota</text><rect x="48" y="414" width="240" height="48" rx="8" class="surface"/><text x="62" y="444" class="body">INSTALLMENT_OPTION</text>
+    <rect x="48" y="492" width="18" height="18" rx="3" class="surface"/><text x="78" y="506" class="small">Acepto condiciones · LINK_ALIAS</text>
+    <rect x="48" y="526" width="18" height="18" rx="3" class="surface"/><text x="78" y="540" class="small">Autorizo tratamiento · LINK_ALIAS</text>
+    <rect x="48" y="576" width="240" height="48" rx="9" class="primary"/><text x="126" y="606" class="inverse">Continuar</text>
+    <text x="338" y="102" class="notekey">VARIANTE A</text><text x="338" y="124" class="note">Directa sólo si SPK-02</text><text x="338" y="144" class="note">demuestra frontera segura.</text>
+    <text x="338" y="182" class="notekey">FOCO/TECLADO</text><text x="338" y="204" class="note">Título al abrir; después</text><text x="338" y="224" class="note">orden DOM de campos.</text><text x="338" y="244" class="note">Tab queda en diálogo;</text><text x="338" y="264" class="note">Escape cierra sin mutar.</text>
+    <text x="338" y="302" class="notekey">SCROLL</text><text x="338" y="324" class="note">Cuerpo del diálogo.</text><text x="338" y="344" class="note">Footer sticky reserva</text><text x="338" y="364" class="note">safe-area y no tapa foco.</text>
+    <text x="338" y="402" class="notekey">C4</text><text x="338" y="424" class="note">Sólo memoria efímera.</text><text x="338" y="444" class="note">Refresh exige reingreso.</text>
+    <text x="338" y="482" class="notekey">MODAL</text><text x="338" y="504" class="note">Backdrop inerte; cierre</text><text x="338" y="524" class="note">visible; foco retorna.</text>
+    <text x="338" y="562" class="notekey">TRAZA</text><text x="338" y="584" class="note">AC-US-02-01/02 · AC-US-03-01</text><text x="338" y="604" class="note">SC-US-02-01/02 · UAT-29/36</text>
+  </g>
+
+  <!-- UXWF-03 -->
+  <g id="UXWF-03" transform="translate(1215 100)">
+    <rect class="panel" width="560" height="720" rx="18"/>
+    <text x="18" y="34" class="subtitle">UXWF-03 · CAPTURE_HOSTED</text>
+    <text x="18" y="56" class="tiny">UXSCR-02/03 · UXST-04 · UXF-03/04 · v1.0.0</text>
+    <rect x="18" y="78" width="300" height="580" rx="24" class="phone"/>
+    <rect x="18" y="78" width="300" height="580" rx="24" fill="#17201c" opacity=".12"/>
+    <rect x="30" y="116" width="276" height="530" rx="20" class="surface"/>
+    <text x="48" y="154" class="small">Paso 1 de 3</text><text x="48" y="184" class="title">Medio de pago</text>
+    <rect x="258" y="134" width="32" height="32" rx="16" class="secondary"/><text x="269" y="156" class="label">×</text>
+    <rect x="48" y="205" width="76" height="5" rx="3" class="primary"/><rect x="130" y="205" width="76" height="5" rx="3" class="bar"/><rect x="212" y="205" width="76" height="5" rx="3" class="bar"/>
+    <text x="48" y="248" class="label">Componente de pago alojado</text>
+    <rect x="48" y="264" width="240" height="182" rx="10" class="mutedbox"/>
+    <rect x="66" y="288" width="204" height="70" rx="8" class="surface"/><text x="91" y="319" class="label">HOSTED_COMPONENT</text><text x="95" y="340" class="tiny">provider-controlled region</text>
+    <rect x="66" y="376" width="204" height="44" rx="8" class="secondary"/><text x="112" y="404" class="label">Completar allí</text>
+    <text x="48" y="476" class="small">El foco vuelve aquí al completar.</text>
+    <rect x="48" y="502" width="240" height="48" rx="9" class="primary"/><text x="126" y="532" class="inverse">Continuar</text>
+    <rect x="48" y="566" width="240" height="42" rx="9" class="secondary"/><text x="93" y="593" class="label">Cerrar de forma segura</text>
+    <text x="338" y="102" class="notekey">VARIANTE B</text><text x="338" y="124" class="note">Fallback reversible; no</text><text x="338" y="144" class="note">asume control del DOM</text><text x="338" y="164" class="note">interno ni su styling.</text>
+    <text x="338" y="202" class="notekey">EQUIVALENCIA</text><text x="338" y="224" class="note">Mismos pasos externos,</text><text x="338" y="244" class="note">copy, review y estados.</text>
+    <text x="338" y="282" class="notekey">FOCO</text><text x="338" y="304" class="note">Wrapper anuncia entrada;</text><text x="338" y="324" class="note">retorno contractual a</text><text x="338" y="344" class="note">“Continuar” o error.</text>
+    <text x="338" y="382" class="notekey">ERROR</text><text x="338" y="404" class="note">Mensaje contractual seguro;</text><text x="338" y="424" class="note">nunca payload crudo.</text>
+    <text x="338" y="462" class="notekey">REFRESH</text><text x="338" y="484" class="note">Reinicializa componente;</text><text x="338" y="504" class="note">0 restauración de token.</text>
+    <text x="338" y="542" class="notekey">TRAZA</text><text x="338" y="564" class="note">AC-US-03-01/02/05</text><text x="338" y="584" class="note">SC-US-03-01/02/03 · UAT-11/20/29</text>
+  </g>
+
+  <!-- UXWF-04 -->
+  <g id="UXWF-04" transform="translate(1810 100)">
+    <rect class="panel" width="560" height="720" rx="18"/>
+    <text x="18" y="34" class="subtitle">UXWF-04 · CUSTOMER_DELIVERY</text>
+    <text x="18" y="56" class="tiny">UXSCR-04/05 · UXST-04/05 · UXF-05 · v1.0.0</text>
+    <rect x="18" y="78" width="300" height="580" rx="24" class="phone"/>
+    <rect x="30" y="94" width="276" height="552" rx="20" class="surface"/>
+    <text x="48" y="130" class="small">Paso 2 de 3</text><text x="48" y="160" class="title">Datos de entrega</text>
+    <rect x="48" y="182" width="240" height="46" rx="8" class="surface"/><text x="60" y="201" class="small">Nombre</text><text x="60" y="219" class="tiny">CUSTOMER_SYNTHETIC</text>
+    <rect x="48" y="242" width="240" height="46" rx="8" class="danger"/><text x="60" y="261" class="small">Email</text><text x="60" y="280" class="tiny">EMAIL_ALIAS_INVALID</text>
+    <text x="48" y="308" class="small">Revisa este campo antes de continuar.</text>
+    <rect x="48" y="326" width="240" height="46" rx="8" class="surface"/><text x="60" y="345" class="small">Teléfono</text><text x="60" y="363" class="tiny">PHONE_ALIAS</text>
+    <rect x="48" y="386" width="240" height="46" rx="8" class="surface"/><text x="60" y="405" class="small">País y ciudad</text><text x="60" y="423" class="tiny">COUNTRY_ALIAS · CITY_ALIAS</text>
+    <rect x="48" y="446" width="240" height="46" rx="8" class="surface"/><text x="60" y="465" class="small">Dirección</text><text x="60" y="483" class="tiny">ADDRESS_ALIAS</text>
+    <rect x="48" y="522" width="240" height="48" rx="9" class="primary"/><text x="126" y="552" class="inverse">Continuar</text>
+    <rect x="48" y="584" width="240" height="38" rx="9" class="secondary"/><text x="132" y="609" class="label">Atrás</text>
+    <text x="338" y="102" class="notekey">ERROR</text><text x="338" y="124" class="note">Resumen focalizable y</text><text x="338" y="144" class="note">error inline asociado.</text>
+    <text x="338" y="182" class="notekey">TECLADO VIRTUAL</text><text x="338" y="204" class="note">Campo y error se desplazan</text><text x="338" y="224" class="note">sobre footer; sin zoom.</text>
+    <text x="338" y="262" class="notekey">PERSISTENCIA</text><text x="338" y="284" class="note">Valores válidos sólo en</text><text x="338" y="304" class="note">memoria; 0 URL/storage.</text>
+    <text x="338" y="342" class="notekey">CAMPOS</text><text x="338" y="364" class="note">Región/postal sólo si</text><text x="338" y="384" class="note">schema del país exige.</text><text x="338" y="404" class="note">Nunca documento por default.</text>
+    <text x="338" y="442" class="notekey">SCROLL</text><text x="338" y="464" class="note">Cuerpo modal único; footer</text><text x="338" y="484" class="note">sticky no oculta errores.</text>
+    <text x="338" y="522" class="notekey">TRAZA</text><text x="338" y="544" class="note">AC-US-03-03/04</text><text x="338" y="564" class="note">SC-US-03-01 · UAT-19</text>
+  </g>
+
+  <!-- UXWF-05 -->
+  <g id="UXWF-05" transform="translate(25 850)">
+    <rect class="panel" width="560" height="720" rx="18"/>
+    <text x="18" y="34" class="subtitle">UXWF-05 · REVIEW_READY</text>
+    <text x="18" y="56" class="tiny">UXSCR-06 · UXST-06 · UXF-01 · v1.0.0</text>
+    <rect x="18" y="78" width="300" height="580" rx="24" class="phone"/>
+    <rect x="30" y="94" width="276" height="552" rx="20" class="surface"/>
+    <text x="48" y="130" class="small">Paso 3 de 3</text><text x="48" y="160" class="title">Revisa tu compra</text>
+    <rect x="48" y="184" width="240" height="88" rx="10" class="mutedbox"/><text x="60" y="212" class="label">PRODUCT_ALIAS · 1 unidad</text><text x="60" y="238" class="small">Entrega: ADDRESS_ALIAS</text><text x="60" y="258" class="small">Cuota: INSTALLMENT_OPTION</text>
+    <text x="48" y="310" class="body">Subtotal</text><text x="174" y="310" class="tiny">AMOUNT_SUBTOTAL</text>
+    <text x="48" y="340" class="body">Tarifa base</text><text x="174" y="340" class="tiny">AMOUNT_BASE_FEE</text>
+    <text x="48" y="370" class="body">Entrega</text><text x="174" y="370" class="tiny">AMOUNT_DELIVERY</text>
+    <line x1="48" y1="388" x2="288" y2="388" class="divider"/>
+    <text x="48" y="420" class="label">Total COP</text><text x="174" y="420" class="tiny">AMOUNT_TOTAL</text>
+    <text x="48" y="452" class="small">QUOTE_VERSION_ALIAS · backend canónico</text>
+    <rect x="48" y="480" width="240" height="42" rx="9" class="secondary"/><text x="112" y="507" class="label">Editar datos</text>
+    <rect x="48" y="538" width="240" height="56" rx="9" class="primary"/><text x="83" y="572" class="inverse">Confirmar y pagar TOTAL</text>
+    <text x="48" y="620" class="tiny">Primera activación bloquea nuevos submits</text>
+    <text x="338" y="102" class="notekey">PREVENCIÓN</text><text x="338" y="124" class="note">Resumen completo antes</text><text x="338" y="144" class="note">de la transacción.</text>
+    <text x="338" y="182" class="notekey">AUTORIDAD</text><text x="338" y="204" class="note">Todos los importes y</text><text x="338" y="224" class="note">versión vienen del backend.</text>
+    <text x="338" y="262" class="notekey">REFLOW</text><text x="338" y="284" class="note">Filas apilan label/valor</text><text x="338" y="304" class="note">si el texto crece; sin</text><text x="338" y="324" class="note">tabla ni scroll horizontal.</text>
+    <text x="338" y="362" class="notekey">FOCO</text><text x="338" y="384" class="note">Título al entrar; al editar,</text><text x="338" y="404" class="note">primer campo del bloque.</text>
+    <text x="338" y="442" class="notekey">PROHIBIDO</text><text x="338" y="464" class="note">Monto editable, pago con</text><text x="338" y="484" class="note">quote stale, doble submit.</text>
+    <text x="338" y="522" class="notekey">TRAZA</text><text x="338" y="544" class="note">AC-US-03-06 · AC-US-04-01/02</text><text x="338" y="564" class="note">SC-US-04-01/02 · UAT-07/19/21</text>
+  </g>
+
+  <!-- UXWF-06 -->
+  <g id="UXWF-06" transform="translate(620 850)">
+    <rect class="panel" width="560" height="720" rx="18"/>
+    <text x="18" y="34" class="subtitle">UXWF-06 · REVIEW_STALE</text>
+    <text x="18" y="56" class="tiny">UXSCR-06 · UXST-07 · UXF-06 · v1.0.0</text>
+    <rect x="18" y="78" width="300" height="580" rx="24" class="phone"/>
+    <rect x="30" y="94" width="276" height="552" rx="20" class="surface"/>
+    <text x="48" y="130" class="small">Paso 3 de 3</text><text x="48" y="160" class="title">Revisa el cambio</text>
+    <rect x="48" y="184" width="240" height="116" rx="10" class="warning"/>
+    <text x="62" y="214" class="label">La cotización cambió</text><text x="62" y="240" class="small">Actualizamos los componentes.</text><text x="62" y="262" class="small">Revisa el total antes de pagar.</text><text x="62" y="284" class="tiny">QUOTE_VERSION_UPDATED</text>
+    <text x="48" y="336" class="body">Subtotal</text><text x="174" y="336" class="tiny">AMOUNT_SUBTOTAL_NEW</text>
+    <text x="48" y="366" class="body">Tarifa base</text><text x="174" y="366" class="tiny">AMOUNT_BASE_FEE_NEW</text>
+    <text x="48" y="396" class="body">Entrega</text><text x="174" y="396" class="tiny">AMOUNT_DELIVERY_NEW</text>
+    <line x1="48" y1="414" x2="288" y2="414" class="divider"/>
+    <text x="48" y="446" class="label">Total COP</text><text x="174" y="446" class="tiny">AMOUNT_TOTAL_NEW</text>
+    <rect x="48" y="480" width="240" height="48" rx="9" class="primary"/><text x="91" y="510" class="inverse">Entiendo el nuevo total</text>
+    <rect x="48" y="546" width="240" height="48" rx="9" fill="#d9dfdb"/><text x="90" y="576" class="label">Confirmar (bloqueado)</text>
+    <text x="338" y="102" class="notekey">INTERRUPCIÓN</text><text x="338" y="124" class="note">El cambio invalida la</text><text x="338" y="144" class="note">confirmación previa.</text>
+    <text x="338" y="182" class="notekey">FOCO/ANUNCIO</text><text x="338" y="204" class="note">Foco al aviso; mensaje</text><text x="338" y="224" class="note">assertive sólo por bloqueo.</text>
+    <text x="338" y="262" class="notekey">ACCIÓN</text><text x="338" y="284" class="note">Revisión explícita habilita</text><text x="338" y="304" class="note">una nueva confirmación.</text>
+    <text x="338" y="342" class="notekey">PROHIBIDO</text><text x="338" y="364" class="note">Pago automático o CTA</text><text x="338" y="384" class="note">activo con versión anterior.</text>
+    <text x="338" y="422" class="notekey">REFRESH</text><text x="338" y="444" class="note">Releer quote canónica;</text><text x="338" y="464" class="note">nunca repetir confirmación.</text>
+    <text x="338" y="502" class="notekey">TRAZA</text><text x="338" y="524" class="note">AC-US-04-03 · SC-US-04-03</text><text x="338" y="544" class="note">UAT-39 · requiere reconfirmación</text>
+  </g>
+
+  <!-- UXWF-07 -->
+  <g id="UXWF-07" transform="translate(1215 850)">
+    <rect class="panel" width="560" height="720" rx="18"/>
+    <text x="18" y="34" class="subtitle">UXWF-07 · SUBMITTING</text>
+    <text x="18" y="56" class="tiny">UXSCR-07 · UXST-08 · UXF-07 · v1.0.0</text>
+    <rect x="18" y="78" width="300" height="580" rx="24" class="phone"/>
+    <rect x="30" y="94" width="276" height="552" rx="20" class="surface"/>
+    <circle cx="168" cy="230" r="44" fill="none" stroke="#c5d0ca" stroke-width="9"/><path d="M168 186 A44 44 0 0 1 210 217" fill="none" stroke="#145b49" stroke-width="9" stroke-linecap="round"/>
+    <text x="82" y="310" class="title">Enviando una vez</text>
+    <text x="55" y="342" class="body">Conserva esta ventana abierta.</text><text x="52" y="364" class="body">No repitas la acción ni refresques.</text>
+    <rect x="48" y="398" width="240" height="76" rx="10" class="mutedbox"/><text x="62" y="426" class="small">Intención protegida</text><text x="62" y="450" class="tiny">CHECKOUT_INTENT_ALIAS</text>
+    <rect x="48" y="504" width="240" height="52" rx="9" fill="#d9dfdb"/><text x="100" y="536" class="label">Pago en curso</text>
+    <text x="72" y="594" class="small">Cerrar no cancela la operación.</text>
+    <text x="338" y="102" class="notekey">BLOQUEO</text><text x="338" y="124" class="note">Primer submit deshabilita</text><text x="338" y="144" class="note">la mutación inmediatamente.</text>
+    <text x="338" y="182" class="notekey">FEEDBACK</text><text x="338" y="204" class="note">Status polite y copy;</text><text x="338" y="224" class="note">no depende del spinner.</text>
+    <text x="338" y="262" class="notekey">CLOSE/BACK</text><text x="338" y="284" class="note">Puede ocultar la vista,</text><text x="338" y="304" class="note">nunca cancelar ni reenviar.</text>
+    <text x="338" y="342" class="notekey">REFRESH</text><text x="338" y="364" class="note">GET canónico conduce a</text><text x="338" y="384" class="note">PENDING/UNKNOWN/RESULT.</text>
+    <text x="338" y="422" class="notekey">PROHIBIDO</text><text x="338" y="444" class="note">Segundo submit, retry</text><text x="338" y="464" class="note">ciego, promesa de éxito.</text>
+    <text x="338" y="502" class="notekey">TRAZA</text><text x="338" y="524" class="note">AC-US-05-01/02/03 · AC-US-10-01/04</text><text x="338" y="544" class="note">SC-US-05-01/02 · UAT-01/04</text>
+  </g>
+
+  <!-- UXWF-08 -->
+  <g id="UXWF-08" transform="translate(1810 850)">
+    <rect class="panel" width="560" height="720" rx="18"/>
+    <text x="18" y="34" class="subtitle">UXWF-08 · PAYMENT_PENDING</text>
+    <text x="18" y="56" class="tiny">UXSCR-08 · UXST-09 · UXF-09/12 · v1.0.0</text>
+    <rect x="18" y="78" width="300" height="580" rx="24" class="phone"/>
+    <rect x="30" y="94" width="276" height="552" rx="20" class="surface"/>
+    <rect x="48" y="136" width="240" height="54" rx="27" class="tagwarn"/><text x="91" y="168" class="label">PAYMENT_PENDING</text>
+    <text x="66" y="236" class="title">Aún estamos verificando</text>
+    <text x="54" y="272" class="body">Todavía no hay un resultado final.</text><text x="64" y="296" class="body">La reserva permanece activa.</text>
+    <rect x="48" y="328" width="240" height="98" rx="10" class="warning"/><text x="62" y="358" class="label">No inicies otro pago</text><text x="62" y="383" class="small">Cerrar o actualizar no cambia</text><text x="62" y="403" class="small">el estado de la operación.</text>
+    <rect x="48" y="458" width="240" height="52" rx="9" class="primary"/><text x="101" y="490" class="inverse">Consultar estado</text>
+    <rect x="48" y="528" width="240" height="48" rx="9" class="secondary"/><text x="84" y="558" class="label">Volver y revisar después</text>
+    <text x="338" y="102" class="notekey">NO TERMINAL</text><text x="338" y="124" class="note">No equivale a error ni</text><text x="338" y="144" class="note">a aprobación.</text>
+    <text x="338" y="182" class="notekey">ACCIÓN PRIMARIA</text><text x="338" y="204" class="note">Consulta read-only.</text><text x="338" y="224" class="note">No crea transacción.</text>
+    <text x="338" y="262" class="notekey">ANUNCIO</text><text x="338" y="284" class="note">Actualizaciones polite;</text><text x="338" y="304" class="note">foco permanece estable.</text>
+    <text x="338" y="342" class="notekey">RESERVA</text><text x="338" y="364" class="note">ACTIVE hasta estado final;</text><text x="338" y="384" class="note">no promete entrega.</text>
+    <text x="338" y="422" class="notekey">PROHIBIDO</text><text x="338" y="444" class="note">“Pagar de nuevo”, retry</text><text x="338" y="464" class="note">mutante o resultado inferido.</text>
+    <text x="338" y="502" class="notekey">TRAZA</text><text x="338" y="524" class="note">AC-US-05-05 · AC-US-06-01/02</text><text x="338" y="544" class="note">SC-US-05-04 · SC-US-06-01/02 · UAT-03/23</text>
+  </g>
+
+  <!-- UXWF-09 -->
+  <g id="UXWF-09" transform="translate(25 1600)">
+    <rect class="panel" width="560" height="720" rx="18"/>
+    <text x="18" y="34" class="subtitle">UXWF-09 · UNKNOWN_RECONCILING</text>
+    <text x="18" y="56" class="tiny">UXSCR-08 · UXST-10 · UXF-09/13 · v1.0.0</text>
+    <rect x="18" y="78" width="300" height="580" rx="24" class="phone"/>
+    <rect x="30" y="94" width="276" height="552" rx="20" class="surface"/>
+    <rect x="48" y="136" width="240" height="54" rx="27" class="tagdanger"/><text x="75" y="168" class="label">RESULT_NOT_CONFIRMED</text>
+    <text x="65" y="236" class="title">Seguimos conciliando</text>
+    <text x="49" y="272" class="body">No podemos confirmar aún el resultado.</text><text x="64" y="296" class="body">Conservamos la reserva de forma segura.</text>
+    <rect x="48" y="328" width="240" height="108" rx="10" class="warning"/><text x="62" y="358" class="label">Evita repetir el pago</text><text x="62" y="383" class="small">Puedes consultar o cerrar.</text><text x="62" y="405" class="small">La operación continuará siendo</text><text x="62" y="423" class="small">verificada por el sistema.</text>
+    <rect x="48" y="468" width="240" height="52" rx="9" class="primary"/><text x="101" y="500" class="inverse">Consultar estado</text>
+    <rect x="48" y="538" width="240" height="48" rx="9" class="secondary"/><text x="105" y="568" class="label">Cerrar de forma segura</text>
+    <text x="338" y="102" class="notekey">DIFERENCIA</text><text x="338" y="124" class="note">UNKNOWN conserva causa</text><text x="338" y="144" class="note">diagnóstica distinta de</text><text x="338" y="164" class="note">PENDING y ERROR final.</text>
+    <text x="338" y="202" class="notekey">PRIMARY</text><text x="338" y="224" class="note">GET/read-only; cadencia</text><text x="338" y="244" class="note">visible no inventada.</text>
+    <text x="338" y="282" class="notekey">REFRESH</text><text x="338" y="304" class="note">Rehidrata UNKNOWN; 0 POST,</text><text x="338" y="324" class="note">0 liberación por timeout.</text>
+    <text x="338" y="362" class="notekey">COPY</text><text x="338" y="384" class="note">Sin falso éxito/rechazo</text><text x="338" y="404" class="note">ni detalles del proveedor.</text>
+    <text x="338" y="442" class="notekey">SAFE AREA</text><text x="338" y="464" class="note">Acciones visibles, cuerpo</text><text x="338" y="484" class="note">desplazable hasta footer.</text>
+    <text x="338" y="522" class="notekey">TRAZA</text><text x="338" y="544" class="note">AC-US-05-05 · AC-US-06-01/03</text><text x="338" y="564" class="note">SC-US-05-04 · SC-US-06-01 · UAT-23/34</text>
+  </g>
+
+  <!-- UXWF-10 -->
+  <g id="UXWF-10" transform="translate(620 1600)">
+    <rect class="panel" width="560" height="720" rx="18"/>
+    <text x="18" y="34" class="subtitle">UXWF-10 · RESULT_APPROVED</text>
+    <text x="18" y="56" class="tiny">UXSCR-09 · UXST-11 · UXF-01 · v1.0.0</text>
+    <rect x="18" y="78" width="300" height="580" rx="24" class="phone"/>
+    <rect x="30" y="94" width="276" height="552" rx="20" class="surface"/>
+    <circle cx="168" cy="190" r="48" class="success"/><path d="M145 191 l16 16 31 -36" fill="none" stroke="#15704f" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="86" y="270" class="title">Pago aprobado</text>
+    <text x="57" y="306" class="body">La compra fue confirmada.</text><text x="56" y="330" class="body">La entrega se creó después de</text><text x="82" y="352" class="body">consumir la reserva.</text>
+    <rect x="48" y="386" width="240" height="82" rx="10" class="mutedbox"/><text x="62" y="416" class="small">Referencia segura</text><text x="62" y="442" class="tiny">CORRELATION_ID_SAFE</text>
+    <rect x="48" y="500" width="240" height="52" rx="9" class="primary"/><text x="92" y="532" class="inverse">Volver al producto</text>
+    <text x="62" y="586" class="small">Al volver se consulta el stock.</text>
+    <text x="338" y="102" class="notekey">CONDICIÓN</text><text x="338" y="124" class="note">Sólo APPROVED + reserva</text><text x="338" y="144" class="note">CONSUMED + entrega creada.</text>
+    <text x="338" y="182" class="notekey">ANUNCIO</text><text x="338" y="204" class="note">Título focalizado una vez;</text><text x="338" y="224" class="note">status no repite el mensaje.</text>
+    <text x="338" y="262" class="notekey">DATOS</text><text x="338" y="284" class="note">Referencia local segura;</text><text x="338" y="304" class="note">0 payload/provider ID/PII.</text>
+    <text x="338" y="342" class="notekey">RETORNO</text><text x="338" y="364" class="note">CTA explícito. Auto-retorno</text><text x="338" y="384" class="note">sólo si cancelable y anunciado.</text>
+    <text x="338" y="422" class="notekey">REFRESH</text><text x="338" y="444" class="note">Rehidrata el mismo resultado;</text><text x="338" y="464" class="note">no repite efectos.</text>
+    <text x="338" y="502" class="notekey">TRAZA</text><text x="338" y="524" class="note">AC-US-07-01/02 · AC-US-12-01/02</text><text x="338" y="544" class="note">SC-US-07-01/02 · SC-US-12-01 · UAT-01/31/43</text>
+  </g>
+
+  <!-- UXWF-11 -->
+  <g id="UXWF-11" transform="translate(1215 1600)">
+    <rect class="panel" width="560" height="720" rx="18"/>
+    <text x="18" y="34" class="subtitle">UXWF-11 · RESULT_SAFE_RECOVERY</text>
+    <text x="18" y="56" class="tiny">UXSCR-09/10 · UXST-12/13/15/16 · UXF-10/11/13</text>
+    <rect x="18" y="78" width="300" height="580" rx="24" class="phone"/>
+    <rect x="30" y="94" width="276" height="552" rx="20" class="surface"/>
+    <rect x="48" y="132" width="240" height="70" rx="12" class="warning"/><text x="76" y="161" class="label">RESULT_REQUIRES_REVIEW</text><text x="70" y="184" class="small">No prometemos entrega.</text>
+    <text x="67" y="256" class="title">Necesitamos revisar</text>
+    <text x="53" y="292" class="body">El estado canónico no permite una</text><text x="56" y="316" class="body">acción de pago adicional ahora.</text>
+    <rect x="48" y="352" width="240" height="94" rx="10" class="mutedbox"/><text x="62" y="382" class="small">Referencia para seguimiento</text><text x="62" y="408" class="tiny">CORRELATION_ID_SAFE</text><text x="62" y="430" class="small">Sin detalles internos.</text>
+    <rect x="48" y="478" width="240" height="52" rx="9" class="primary"/><text x="101" y="510" class="inverse">Consultar estado</text>
+    <rect x="48" y="548" width="240" height="48" rx="9" class="secondary"/><text x="92" y="578" class="label">Volver al producto</text>
+    <text x="338" y="102" class="notekey">VARIANTES</text><text x="338" y="124" class="note">DECLINED/ERROR final:</text><text x="338" y="144" class="note">nuevo intento sólo tras</text><text x="338" y="164" class="note">RELEASED confirmado.</text>
+    <text x="338" y="202" class="note">VOIDED/conflicto/aprobado</text><text x="338" y="222" class="note">sin reserva: revisión, no</text><text x="338" y="242" class="note">reversión automática.</text>
+    <text x="338" y="280" class="notekey">404/CAPABILITY</text><text x="338" y="302" class="note">Mensaje genérico que no</text><text x="338" y="322" class="note">confirma existencia.</text>
+    <text x="338" y="360" class="notekey">FOCO</text><text x="338" y="382" class="note">Panel/título; acción segura</text><text x="338" y="402" class="note">siguiente en orden DOM.</text>
+    <text x="338" y="440" class="notekey">PROHIBIDO</text><text x="338" y="462" class="note">Falso éxito, entrega, retry</text><text x="338" y="482" class="note">ambiguo, payload interno.</text>
+    <text x="338" y="520" class="notekey">TRAZA</text><text x="338" y="542" class="note">RF-09..13 · ERR-02/12/20/22</text><text x="338" y="562" class="note">UAT-02/06/19/26/27/29</text>
+  </g>
+
+  <!-- UXWF-12 -->
+  <g id="UXWF-12" transform="translate(1810 1600)">
+    <rect class="panel" width="560" height="720" rx="18"/>
+    <text x="18" y="34" class="subtitle">UXWF-12 · PRODUCT_RETURN</text>
+    <text x="18" y="56" class="tiny">UXSCR-11 · UXST-01/02/03 · UXF-01/10/12 · v1.0.0</text>
+    <rect x="18" y="78" width="300" height="580" rx="24" class="phone"/>
+    <rect x="30" y="92" width="276" height="48" rx="8" class="bar"/><text x="44" y="121" class="label">Tienda de prueba</text>
+    <rect x="38" y="158" width="260" height="150" rx="12" class="mutedbox"/><text x="104" y="226" class="label">PRODUCT_MEDIA</text><text x="98" y="248" class="small">espacio reservado</text>
+    <rect x="38" y="326" width="260" height="58" rx="10" class="success"/><text x="52" y="351" class="label">Estado actualizado</text><text x="52" y="372" class="small">Consulta canónica completada.</text>
+    <text x="38" y="420" class="title">PRODUCT_ALIAS</text><text x="38" y="454" class="label">AMOUNT_PRODUCT_CANONICAL</text>
+    <rect x="38" y="474" width="158" height="28" rx="14" class="tag"/><text x="52" y="493" class="small">STOCK_REFRESHED</text>
+    <rect x="38" y="548" width="260" height="52" rx="10" class="primary"/><text x="92" y="580" class="inverse">Iniciar nueva compra</text>
+    <text x="38" y="628" class="tiny">GET/refetch · 0 repetición de pago</text>
+    <text x="338" y="102" class="notekey">MOMENTO 5</text><text x="338" y="124" class="note">El retorno no es un sexto</text><text x="338" y="144" class="note">macroestado: vuelve a PRODUCT.</text>
+    <text x="338" y="182" class="notekey">REFETCH</text><text x="338" y="204" class="note">Loading estable → stock</text><text x="338" y="224" class="note">canónico o error recuperable.</text>
+    <text x="338" y="262" class="notekey">FOCO</text><text x="338" y="284" class="note">Aviso de actualización;</text><text x="338" y="304" class="note">luego flujo DOM normal.</text>
+    <text x="338" y="342" class="notekey">STOCK</text><text x="338" y="364" class="note">Aprobado consume; rechazo</text><text x="338" y="384" class="note">libera; UNKNOWN conserva.</text>
+    <text x="338" y="422" class="notekey">RESPONSIVE</text><text x="338" y="444" class="note">Banner envuelve texto;</text><text x="338" y="464" class="note">media mantiene proporción.</text>
+    <text x="338" y="502" class="notekey">TRAZA</text><text x="338" y="524" class="note">AC-US-12-01/02/03</text><text x="338" y="544" class="note">SC-US-12-01/02 · UAT-31/45</text>
+  </g>
+
+  <g transform="translate(25 2340)">
+    <text x="0" y="18" class="notekey">LEYENDA GLOBAL</text>
+    <text x="150" y="18" class="note">Orden DOM = visual; targets ≥44×44 objetivo (mínimo normativo 24×24); texto reflow a 320 CSS px; safe-area aplicada a footer; orientación no restringida.</text>
+    <text x="0" y="46" class="notekey">SCROLL</text><text x="80" y="46" class="note">Página en PRODUCT/RETURN; cuerpo interno único en diálogo. Nunca dos zonas de scroll vertical simultáneas en 320 px.</text>
+    <text x="0" y="74" class="notekey">PRIVACIDAD</text><text x="100" y="74" class="note">C4/token: 0 persistencia y 0 backend; PII: alias simbólicos; capability no visible; 0 endpoint, credencial, analítica o solicitud.</text>
+  </g>
+</svg>
