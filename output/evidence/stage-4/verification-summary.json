@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-14T22:55:36.9119986-05:00",
+  "mode": "local-fake-only",
+  "externalMutations": 0,
+  "providerRequests": 0,
+  "toolchain": {
+    "node": "24.19.0",
+    "pnpm": "11.19.0",
+    "typescript": "5.9.3"
+  },
+  "verify": {
+    "status": "PASS",
+    "workspace": "PASS",
+    "format": "PASS",
+    "lintErrors": 0,
+    "typecheckErrors": 0,
+    "boundaryViolations": 0,
+    "cycles": 0,
+    "buildWeb": "PASS",
+    "buildApi": "PASS"
+  },
+  "freshClone": {
+    "status": "PASS",
+    "verifiedCommit": "de0f58b5f44b99a0a667d2388e4da24e5f622e92",
+    "elapsedSeconds": 86.4,
+    "frozenInstall": "PASS",
+    "verify": "PASS",
+    "trackedDiffFiles": 0
+  },
+  "tests": {
+    "api": 34,
+    "web": 21,
+    "infra": 9,
+    "contractSubset": 5,
+    "smokePassed": 6,
+    "smokeTotal": 6
+  },
+  "coverage": {
+    "api": {
+      "statements": 97.81,
+      "branches": 93.91,
+      "functions": 100,
+      "lines": 97.47
+    },
+    "web": {
+      "statements": 98.94,
+      "branches": 97.56,
+      "functions": 95.23,
+      "lines": 98.8
+    }
+  },
+  "openapi": {
+    "version": "3.1.2",
+    "paths": 14,
+    "operations": 14,
+    "apiIds": 14,
+    "localReferences": 251,
+    "remoteReferences": 0,
+    "drift": 0,
+    "sha256": "6bddd9e44e6c1e7c1b8a64bb43600ed8c11e0c7792708ade330ee39e8d84231e"
+  },
+  "security": {
+    "filesScanned": 178,
+    "confirmedSecretFindings": 0,
+    "gitHistory": "PASS",
+    "knownHighVulnerabilities": 0,
+    "knownCriticalVulnerabilities": 0,
+    "workflowPolicy": "PASS_2_OF_2"
+  },
+  "infrastructure": {
+    "tests": "PASS_9_OF_9",
+    "synth": "PASS_LOCAL_NO_DEPLOY",
+    "deployments": 0,
+    "iamWildcardResources": 0,
+    "scheduler": "DISABLED"
+  },
+  "gates": {
+    "GATE-E4-01": {
+      "technicalResult": "PASS",
+      "formalSignOff": "PENDING_USER_DECISION_OWNER"
+    },
+    "GATE-E4-02": {
+      "technicalResult": "PASS",
+      "formalSignOff": "PENDING_USER_DECISION_OWNER"
+    },
+    "GATE-E4-03": {
+      "result": "BLOCKED",
+      "reasons": ["CI_REMOTE_NOT_EXECUTED", "P0_DECISIONS_REQUIRE_HUMAN_SIGN_OFF"]
+    }
+  }
+}

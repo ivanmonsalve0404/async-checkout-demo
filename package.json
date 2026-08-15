@@ -1,0 +1,48 @@
+{
+  "name": "checkout-foundation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Foundation monorepo for a secure asynchronous checkout demo",
+  "engines": {
+    "node": ">=24.19.0 <25",
+    "pnpm": "11.19.0"
+  },
+  "packageManager": "pnpm@11.19.0",
+  "scripts": {
+    "bootstrap": "pnpm install --frozen-lockfile",
+    "dev": "concurrently -k -n api,web -c blue,green \"pnpm dev:api\" \"pnpm dev:web\"",
+    "dev:api": "pnpm --filter @checkout/api dev",
+    "dev:web": "pnpm --filter @checkout/web dev",
+    "seed": "pnpm --filter @checkout/api seed",
+    "build": "pnpm --filter @checkout/contracts build && pnpm --filter @checkout/api build && pnpm --filter @checkout/web build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "boundaries": "node scripts/check-boundaries.mjs --self-test && node scripts/check-boundaries.mjs",
+    "workspace:check": "node scripts/check-workspace.mjs",
+    "test": "pnpm test:unit && pnpm test:contract",
+    "test:unit": "pnpm --filter @checkout/api test && pnpm --filter @checkout/web test && pnpm --filter @checkout/infra test",
+    "test:coverage": "pnpm --filter @checkout/api test:coverage && pnpm --filter @checkout/web test:coverage",
+    "test:contract": "pnpm --filter @checkout/contracts test && pnpm --filter @checkout/api test:contract",
+    "test:smoke": "node scripts/smoke/run.mjs",
+    "openapi:lint": "pnpm --filter @checkout/contracts lint:openapi",
+    "contracts:generate": "pnpm --filter @checkout/contracts generate",
+    "contracts:check": "pnpm --filter @checkout/contracts check",
+    "infra:synth": "pnpm --filter @checkout/infra synth",
+    "security:secrets": "node scripts/security/scan-secrets.mjs",
+    "security:dependencies": "pnpm audit --audit-level high --prod",
+    "verify": "pnpm workspace:check && pnpm format:check && pnpm lint && pnpm boundaries && pnpm typecheck && pnpm openapi:lint && pnpm contracts:check && pnpm test:coverage && pnpm test:contract && pnpm build && pnpm infra:synth && pnpm security:secrets && pnpm security:dependencies && pnpm test:smoke"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.61.1",
+    "@types/node": "24.13.3",
+    "concurrently": "10.0.4",
+    "eslint": "10.8.1",
+    "prettier": "3.9.6",
+    "tsx": "4.23.12",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.67.0"
+  }
+}

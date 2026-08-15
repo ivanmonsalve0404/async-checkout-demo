@@ -1,0 +1,32 @@
+{
+  "name": "@checkout/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src/index.ts",
+    "src/generated/openapi.d.ts"
+  ],
+  "engines": {
+    "node": ">=24.19.0 <25"
+  },
+  "scripts": {
+    "build": "node ../../scripts/contracts/contracts.mjs check",
+    "lint:openapi": "node ../../scripts/contracts/contracts.mjs validate",
+    "generate": "node ../../scripts/contracts/contracts.mjs generate",
+    "check": "node ../../scripts/contracts/contracts.mjs check",
+    "test": "node ../../scripts/contracts/contracts.mjs test",
+    "typecheck": "tsc --noEmit --strict --skipLibCheck false --target ES2023 --module NodeNext --moduleResolution NodeNext src/index.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}
