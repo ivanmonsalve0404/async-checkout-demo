@@ -19,5 +19,5 @@ module.exports = {
   preset: 'ts-jest',
   rootDir: '.',
   testEnvironment: 'node',
-  testMatch: ['<rootDir>/src/**/*.spec.ts'],
+  testRegex: '\\.spec\\.ts$',
 };
