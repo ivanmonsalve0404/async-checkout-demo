@@ -101,7 +101,7 @@ export const CheckoutDialog = ({
         checkoutRecovered({
           checkoutId: progress.checkoutId,
           ...(progress.transactionId === undefined
-            ? {}
+            ? { idempotencyKey: progress.idempotencyKey ?? createIdempotencyKey() }
             : { transactionId: progress.transactionId }),
         }),
       );
@@ -312,6 +312,7 @@ export const CheckoutDialog = ({
         await checkoutQuery.refetch();
         dispatch(stepChanged('payment'));
       } else if (error instanceof PaymentCommandError && error.status === 422) {
+        await configurationQuery.refetch();
         dispatch(stepChanged('payment'));
       } else if (
         error instanceof PaymentCommandError &&

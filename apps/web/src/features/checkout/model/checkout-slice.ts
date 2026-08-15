@@ -43,10 +43,16 @@ const checkoutSlice = createSlice({
     },
     checkoutRecovered: (
       state,
-      action: PayloadAction<{ checkoutId: string; transactionId?: string }>,
+      action: PayloadAction<{
+        checkoutId: string;
+        transactionId?: string;
+        idempotencyKey?: string;
+      }>,
     ) => {
       state.checkoutId = action.payload.checkoutId;
       state.transactionId = action.payload.transactionId;
+      state.idempotencyKey =
+        action.payload.transactionId === undefined ? action.payload.idempotencyKey : undefined;
       state.step = action.payload.transactionId === undefined ? 'payment' : 'status';
       state.modalOpen = true;
     },

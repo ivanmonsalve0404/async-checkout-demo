@@ -110,6 +110,7 @@ let checkoutResult: Record<string, unknown>;
 let transactionResult: Record<string, unknown>;
 let checkoutRefetch: jest.Mock;
 let transactionRefetch: jest.Mock;
+let configurationRefetch: jest.Mock;
 let createTrigger: jest.Mock;
 let customerTrigger: jest.Mock;
 let deliveryTrigger: jest.Mock;
@@ -117,6 +118,7 @@ let deliveryTrigger: jest.Mock;
 const configureHooks = (transactionData: TransactionResponse | undefined = undefined): void => {
   checkoutRefetch = jest.fn().mockResolvedValue({ data: checkout });
   transactionRefetch = jest.fn().mockResolvedValue({ data: transactionData });
+  configurationRefetch = jest.fn().mockResolvedValue({ data: configuration });
   createTrigger = jest.fn(() => ({
     unwrap: () =>
       Promise.resolve({
@@ -166,7 +168,7 @@ const configureHooks = (transactionData: TransactionResponse | undefined = undef
     data: configuration,
     isLoading: false,
     isError: false,
-    refetch: jest.fn(),
+    refetch: configurationRefetch,
   } as never);
   mockTransaction.mockImplementation(() => transactionResult as never);
   mockCustomer.mockReturnValue([customerTrigger] as never);
@@ -182,13 +184,14 @@ const configureHooks = (transactionData: TransactionResponse | undefined = undef
 const renderDialog = (
   mode: 'capture' | 'status' = 'capture',
   prepared = true,
+  storeOverride?: AppStore,
 ): {
   readonly store: AppStore;
   readonly onClose: jest.Mock;
   readonly onStatusRoute: jest.Mock;
   readonly onReturn: jest.Mock;
 } => {
-  const store = createAppStore();
+  const store = storeOverride ?? createAppStore();
   if (prepared) {
     if (mode === 'status') {
       store.dispatch(
@@ -348,6 +351,7 @@ describe('CheckoutDialog orchestration', () => {
   it.each([
     [new PaymentCommandError(409, 'QUOTE_STALE'), 'cleared'],
     [new PaymentCommandError(412, 'PRECONDITION_FAILED'), 'payment'],
+    [new PaymentCommandError(422, 'PAYMENT_TOKEN_REJECTED'), 'acceptance-refresh'],
     [new TypeError('network'), 'unknown'],
   ] as const)('recovers safely from submit failure %s', async (failure, expected) => {
     mockSubmit.mockRejectedValue(failure);
@@ -361,6 +365,9 @@ describe('CheckoutDialog orchestration', () => {
     } else if (expected === 'payment') {
       expect(await screen.findByTestId('checkout-step-payment')).toBeVisible();
       expect(checkoutRefetch).toHaveBeenCalled();
+    } else if (expected === 'acceptance-refresh') {
+      expect(await screen.findByTestId('checkout-step-payment')).toBeVisible();
+      expect(configurationRefetch).toHaveBeenCalledTimes(1);
     } else {
       expect(await screen.findByTestId('transaction-unknown')).toBeVisible();
       expect(screen.queryByTestId('checkout-submit')).not.toBeInTheDocument();
@@ -390,6 +397,20 @@ describe('CheckoutDialog orchestration', () => {
     };
     renderDialog('capture');
     expect(await screen.findByTestId('checkout-expired')).toHaveTextContent('sesión venció');
+  });
+
+  it('creates a fresh idempotency key when persistent recovery has no session state', async () => {
+    localStorage.setItem(
+      'checkout.progress.ids.v1',
+      JSON.stringify({ checkoutId: checkout.checkoutId }),
+    );
+    sessionStorage.clear();
+    const recoveredStore = createAppStore();
+    renderDialog('capture', false, recoveredStore);
+    await waitFor(() =>
+      expect(recoveredStore.getState().checkout.idempotencyKey).toMatch(/^idem_[a-f0-9]{36}$/),
+    );
+    expect(createTrigger).not.toHaveBeenCalled();
   });
 
   it('traps focus, closes with Escape, and restores the launcher', async () => {
