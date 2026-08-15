@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_EC2_METADATA_DISABLED: 'true'
+  NODE_VERSION: '24.19.0'
+  PAYMENT_ADAPTER: fake
+  PAYMENTS_ENABLED: 'false'
+  PNPM_VERSION: '11.19.0'
+  TOKENIZATION_MODE: disabled
+
+jobs:
+  metadata:
+    name: Metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Validate required metadata and workflow policy
+        shell: bash
+        run: |
+          test -f package.json
+          test -f pnpm-lock.yaml
+          test -f pnpm-workspace.yaml
+          test -f tsconfig.base.json
+          test -f output/architecture/openapi.yaml
+          node scripts/security/validate-workflows.mjs
+          node scripts/security/scan-repository.mjs
+
+  verify:
+    name: Verify
+    needs: metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Activate the pinned package manager
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@${PNPM_VERSION} --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+      - name: Install from the frozen lockfile
+        run: pnpm install --frozen-lockfile
+      - name: Install the smoke-test browser
+        run: pnpm exec playwright install --with-deps --only-shell chromium
+      - name: Run the complete local verification contract
+        run: pnpm verify
+      - name: Preserve sanitized verification reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verification-reports
+          if-no-files-found: ignore
+          path: |
+            apps/api/coverage/
+            apps/web/coverage/
+            infra/cdk.out/*.template.json
+          retention-days: 7
+
+  summary:
+    name: Summary
+    if: ${{ always() }}
+    needs: [metadata, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Consolidate blocking status
+        shell: bash
+        run: |
+          echo "metadata=${{ needs.metadata.result }}" >> "${GITHUB_STEP_SUMMARY}"
+          echo "verify=${{ needs.verify.result }}" >> "${GITHUB_STEP_SUMMARY}"
+          test "${{ needs.metadata.result }}" = "success"
+          test "${{ needs.verify.result }}" = "success"

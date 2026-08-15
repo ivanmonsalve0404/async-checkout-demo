@@ -1,0 +1,50 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_EC2_METADATA_DISABLED: 'true'
+  NODE_VERSION: '24.19.0'
+  PNPM_VERSION: '11.19.0'
+
+jobs:
+  security:
+    name: Security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out complete history
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Activate the pinned package manager
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@${PNPM_VERSION} --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+      - name: Install without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verify security controls themselves
+        run: |
+          node scripts/security/scan-repository.mjs --self-test
+          node scripts/security/validate-workflows.mjs --self-test
+          node scripts/security/validate-workflows.mjs
+      - name: Scan the worktree and complete Git history
+        run: node scripts/security/scan-repository.mjs --history
+      - name: Audit production dependencies
+        run: pnpm security:dependencies
