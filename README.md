@@ -31,16 +31,16 @@ Servicios locales:
 
 ## Comandos principales
 
-| Comando | Propósito |
-| --- | --- |
-| `pnpm dev` | inicia API y SPA locales |
-| `pnpm seed` | aplica la semilla idempotente al adapter configurado |
-| `pnpm test:coverage` | exige 85 % en las cuatro métricas por aplicación |
-| `pnpm test:contract` | valida OpenAPI, tipos y respuestas HTTP |
-| `pnpm test:smoke` | ejecuta seis recorridos browser sin origen externo |
-| `pnpm infra:synth` | sintetiza CloudFormation; no despliega |
-| `pnpm security:secrets` | escanea fuentes, builds y plantilla sintetizada |
-| `pnpm verify` | ejecuta el gate local completo y falla ante cualquier control rojo |
+| Comando                 | Propósito                                                          |
+| ----------------------- | ------------------------------------------------------------------ |
+| `pnpm dev`              | inicia API y SPA locales                                           |
+| `pnpm seed`             | aplica la semilla idempotente al adapter configurado               |
+| `pnpm test:coverage`    | exige 85 % en las cuatro métricas por aplicación                   |
+| `pnpm test:contract`    | valida OpenAPI, tipos y respuestas HTTP                            |
+| `pnpm test:smoke`       | ejecuta seis recorridos browser sin origen externo                 |
+| `pnpm infra:synth`      | sintetiza CloudFormation; no despliega                             |
+| `pnpm security:secrets` | escanea fuentes, builds y plantilla sintetizada                    |
+| `pnpm verify`           | ejecuta el gate local completo y falla ante cualquier control rojo |
 
 ## Arquitectura
 

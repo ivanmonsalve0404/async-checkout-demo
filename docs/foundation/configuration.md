@@ -18,12 +18,12 @@ Cualquier valor que parezca habilitar proveedor real, producción, tokenización
 
 ## Clasificación
 
-| Clase | Ejemplos de foundation | Superficie |
-| --- | --- | --- |
-| Pública | ID opaco de producto, origen público local | build web |
-| Interna | tablas locales, adapter, nivel de log | backend/IaC |
-| Secreta | ninguna necesaria en etapa 4 | fuera del repositorio |
-| Prohibida | PAN, CVC, tarjeta, credenciales compartidas | ninguna |
+| Clase     | Ejemplos de foundation                      | Superficie            |
+| --------- | ------------------------------------------- | --------------------- |
+| Pública   | ID opaco de producto, origen público local  | build web             |
+| Interna   | tablas locales, adapter, nivel de log       | backend/IaC           |
+| Secreta   | ninguna necesaria en etapa 4                | fuera del repositorio |
+| Prohibida | PAN, CVC, tarjeta, credenciales compartidas | ninguna               |
 
 `.env.example` contiene únicamente valores locales no operativos contra terceros. `.env`, variantes locales, certificados, credenciales y artefactos de autenticación están ignorados.
 
