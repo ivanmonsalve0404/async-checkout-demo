@@ -167,6 +167,13 @@ function collectTextFiles(directory) {
   return files;
 }
 
+function withoutGitIndexMetadata(text) {
+  return text
+    .split(/\r?\n/u)
+    .filter((line) => !/^index [0-9a-f]{7,64}\.\.[0-9a-f]{7,64}(?: [0-7]{6})?$/u.test(line))
+    .join('\n');
+}
+
 function scanHistory(rootDirectory) {
   const inside = spawnSync('git', ['-C', rootDirectory, 'rev-parse', '--is-inside-work-tree'], {
     encoding: 'utf8',
@@ -195,7 +202,7 @@ function scanHistory(rootDirectory) {
   if (history.status !== 0) {
     throw new Error('git history scan failed without exposing command output');
   }
-  return scanText('git-history', history.stdout);
+  return scanText('git-history', withoutGitIndexMetadata(history.stdout));
 }
 
 function makeLuhnCandidate() {
@@ -226,6 +233,13 @@ function selfTest() {
     0,
   );
   process.stdout.write('secret-scan self-test: PASS\n');
+  const luhnCandidate = makeLuhnCandidate();
+  assert.equal(
+    scanText('git-metadata', withoutGitIndexMetadata(`index ${luhnCandidate}..abcdef0 100644`))
+      .length,
+    0,
+  );
+  assert.equal(scanText('changed-content', `+${luhnCandidate}`)[0]?.rule, 'PAN_LUHN');
 }
 
 function argumentValue(name) {
