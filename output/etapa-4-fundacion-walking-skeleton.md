@@ -16,7 +16,7 @@ La fundación técnica quedó implementada y verificada en modo `local-fake-only
 | Proveedor/sandbox/AWS | 0 requests, 0 transacciones, 0 deploys |
 | `GATE-E4-01` | `PASS`; aprobado por `USER_DECISION_OWNER` el 2026-08-15 |
 | `GATE-E4-02` | `PASS`; aprobado por `USER_DECISION_OWNER` el 2026-08-15 |
-| `GATE-E4-03` | `BLOCKED`: CI remota falló durante bootstrap; corrección pendiente de validación remota |
+| `GATE-E4-03` | `BLOCKED`: CI remota verde; branch protection pendiente |
 
 La implementación no habilita pagos, tokenización, sandbox, webhook real, AWS ni etapa 5 formal. El `USER_DECISION_OWNER` aprobó `CHG-17`, las decisiones E4 y los ADR propuestos; `ADR-09` continúa bloqueado para integración real.
 
@@ -217,7 +217,7 @@ TLS 1.2+ con dominio propio, certificado, Budget y PITR siguen bloqueados por de
 | Worktree + builds + CloudFormation | `PASS`, 178 archivos en la ejecución final |
 | Historia Git | `PASS` |
 | Vulnerabilidades high/critical conocidas | 0 / 0 |
-| CI remota | `EXECUTED_FAILED`; `setup-node@v5` detectó pnpm antes de Corepack |
+| CI remota | `PASS`; workflows `CI` y `Security` verdes en PR #2 |
 | Branch protection remota | `PENDING_VERIFICATION` |
 
 El detector PAN exige longitud, Luhn y un MII no cero; esto evita rangos ISO generados sin dejar de detectar el fixture positivo del self-test. Los hallazgos se reportan sólo como archivo/línea/regla.
@@ -278,7 +278,7 @@ El umbral bloqueante es 85 % por métrica y aplicación. Los tests verifican com
 | `EVD-E4-12` | secretos | worktree + historia, 0 hallazgos, `PASS` |
 | `EVD-E4-13` | dependencias | 0 high/critical conocidas, `PASS` |
 | `EVD-E4-14` | skeleton | JSON smoke + §13, `PASS` |
-| `EVD-E4-15` | CI verde remota | `EXECUTED_FAILED`; corrección preparada, reejecución pendiente |
+| `EVD-E4-15` | CI verde remota | `PASS`; runs `31891916679` y `31891916645` sobre `a0f5e81` |
 | `EVD-E4-16` | trazabilidad | §16, `PASS` |
 | `EVD-E4-17` | decisiones/riesgos/desviaciones | §§3 y 17, `PASS` |
 
@@ -317,7 +317,7 @@ Cobertura de objetivos: 12/12 enlazados; 10 `PASS`, 2 `BLOCKED` con causa y owne
 | `ART-FND-06` | API persistence/seed | `FND-22..26` | EVD-07 | `GREEN` |
 | `ART-FND-07` | `packages/contracts` | `FND-12/13` | EVD-10 | `GREEN` |
 | `ART-FND-08` | `infra` | `FND-36..38` | EVD-11 | `SYNTHESIZABLE` |
-| `ART-FND-09` | `.github/workflows/ci.yml` | `FND-39/41` | EVD-15 | `REMOTE_FAILED_FIX_PENDING` |
+| `ART-FND-09` | `.github/workflows/ci.yml` | `FND-39/41` | EVD-15 | `GREEN_REMOTE` |
 | `ART-FND-10` | workflows/scripts security | `FND-40` | EVD-12/13 | `GREEN_LOCAL` |
 | `ART-FND-11` | web + API + adapter | `FND-32..35` | EVD-14 | `DEMONSTRATED` |
 | `ART-FND-12` | este reporte/evidencias | `FND-44..47` | EVD-16/17 | `APPROVED` |
@@ -411,7 +411,7 @@ Cobertura de tareas: 47/47 con estado; cero `N/A` sin justificación.
 | `FNDAUD-27` | `PASS` | README validado en clon |
 | `FNDAUD-28` | `PASS` | EVD-01..17 documentadas |
 | `FNDAUD-29` | `PASS` | decisiones P0 aprobadas; `ADR-09` bloqueado sólo para integración real |
-| `FNDAUD-30` | `BLOCKED` | CI remota verde y branch protection pendientes |
+| `FNDAUD-30` | `BLOCKED` | branch protection pendiente |
 
 ## 17. Riesgos, deuda y excepciones
 
@@ -431,10 +431,10 @@ Cobertura de tareas: 47/47 con estado; cero `N/A` sin justificación.
 | `RSK-E4-12` | `MITIGATED` | RTK consume API local real | FE |
 | `RSK-E4-13` | `MITIGATED` | sólo synth, no scripts deploy | CLOUD |
 | `RSK-E4-14` | `CONTROLLED` | remoto público neutral y merge con historia preservada | CANDIDATE |
-| `RSK-E4-15` | `ACTIVE_BLOCKER` | GATE-E4-03 espera CI verde y branch protection | repo owner |
+| `RSK-E4-15` | `ACTIVE_BLOCKER` | GATE-E4-03 espera branch protection | repo owner |
 | `RSK-E4-16` | `CONTROLLED` | semántica E3→E4 registrada en `CHG-17` | USER_DECISION_OWNER |
 | `RSK-E4-17` | `CONTROLLED` | OpenAPI prevalece; narrativa E3 no editada | ARCH |
-| `RSK-E4-18` | `ACTIVE` | CI remota falló en bootstrap; corrección pendiente de reejecución | repo owner |
+| `RSK-E4-18` | `MITIGATED` | CI y Security verdes en PR #2 | repo owner |
 | `RSK-E4-19` | `BLOCKED` | TLS propio requiere dominio/certificado | CLOUD/APPSEC |
 | `RSK-E4-20` | `OPEN_CONTROLLED` | 81 flags CDK congelados por lock | CLOUD; próxima actualización |
 
@@ -498,11 +498,11 @@ Deuda no bloqueante local: contract suite compartida memoria/Dynamo, fijación r
 | high/critical | 0/0 | `PASS` |
 | smoke | 6/6 | `PASS` |
 | artefactos físicos | 12/12 | `PASS`; aprobación/CI indicada por estado |
-| evidencias documentadas | 17/17 | `PASS` documental; EVD-15 ejecutada con fallo de bootstrap |
-| CI verde en commit/PR | requerida | `BLOCKED`; corrección pendiente de validación remota |
+| evidencias documentadas | 17/17 | `PASS` |
+| CI verde en commit/PR | requerida | `PASS`; `CI` y `Security` verdes sobre `a0f5e81` |
 | decisiones P0 abiertas | 0 | `PASS`; aprobación recibida, `ADR-09` bloqueado sólo para integración real |
 
-**Resultado: `GATE-E4-03 = BLOCKED`.** No se habilita formalmente la etapa 5. Para desbloquear: obtener los checks `CI / Summary` y `Security / Security` verdes y aplicar branch protection.
+**Resultado: `GATE-E4-03 = BLOCKED`.** No se habilita formalmente la etapa 5. Los checks `CI / Summary` y `Security / Security` están verdes; sólo falta aplicar branch protection a `master`.
 
 ## 21. Handoff a etapa 5
 
