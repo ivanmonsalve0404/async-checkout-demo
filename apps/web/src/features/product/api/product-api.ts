@@ -34,6 +34,7 @@ export const productApi = baseApi.injectEndpoints({
     getProduct: builder.query<ProductResponse, string>({
       query: buildProductRequest,
       transformResponse: parseProductResponse,
+      providesTags: (_result, _error, productId) => [{ type: 'Product', id: productId }],
     }),
   }),
 });

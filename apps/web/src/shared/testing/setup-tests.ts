@@ -7,6 +7,12 @@ Object.defineProperty(globalThis, 'TextEncoder', {
   value: TextEncoder,
 });
 
+Object.defineProperty(globalThis, 'fetch', {
+  configurable: true,
+  writable: true,
+  value: jest.fn(),
+});
+
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
   value: (query: string) => ({
