@@ -16,7 +16,7 @@ La fundación técnica quedó implementada y verificada en modo `local-fake-only
 | Proveedor/sandbox/AWS | 0 requests, 0 transacciones, 0 deploys |
 | `GATE-E4-01` | `PASS`; aprobado por `USER_DECISION_OWNER` el 2026-08-15 |
 | `GATE-E4-02` | `PASS`; aprobado por `USER_DECISION_OWNER` el 2026-08-15 |
-| `GATE-E4-03` | `BLOCKED`: CI remota verde; branch protection pendiente |
+| `GATE-E4-03` | `PASS`; CI remota verde y `master` protegida |
 
 La implementación no habilita pagos, tokenización, sandbox, webhook real, AWS ni etapa 5 formal. El `USER_DECISION_OWNER` aprobó `CHG-17`, las decisiones E4 y los ADR propuestos; `ADR-09` continúa bloqueado para integración real.
 
@@ -218,7 +218,7 @@ TLS 1.2+ con dominio propio, certificado, Budget y PITR siguen bloqueados por de
 | Historia Git | `PASS` |
 | Vulnerabilidades high/critical conocidas | 0 / 0 |
 | CI remota | `PASS`; workflows `CI` y `Security` verdes en PR #2 |
-| Branch protection remota | `PENDING_VERIFICATION` |
+| Branch protection remota | `PASS`; GitHub reporta `master protected=true` |
 
 El detector PAN exige longitud, Luhn y un MII no cero; esto evita rangos ISO generados sin dejar de detectar el fixture positivo del self-test. Los hallazgos se reportan sólo como archivo/línea/regla.
 
@@ -282,7 +282,7 @@ El umbral bloqueante es 85 % por métrica y aplicación. Los tests verifican com
 | `EVD-E4-16` | trazabilidad | §16, `PASS` |
 | `EVD-E4-17` | decisiones/riesgos/desviaciones | §§3 y 17, `PASS` |
 
-`verification-summary.json` contiene el resumen machine-readable. La evidencia registra estados bloqueados; no convierte una configuración CI local en una ejecución remota.
+`verification-summary.json` contiene el resumen machine-readable. `EVD-E4-15` enlaza la ejecución remota; los bloqueos de sandbox, cloud e integración real permanecen explícitos.
 
 ## 16. Trazabilidad
 
@@ -299,11 +299,11 @@ El umbral bloqueante es 85 % por métrica y aplicación. Los tests verifican com
 | `OBJ-E4-07`, `RF-16` | `DEC-E4-01` | `FND-22..26` | port + memory/Dynamo/seed | adapter tests | `EVD-E4-07` | E4-02 | `PASS` |
 | `OBJ-E4-08`, `US-01` | `DEC-E4-04` | `FND-32..35` | web/API/smoke | `SMK-E4-01..06` | `EVD-E4-14` | E4-02 | `PASS` |
 | `OBJ-E4-09`, `RNF-10` | `DEC-E4-INF-01..04` | `FND-36..38` | `infra` | 9 IaC + synth | `EVD-E4-11` | E4-03 | `PASS` |
-| `OBJ-E4-10`, `RNF-08/09` | workflow mínimo | `FND-39/41/43` | CI + root verify | local `verify` | `EVD-E4-04..15` | E4-03 | `BLOCKED` sólo por ejecución remota |
+| `OBJ-E4-10`, `RNF-08/09` | workflow mínimo | `FND-39/41/43` | CI + root verify | local `verify` | `EVD-E4-04..15` | E4-03 | `PASS` local y remoto |
 | `OBJ-E4-11`, `RNF-06/13/14/18..20` | fake-only | `FND-03/40/45` | guards/scanners/workflows | self-tests/history | `EVD-E4-12/13` | E4-01/03 | `PASS` |
 | `OBJ-E4-12` | `CHG-17` | `FND-44..47` | reporte/handoff | auditoría | `EVD-E4-16/17` | E4-03 | `PASS`; aprobación recibida |
 
-Cobertura de objetivos: 12/12 enlazados; 10 `PASS`, 2 `BLOCKED` con causa y owner.
+Cobertura de objetivos: 12/12 enlazados y en `PASS` para el alcance E4 fake-only.
 
 ### 16.2 Artefactos
 
@@ -322,7 +322,7 @@ Cobertura de objetivos: 12/12 enlazados; 10 `PASS`, 2 `BLOCKED` con causa y owne
 | `ART-FND-11` | web + API + adapter | `FND-32..35` | EVD-14 | `DEMONSTRATED` |
 | `ART-FND-12` | este reporte/evidencias | `FND-44..47` | EVD-16/17 | `APPROVED` |
 
-Cobertura física: 12/12 presentes; aprobación/ejecución remota pendiente donde se indica.
+Cobertura física: 12/12 presentes; aprobación y ejecución remota verificadas.
 
 ### 16.3 Tareas `FND-01..47`
 
@@ -366,7 +366,7 @@ Cobertura física: 12/12 presentes; aprobación/ejecución remota pendiente dond
 | `FND-36` | CDK app/stack | `PASS` |
 | `FND-37` | 9 tests IaC | `PASS` |
 | `FND-38` | synth sin deploy | `PASS` |
-| `FND-39` | CI creada | `PASS`; ejecución remota separada `BLOCKED` |
+| `FND-39` | CI creada | `PASS`; ejecución remota verde |
 | `FND-40` | security controls | `PASS` |
 | `FND-41` | artifacts/report paths | `PASS`; upload remoto no ejecutado |
 | `FND-42` | fresh clone | `PASS`, commit `de0f58b`, 86.4 s, diff 0 |
@@ -411,13 +411,13 @@ Cobertura de tareas: 47/47 con estado; cero `N/A` sin justificación.
 | `FNDAUD-27` | `PASS` | README validado en clon |
 | `FNDAUD-28` | `PASS` | EVD-01..17 documentadas |
 | `FNDAUD-29` | `PASS` | decisiones P0 aprobadas; `ADR-09` bloqueado sólo para integración real |
-| `FNDAUD-30` | `BLOCKED` | branch protection pendiente |
+| `FNDAUD-30` | `PASS` | gates firmados, CI verde y `master` protegida |
 
 ## 17. Riesgos, deuda y excepciones
 
 | ID | Estado | Control/residual | Owner / cierre |
 | --- | --- | --- | --- |
-| `RSK-E4-01` | `CONTROLLED` | `CHG-17`, scope fake-only | ARCH; confirmar antes de E5 |
+| `RSK-E4-01` | `CONTROLLED` | `CHG-17` confirmado, scope fake-only | ARCH |
 | `RSK-E4-02` | `MITIGATED` | sólo 4 workspaces reales | ARCH |
 | `RSK-E4-03` | `MITIGATED` | tests de conducta y errores | QA |
 | `RSK-E4-04` | `CONTROLLED` | puerto común + tests por adapter | ARCH; contract suite común en E5 |
@@ -431,7 +431,7 @@ Cobertura de tareas: 47/47 con estado; cero `N/A` sin justificación.
 | `RSK-E4-12` | `MITIGATED` | RTK consume API local real | FE |
 | `RSK-E4-13` | `MITIGATED` | sólo synth, no scripts deploy | CLOUD |
 | `RSK-E4-14` | `CONTROLLED` | remoto público neutral y merge con historia preservada | CANDIDATE |
-| `RSK-E4-15` | `ACTIVE_BLOCKER` | GATE-E4-03 espera branch protection | repo owner |
+| `RSK-E4-15` | `MITIGATED` | GATE-E4-03 aprobado; CI verde y branch protection activa | repo owner |
 | `RSK-E4-16` | `CONTROLLED` | semántica E3→E4 registrada en `CHG-17` | USER_DECISION_OWNER |
 | `RSK-E4-17` | `CONTROLLED` | OpenAPI prevalece; narrativa E3 no editada | ARCH |
 | `RSK-E4-18` | `MITIGATED` | CI y Security verdes en PR #2 | repo owner |
@@ -447,7 +447,7 @@ Desviaciones controladas:
 | `DEV-E4-02` | topología fallback mostraba cinco packages | sólo `contracts`; datos dentro del adapter API | evita paquetes vacíos |
 | `DEV-E4-03` | logs E0 14 d | logs E3/E4 7 d | IaC implementa requisito vigente |
 
-Deuda no bloqueante local: contract suite compartida memoria/Dynamo, fijación razonada de flags CDK y runner cross-browser P1. Deuda/bloqueos externos: CI remota, branch protection, dominio/TLS, Budget/PITR y aprobaciones P0.
+Deuda no bloqueante local: contract suite compartida memoria/Dynamo, fijación razonada de flags CDK y runner cross-browser P1. Bloqueos externos posteriores: dominio/TLS, Budget/PITR y autorizaciones para integración real.
 
 ## 18. Evaluación GATE-E4-01
 
@@ -499,14 +499,14 @@ Deuda no bloqueante local: contract suite compartida memoria/Dynamo, fijación r
 | smoke | 6/6 | `PASS` |
 | artefactos físicos | 12/12 | `PASS`; aprobación/CI indicada por estado |
 | evidencias documentadas | 17/17 | `PASS` |
-| CI verde en commit/PR | requerida | `PASS`; `CI` y `Security` verdes sobre `a0f5e81` |
+| CI verde en commit/PR | requerida | `PASS`; `CI` y `Security` verdes sobre `b3fe888` |
 | decisiones P0 abiertas | 0 | `PASS`; aprobación recibida, `ADR-09` bloqueado sólo para integración real |
 
-**Resultado: `GATE-E4-03 = BLOCKED`.** No se habilita formalmente la etapa 5. Los checks `CI / Summary` y `Security / Security` están verdes; sólo falta aplicar branch protection a `master`.
+**Resultado: `GATE-E4-03 = PASS`.** La etapa 5 queda habilitada formalmente en alcance local/fake-only. Sandbox, adapter real, webhook real y despliegue siguen fuera de autoridad.
 
 ## 21. Handoff a etapa 5
 
-Estado formal: `BLOCKED` por `GATE-E4-03`; no iniciar integración real ni sandbox. La foundation sí deja preparado el siguiente trabajo local una vez exista autorización:
+Estado formal: `READY` para etapa 5 local/fake-only; no iniciar integración real ni sandbox:
 
 1. producto/stock: ya vertical y reutilizable;
 2. sesión de checkout y capability local;
@@ -530,11 +530,9 @@ Interfaces disponibles:
 
 Comandos de handoff: `pnpm bootstrap`, `pnpm dev`, `pnpm seed`, `pnpm verify`, `pnpm test:smoke`, `pnpm infra:synth`. No ejecutar `cdk deploy/bootstrap/destroy`, comandos AWS, dashboard del proveedor ni requests sandbox.
 
-Acciones del owner antes de E5:
+Restricciones posteriores a la habilitación de E5:
 
-1. revisar y firmar `CHG-17`, `DEC-E4-*`, gates y campos P0;
-2. crear remoto neutral autorizado, ejecutar CI y proteger `main`;
-3. conservar el adapter real bloqueado hasta `AUTH-01/AUTH-02` y `SPK-02`;
-4. resolver dominio/TLS, presupuesto, PITR y región antes de cualquier release.
+1. conservar el adapter real bloqueado hasta `AUTH-01/AUTH-02` y `SPK-02`;
+2. resolver dominio/TLS, presupuesto, PITR y región antes de cualquier release.
 
 El repositorio remoto público conserva el historial temático y el merge del PR #1; no hubo llamada de proveedor ni mutación AWS asociada a esta entrega.
