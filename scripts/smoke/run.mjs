@@ -156,7 +156,7 @@ const main = async () => {
     }
   };
 
-  await scenario('SMK-01', 'producto disponible desde API local real', async (page) => {
+  await scenario('SMK-E4-01', 'producto disponible desde API local real', async (page) => {
     await page.goto(`${WEB_ORIGIN}/products/${PRODUCT_ID}`);
     await expect(
       page.getByRole('heading', { name: 'Morral urbano de demostración' }),
@@ -165,7 +165,7 @@ const main = async () => {
     await expect(page.getByLabel(/Precio/)).toContainText(/25\.000/);
   });
 
-  await scenario('SMK-02', 'producto sin stock bloquea continuación', async (page) => {
+  await scenario('SMK-E4-02', 'producto sin stock bloquea continuación', async (page) => {
     await page.route('**/api/v1/products/*', (route) =>
       route.fulfill({
         status: 200,
@@ -178,7 +178,7 @@ const main = async () => {
     await expect(page.getByRole('button', { name: 'Sin disponibilidad' })).toBeDisabled();
   });
 
-  await scenario('SMK-03', 'producto inexistente muestra 404 seguro', async (page) => {
+  await scenario('SMK-E4-03', 'producto inexistente muestra 404 seguro', async (page) => {
     await page.route('**/api/v1/products/*', (route) =>
       route.fulfill({
         status: 404,
@@ -190,7 +190,7 @@ const main = async () => {
     await expect(page.getByRole('heading', { name: 'Producto no disponible' })).toBeVisible();
   });
 
-  await scenario('SMK-04', 'fallo temporal permite reintento controlado', async (page) => {
+  await scenario('SMK-E4-04', 'fallo temporal permite reintento controlado', async (page) => {
     let attempts = 0;
     await page.route('**/api/v1/products/*', async (route) => {
       attempts += 1;
@@ -212,14 +212,14 @@ const main = async () => {
     assert.equal(attempts, 2);
   });
 
-  await scenario('SMK-05', 'refresh restaura producto desde estado canónico', async (page) => {
+  await scenario('SMK-E4-05', 'refresh restaura producto desde estado canónico', async (page) => {
     await page.goto(`${WEB_ORIGIN}/products/${PRODUCT_ID}`);
     await expect(page.getByText('3 unidades disponibles')).toBeVisible();
     await page.reload();
     await expect(page.getByText('3 unidades disponibles')).toBeVisible();
   });
 
-  await scenario('SMK-06', 'respuesta inválida cae en estado seguro', async (page) => {
+  await scenario('SMK-E4-06', 'respuesta inválida cae en estado seguro', async (page) => {
     await page.route('**/api/v1/products/*', (route) =>
       route.fulfill({
         status: 200,

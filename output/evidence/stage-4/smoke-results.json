@@ -7,37 +7,37 @@
   "total": 6,
   "results": [
     {
-      "id": "SMK-01",
+      "id": "SMK-E4-01",
       "title": "producto disponible desde API local real",
       "status": "PASS",
       "durationMs": 433
     },
     {
-      "id": "SMK-02",
+      "id": "SMK-E4-02",
       "title": "producto sin stock bloquea continuación",
       "status": "PASS",
       "durationMs": 256
     },
     {
-      "id": "SMK-03",
+      "id": "SMK-E4-03",
       "title": "producto inexistente muestra 404 seguro",
       "status": "PASS",
       "durationMs": 256
     },
     {
-      "id": "SMK-04",
+      "id": "SMK-E4-04",
       "title": "fallo temporal permite reintento controlado",
       "status": "PASS",
       "durationMs": 320
     },
     {
-      "id": "SMK-05",
+      "id": "SMK-E4-05",
       "title": "refresh restaura producto desde estado canónico",
       "status": "PASS",
       "durationMs": 287
     },
     {
-      "id": "SMK-06",
+      "id": "SMK-E4-06",
       "title": "respuesta inválida cae en estado seguro",
       "status": "PASS",
       "durationMs": 228
