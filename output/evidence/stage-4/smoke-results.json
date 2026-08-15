@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "executedAt": "2026-08-15T03:42:44.571Z",
+  "environment": "local-fake-only",
+  "providerRequests": 0,
+  "passed": 6,
+  "total": 6,
+  "results": [
+    {
+      "id": "SMK-01",
+      "title": "producto disponible desde API local real",
+      "status": "PASS",
+      "durationMs": 433
+    },
+    {
+      "id": "SMK-02",
+      "title": "producto sin stock bloquea continuación",
+      "status": "PASS",
+      "durationMs": 256
+    },
+    {
+      "id": "SMK-03",
+      "title": "producto inexistente muestra 404 seguro",
+      "status": "PASS",
+      "durationMs": 256
+    },
+    {
+      "id": "SMK-04",
+      "title": "fallo temporal permite reintento controlado",
+      "status": "PASS",
+      "durationMs": 320
+    },
+    {
+      "id": "SMK-05",
+      "title": "refresh restaura producto desde estado canónico",
+      "status": "PASS",
+      "durationMs": 287
+    },
+    {
+      "id": "SMK-06",
+      "title": "respuesta inválida cae en estado seguro",
+      "status": "PASS",
+      "durationMs": 228
+    }
+  ]
+}
