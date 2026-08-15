@@ -19,7 +19,7 @@
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "boundaries": "node scripts/check-boundaries.mjs",
+    "boundaries": "node scripts/check-boundaries.mjs --self-test && node scripts/check-boundaries.mjs",
     "workspace:check": "node scripts/check-workspace.mjs",
     "test": "pnpm test:unit && pnpm test:contract",
     "test:unit": "pnpm --filter @checkout/api test && pnpm --filter @checkout/web test && pnpm --filter @checkout/infra test",
