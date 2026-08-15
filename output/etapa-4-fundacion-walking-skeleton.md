@@ -14,11 +14,11 @@ La fundación técnica quedó implementada y verificada en modo `local-fake-only
 | OpenAPI | 14/14 operaciones, 251 refs locales, deriva 0 |
 | Secret scan | 0 hallazgos; worktree e historia `PASS` |
 | Proveedor/sandbox/AWS | 0 requests, 0 transacciones, 0 deploys |
-| `GATE-E4-01` | `PASS` técnico; firma humana pendiente |
-| `GATE-E4-02` | `PASS` técnico; firma humana pendiente |
-| `GATE-E4-03` | `BLOCKED`: CI remota no ejecutada y decisiones P0 sin firma humana |
+| `GATE-E4-01` | `PASS`; aprobado por `USER_DECISION_OWNER` el 2026-08-15 |
+| `GATE-E4-02` | `PASS`; aprobado por `USER_DECISION_OWNER` el 2026-08-15 |
+| `GATE-E4-03` | `BLOCKED`: CI remota falló durante bootstrap; corrección pendiente de validación remota |
 
-La implementación no habilita pagos, tokenización, sandbox, webhook real, AWS ni etapa 5 formal. La IA evalúa evidencia, pero no sustituye la aprobación del `USER_DECISION_OWNER`.
+La implementación no habilita pagos, tokenización, sandbox, webhook real, AWS ni etapa 5 formal. El `USER_DECISION_OWNER` aprobó `CHG-17`, las decisiones E4 y los ADR propuestos; `ADR-09` continúa bloqueado para integración real.
 
 ## 2. Estado de entrada y prerrequisitos
 
@@ -33,7 +33,7 @@ La instrucción E4 exigía `GATE-E3-03=PASS`; el entregable real E3 declaró `CO
 | Topología y stack utilizables | `DEC-01`, `DEC-02`, ADR E3 + `DEC-E4-01` | `PASS` para foundation |
 | Directorio sin secretos | scan inicial y final, valores siempre redaccionados | `PASS` |
 | Sin necesidad de cloud/sandbox | adapters local/fake y synth sin deploy | `PASS` |
-| Aprobación humana de ADR/P0 | no fue sustituida por la ejecución | `BLOCKED` para gate final |
+| Aprobación humana de ADR/P0 | confirmación explícita del `USER_DECISION_OWNER`, 2026-08-15 | `PASS`; `ADR-09` sigue bloqueado para integración real |
 
 Integridad de entrada:
 
@@ -45,7 +45,7 @@ Integridad de entrada:
 
 | ID | Decisión aplicada | Razón/impacto | Estado |
 | --- | --- | --- | --- |
-| `CHG-17` | Consumir E3 como `fake-only`; OpenAPI prevalece sobre rutas narrativas; no declarar gates E3 como `PASS` | Resuelve la deriva para construir sin ampliar autoridad; adapter real sigue bloqueado | `APPLIED_SCOPE_CONTROL`; confirmación humana pendiente |
+| `CHG-17` | Consumir E3 como `fake-only`; OpenAPI prevalece sobre rutas narrativas; no declarar gates E3 como `PASS` | Resuelve la deriva para construir sin ampliar autoridad; adapter real sigue bloqueado | `CONFIRMED` por `USER_DECISION_OWNER`, 2026-08-15 |
 | `DEC-E4-01` | Monorepo mínimo `apps/web`, `apps/api`, `packages/contracts`, `infra`; Node 24.19.0 y pnpm 11.19.0 | Evita paquetes vacíos y congela runtime real disponible | `APPLIED` |
 | `DEC-E4-02` | `/api/health` es el health contractual compuesto; no inventar `/health/live` o `/health/ready` | El OpenAPI canónico define una sola ruta que comprueba proceso y repositorio | `APPLIED` |
 | `DEC-E4-03` | Validar `ProductResponse` en runtime con Zod además del tipo generado | Un payload 200 inválido cae en estado seguro | `APPLIED` |
@@ -217,8 +217,8 @@ TLS 1.2+ con dominio propio, certificado, Budget y PITR siguen bloqueados por de
 | Worktree + builds + CloudFormation | `PASS`, 178 archivos en la ejecución final |
 | Historia Git | `PASS` |
 | Vulnerabilidades high/critical conocidas | 0 / 0 |
-| CI remota | `NOT_EXECUTED_UNAUTHORIZED` |
-| Branch protection remota | `NOT_EXECUTED_UNAUTHORIZED` |
+| CI remota | `EXECUTED_FAILED`; `setup-node@v5` detectó pnpm antes de Corepack |
+| Branch protection remota | `PENDING_VERIFICATION` |
 
 El detector PAN exige longitud, Luhn y un MII no cero; esto evita rangos ISO generados sin dejar de detectar el fixture positivo del self-test. Los hallazgos se reportan sólo como archivo/línea/regla.
 
@@ -278,7 +278,7 @@ El umbral bloqueante es 85 % por métrica y aplicación. Los tests verifican com
 | `EVD-E4-12` | secretos | worktree + historia, 0 hallazgos, `PASS` |
 | `EVD-E4-13` | dependencias | 0 high/critical conocidas, `PASS` |
 | `EVD-E4-14` | skeleton | JSON smoke + §13, `PASS` |
-| `EVD-E4-15` | CI verde remota | workflow listo; `NOT_EXECUTED_UNAUTHORIZED` |
+| `EVD-E4-15` | CI verde remota | `EXECUTED_FAILED`; corrección preparada, reejecución pendiente |
 | `EVD-E4-16` | trazabilidad | §16, `PASS` |
 | `EVD-E4-17` | decisiones/riesgos/desviaciones | §§3 y 17, `PASS` |
 
@@ -301,7 +301,7 @@ El umbral bloqueante es 85 % por métrica y aplicación. Los tests verifican com
 | `OBJ-E4-09`, `RNF-10` | `DEC-E4-INF-01..04` | `FND-36..38` | `infra` | 9 IaC + synth | `EVD-E4-11` | E4-03 | `PASS` |
 | `OBJ-E4-10`, `RNF-08/09` | workflow mínimo | `FND-39/41/43` | CI + root verify | local `verify` | `EVD-E4-04..15` | E4-03 | `BLOCKED` sólo por ejecución remota |
 | `OBJ-E4-11`, `RNF-06/13/14/18..20` | fake-only | `FND-03/40/45` | guards/scanners/workflows | self-tests/history | `EVD-E4-12/13` | E4-01/03 | `PASS` |
-| `OBJ-E4-12` | `CHG-17` | `FND-44..47` | reporte/handoff | auditoría | `EVD-E4-16/17` | E4-03 | `BLOCKED` por sign-off P0 |
+| `OBJ-E4-12` | `CHG-17` | `FND-44..47` | reporte/handoff | auditoría | `EVD-E4-16/17` | E4-03 | `PASS`; aprobación recibida |
 
 Cobertura de objetivos: 12/12 enlazados; 10 `PASS`, 2 `BLOCKED` con causa y owner.
 
@@ -310,17 +310,17 @@ Cobertura de objetivos: 12/12 enlazados; 10 `PASS`, 2 `BLOCKED` con causa y owne
 | ID | Ubicación | Tareas | Evidencia | Estado |
 | --- | --- | --- | --- | --- |
 | `ART-FND-01` | raíz/workspace | `FND-06` | EVD-01/03 | `IMPLEMENTED` |
-| `ART-FND-02` | `docs/foundation/toolchain.md` | `FND-07` | EVD-02 | `IMPLEMENTED_PENDING_OWNER_APPROVAL` |
-| `ART-FND-03` | `.env.example`, configuration doc | `FND-11` | EVD-12/17 | `IMPLEMENTED_PENDING_OWNER_APPROVAL` |
+| `ART-FND-02` | `docs/foundation/toolchain.md` | `FND-07` | EVD-02 | `APPROVED` |
+| `ART-FND-03` | `.env.example`, configuration doc | `FND-11` | EVD-12/17 | `APPROVED` |
 | `ART-FND-04` | `apps/web` | `FND-27..31` | EVD-06/08/09 | `GREEN` |
 | `ART-FND-05` | `apps/api` | `FND-17..21` | EVD-07/08/09 | `GREEN` |
 | `ART-FND-06` | API persistence/seed | `FND-22..26` | EVD-07 | `GREEN` |
 | `ART-FND-07` | `packages/contracts` | `FND-12/13` | EVD-10 | `GREEN` |
 | `ART-FND-08` | `infra` | `FND-36..38` | EVD-11 | `SYNTHESIZABLE` |
-| `ART-FND-09` | `.github/workflows/ci.yml` | `FND-39/41` | EVD-15 | `IMPLEMENTED_NOT_RUN_REMOTE` |
+| `ART-FND-09` | `.github/workflows/ci.yml` | `FND-39/41` | EVD-15 | `REMOTE_FAILED_FIX_PENDING` |
 | `ART-FND-10` | workflows/scripts security | `FND-40` | EVD-12/13 | `GREEN_LOCAL` |
 | `ART-FND-11` | web + API + adapter | `FND-32..35` | EVD-14 | `DEMONSTRATED` |
-| `ART-FND-12` | este reporte/evidencias | `FND-44..47` | EVD-16/17 | `IMPLEMENTED_PENDING_OWNER_APPROVAL` |
+| `ART-FND-12` | este reporte/evidencias | `FND-44..47` | EVD-16/17 | `APPROVED` |
 
 Cobertura física: 12/12 presentes; aprobación/ejecución remota pendiente donde se indica.
 
@@ -410,8 +410,8 @@ Cobertura de tareas: 47/47 con estado; cero `N/A` sin justificación.
 | `FNDAUD-26` | `PASS` | historial temático auténtico |
 | `FNDAUD-27` | `PASS` | README validado en clon |
 | `FNDAUD-28` | `PASS` | EVD-01..17 documentadas |
-| `FNDAUD-29` | `BLOCKED` | decisiones P0 requieren owner |
-| `FNDAUD-30` | `BLOCKED` | gate final no firmado/CI remota ausente |
+| `FNDAUD-29` | `PASS` | decisiones P0 aprobadas; `ADR-09` bloqueado sólo para integración real |
+| `FNDAUD-30` | `BLOCKED` | CI remota verde y branch protection pendientes |
 
 ## 17. Riesgos, deuda y excepciones
 
@@ -430,11 +430,11 @@ Cobertura de tareas: 47/47 con estado; cero `N/A` sin justificación.
 | `RSK-E4-11` | `CONTROLLED` | safe logger + tests | APPSEC |
 | `RSK-E4-12` | `MITIGATED` | RTK consume API local real | FE |
 | `RSK-E4-13` | `MITIGATED` | sólo synth, no scripts deploy | CLOUD |
-| `RSK-E4-14` | `OPEN` | no existe remoto; validar antes de publicar | CANDIDATE |
-| `RSK-E4-15` | `ACTIVE_BLOCKER` | GATE-E4-03 impide E5 formal | USER_DECISION_OWNER |
+| `RSK-E4-14` | `CONTROLLED` | remoto público neutral y merge con historia preservada | CANDIDATE |
+| `RSK-E4-15` | `ACTIVE_BLOCKER` | GATE-E4-03 espera CI verde y branch protection | repo owner |
 | `RSK-E4-16` | `CONTROLLED` | semántica E3→E4 registrada en `CHG-17` | USER_DECISION_OWNER |
 | `RSK-E4-17` | `CONTROLLED` | OpenAPI prevalece; narrativa E3 no editada | ARCH |
-| `RSK-E4-18` | `OPEN` | CI remota no ejecutada | repo owner |
+| `RSK-E4-18` | `ACTIVE` | CI remota falló en bootstrap; corrección pendiente de reejecución | repo owner |
 | `RSK-E4-19` | `BLOCKED` | TLS propio requiere dominio/certificado | CLOUD/APPSEC |
 | `RSK-E4-20` | `OPEN_CONTROLLED` | 81 flags CDK congelados por lock | CLOUD; próxima actualización |
 
@@ -463,7 +463,7 @@ Deuda no bloqueante local: contract suite compartida memoria/Dynamo, fijación r
 | configuración validada | `PASS` |
 | secretos | `PASS`, 0 hallazgos |
 
-**Resultado técnico: `PASS`.** Firma/aceptación formal: `PENDING_USER_DECISION_OWNER`; este documento no la suplanta.
+**Resultado: `GATE-E4-01 = PASS`.** Aprobado por `USER_DECISION_OWNER` el 2026-08-15.
 
 ## 19. Evaluación GATE-E4-02
 
@@ -481,7 +481,7 @@ Deuda no bloqueante local: contract suite compartida memoria/Dynamo, fijación r
 | logs/correlación | `PASS` |
 | tests web/API/contrato | `PASS` |
 
-**Resultado técnico: `PASS`.** No existe falla del recorrido principal. Firma/aceptación formal: `PENDING_USER_DECISION_OWNER`.
+**Resultado: `GATE-E4-02 = PASS`.** No existe falla del recorrido principal; aprobado por `USER_DECISION_OWNER` el 2026-08-15.
 
 ## 20. Evaluación GATE-E4-03
 
@@ -498,11 +498,11 @@ Deuda no bloqueante local: contract suite compartida memoria/Dynamo, fijación r
 | high/critical | 0/0 | `PASS` |
 | smoke | 6/6 | `PASS` |
 | artefactos físicos | 12/12 | `PASS`; aprobación/CI indicada por estado |
-| evidencias documentadas | 17/17 | `PASS` documental; EVD-15 no ejecutada |
-| CI verde en commit/PR | requerida | `BLOCKED`, sin remoto/autorización |
-| decisiones P0 abiertas | 0 | `BLOCKED`, requieren owner |
+| evidencias documentadas | 17/17 | `PASS` documental; EVD-15 ejecutada con fallo de bootstrap |
+| CI verde en commit/PR | requerida | `BLOCKED`; corrección pendiente de validación remota |
+| decisiones P0 abiertas | 0 | `PASS`; aprobación recibida, `ADR-09` bloqueado sólo para integración real |
 
-**Resultado: `GATE-E4-03 = BLOCKED`.** No se habilita formalmente la etapa 5. Para desbloquear: ejecutar la CI en un remoto autorizado, aplicar branch protection, confirmar `CHG-17`/ADR P0 y firmar los tres gates.
+**Resultado: `GATE-E4-03 = BLOCKED`.** No se habilita formalmente la etapa 5. Para desbloquear: obtener los checks `CI / Summary` y `Security / Security` verdes y aplicar branch protection.
 
 ## 21. Handoff a etapa 5
 
@@ -537,4 +537,4 @@ Acciones del owner antes de E5:
 3. conservar el adapter real bloqueado hasta `AUTH-01/AUTH-02` y `SPK-02`;
 4. resolver dominio/TLS, presupuesto, PITR y región antes de cualquier release.
 
-La rama local `foundation/stage-4` contiene un historial temático; no existe remoto, publicación, credencial, llamada de proveedor ni mutación AWS asociada a esta entrega.
+El repositorio remoto público conserva el historial temático y el merge del PR #1; no hubo llamada de proveedor ni mutación AWS asociada a esta entrega.
