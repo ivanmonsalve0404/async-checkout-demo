@@ -12,7 +12,13 @@ const API_ORIGIN = 'http://127.0.0.1:3000';
 const WEB_ORIGIN = 'http://127.0.0.1:4173';
 const PRODUCT_ID = 'product-demo-001';
 const EDGE_PATH = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const EVIDENCE_PATH = path.join(ROOT, 'output', 'evidence', 'stage-4', 'smoke-results.json');
+const EVIDENCE_PATH = path.join(
+  ROOT,
+  'output',
+  'evidence',
+  'runtime',
+  'stage-4-smoke-results.json',
+);
 
 const processes = [];
 const output = new Map();
