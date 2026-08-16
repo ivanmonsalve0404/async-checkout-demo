@@ -1,5 +1,5 @@
 import type { ProductResponse } from '../api/product-api';
-import { formatMoney } from '../../../shared/lib/format-money';
+import { formatMoney, formatMoneyForAssistiveTechnology } from '../../../shared/lib/format-money';
 
 export type ProductViewState =
   | Readonly<{ kind: 'loading' }>
@@ -92,7 +92,10 @@ export const ProductView = ({
           <p className="description">{product.description}</p>
           <p
             className="price"
-            aria-label={`Precio ${formatMoney(product.unitPrice.amountInCents, product.unitPrice.currency)}`}
+            aria-label={`Precio ${formatMoneyForAssistiveTechnology(
+              product.unitPrice.amountInCents,
+              product.unitPrice.currency,
+            )}`}
           >
             {formatMoney(product.unitPrice.amountInCents, product.unitPrice.currency)}
           </p>

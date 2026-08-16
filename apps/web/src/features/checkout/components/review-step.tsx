@@ -1,4 +1,4 @@
-import { formatMoney } from '../../../shared/lib/format-money';
+import { formatMoney, formatMoneyForAssistiveTechnology } from '../../../shared/lib/format-money';
 import type { CheckoutResponse } from '../api/checkout-api';
 
 export interface ReviewStepProps {
@@ -23,7 +23,12 @@ const MoneyRow = ({
 }: Readonly<{ label: string; amountInCents: number; emphasis?: boolean }>) => (
   <div className={emphasis ? 'money-row total-row' : 'money-row'}>
     <dt>{label}</dt>
-    <dd>{formatMoney(amountInCents, 'COP')}</dd>
+    <dd>
+      <span aria-hidden="true">{formatMoney(amountInCents, 'COP')}</span>
+      <span className="visually-hidden">
+        {formatMoneyForAssistiveTechnology(amountInCents, 'COP')}
+      </span>
+    </dd>
   </div>
 );
 
@@ -89,6 +94,12 @@ export const ReviewStep = ({
           onClick={onSubmit}
           disabled={stale || submitting}
           aria-busy={submitting}
+          aria-label={
+            submitting
+              ? 'Creando transacción'
+              : 'Pagar ' +
+                formatMoneyForAssistiveTechnology(checkout.quote.total.amountInCents, 'COP')
+          }
           data-testid="checkout-submit"
         >
           {submitting

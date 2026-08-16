@@ -25,7 +25,9 @@ describe('ProductView', () => {
     render(<ProductView state={{ kind: 'success', product }} />);
     expect(screen.getByRole('heading', { name: product.name })).toBeInTheDocument();
     expect(screen.getByText('3 unidades disponibles')).toBeInTheDocument();
-    expect(screen.getByLabelText(/Precio/)).toHaveTextContent(/25[.\s]000/);
+    expect(screen.getByLabelText(/Precio 25[.\s]000 pesos colombianos/i)).toHaveTextContent(
+      /25[.\s]000/,
+    );
     expect(screen.getByRole('button', { name: 'Continuar al pago' })).toBeDisabled();
   });
 
