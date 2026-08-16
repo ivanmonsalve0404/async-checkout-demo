@@ -74,8 +74,8 @@ jobs:
           DYNAMODB_LOCAL_IMAGE_DIGEST: sha256:1856c05cc66a0e49dc1099e483ad2851477eeebe2135250ac11a1d1227db54b1
         run: |
           docker pull "${DYNAMODB_LOCAL_IMAGE}"
-          actual_digest="$(docker image inspect "${DYNAMODB_LOCAL_IMAGE}" --format '{{.Id}}')"
-          test "${actual_digest}" = "${DYNAMODB_LOCAL_IMAGE_DIGEST}"
+          repo_digest="$(docker image inspect "${DYNAMODB_LOCAL_IMAGE}" --format '{{index .RepoDigests 0}}')"
+          test "${repo_digest##*@}" = "${DYNAMODB_LOCAL_IMAGE_DIGEST}"
       - name: Run the complete local verification contract
         run: pnpm verify
       - name: Preserve sanitized verification reports
