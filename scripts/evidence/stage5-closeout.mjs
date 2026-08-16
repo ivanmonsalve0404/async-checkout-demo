@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -173,7 +172,7 @@ const manifest = {
   },
   coverage: { api: coverage('api'), web: coverage('web') },
   security: {
-    secrets: { findings: 0, history: 'PASS', filesScanned: secrets.filesScanned },
+    secrets: { findings: 0, history: 'PASS' },
     dependencies: {
       scope: dependencies.scope,
       threshold: dependencies.threshold,

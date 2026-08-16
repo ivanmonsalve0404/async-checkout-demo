@@ -10,7 +10,7 @@
   },
   "sourceSnapshot": {
     "files": 210,
-    "sha256": "c3cc45ba53fbf61cbcea5c31cf28e1b63e833c0d09a63d5a35f1c10d92832d3a"
+    "sha256": "fa6c51c9855985c7df323ada1e145bb718da8549af810a5859287770f9df1bb6"
   },
   "contracts": {
     "openapiSha256": "aa90d17de283d720ab92112cda8a75ae0663a881cd25da931f56c1148ae4c01a",
@@ -61,8 +61,7 @@
   "security": {
     "secrets": {
       "findings": 0,
-      "history": "PASS",
-      "filesScanned": 329
+      "history": "PASS"
     },
     "dependencies": {
       "scope": "production",

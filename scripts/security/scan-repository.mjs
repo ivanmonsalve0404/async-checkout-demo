@@ -66,6 +66,7 @@ const SECRET_PATTERNS = [
 
 // A payment-card PAN cannot start with zero; excluding it avoids ISO/date ranges in minified code.
 const PAN_CANDIDATE = /(?<!\d)[1-9][ -]?(?:\d[ -]?){11,17}\d(?!\d)/gu;
+const HEX_DIGEST = /(?<![A-Fa-f0-9])[A-Fa-f0-9]{40,128}(?![A-Fa-f0-9])/gu;
 
 function isPlaceholder(value) {
   const normalized = value.toLowerCase();
@@ -108,6 +109,8 @@ export function scanText(label, text) {
   const lines = text.split(/\r?\n/u);
 
   lines.forEach((line, lineIndex) => {
+    const hexDigests = [...line.matchAll(HEX_DIGEST)];
+
     for (const pattern of SECRET_PATTERNS) {
       pattern.expression.lastIndex = 0;
       for (const match of line.matchAll(pattern.expression)) {
@@ -124,7 +127,12 @@ export function scanText(label, text) {
 
     PAN_CANDIDATE.lastIndex = 0;
     for (const match of line.matchAll(PAN_CANDIDATE)) {
-      if (passesLuhn(match[0])) {
+      const insideHexDigest = hexDigests.some(
+        (digest) =>
+          match.index >= digest.index &&
+          match.index + match[0].length <= digest.index + digest[0].length,
+      );
+      if (!insideHexDigest && passesLuhn(match[0])) {
         findings.push({
           label,
           line: lineIndex + 1,
@@ -240,6 +248,8 @@ function selfTest() {
     0,
   );
   assert.equal(scanText('changed-content', `+${luhnCandidate}`)[0]?.rule, 'PAN_LUHN');
+  const digestWithLuhnSubstring = `${'a'.repeat(24)}${luhnCandidate}${'b'.repeat(24)}`;
+  assert.equal(scanText('sha256', `"sha256":"${digestWithLuhnSubstring}"`).length, 0);
 }
 
 function argumentValue(name) {
