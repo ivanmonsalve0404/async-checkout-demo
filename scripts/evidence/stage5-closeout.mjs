@@ -19,18 +19,6 @@ const readJson = (relativePath) =>
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const normalizedText = (relativePath) =>
   readFileSync(resolve(workspaceRoot, relativePath), 'utf8').replace(/\r\n?/g, '\n');
-const binarySnapshotFile = /\.(?:gif|ico|jpe?g|png|woff2?)$/i;
-const normalizeSnapshotContent = (relativePath, content) =>
-  binarySnapshotFile.test(relativePath)
-    ? content
-    : Buffer.from(content.toString('utf8').replace(/\r\n?/g, '\n'), 'utf8');
-
-if (
-  sha256(normalizeSnapshotContent('fixture.txt', Buffer.from('alpha\r\nbeta\r\n'))) !==
-  sha256(normalizeSnapshotContent('fixture.txt', Buffer.from('alpha\nbeta\n')))
-) {
-  fail('Source snapshot line-ending normalization is not deterministic');
-}
 
 const coverage = (application) => {
   const summary = readJson(`coverage/${application}/coverage-summary.json`).total;
@@ -79,13 +67,21 @@ const sourceSnapshotSha256 = () => {
     .map((file) => file.replaceAll('\\', '/'))
     .filter((file) => file !== excludedSnapshotPath)
     .sort();
+  const blobs = spawnSync('git', ['hash-object', '--stdin-paths'], {
+    cwd: workspaceRoot,
+    input: files.join('\n') + '\n',
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  const hashes = blobs.stdout.trim().split('\n');
+  if (blobs.status !== 0 || hashes.length !== files.length) {
+    fail('Unable to hash the source snapshot');
+  }
   const digest = createHash('sha256');
-  for (const file of files) {
+  for (const [index, file] of files.entries()) {
     digest.update(file);
     digest.update('\0');
-    digest.update(
-      sha256(normalizeSnapshotContent(file, readFileSync(resolve(workspaceRoot, file)))),
-    );
+    digest.update(hashes[index]);
     digest.update('\0');
   }
   return { files: files.length, sha256: digest.digest('hex') };
