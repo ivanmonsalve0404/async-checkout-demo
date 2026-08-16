@@ -25,9 +25,8 @@ describe('ProductView', () => {
     render(<ProductView state={{ kind: 'success', product }} />);
     expect(screen.getByRole('heading', { name: product.name })).toBeInTheDocument();
     expect(screen.getByText('3 unidades disponibles')).toBeInTheDocument();
-    expect(screen.getByLabelText(/Precio 25[.\s]000 pesos colombianos/i)).toHaveTextContent(
-      /25[.\s]000/,
-    );
+    expect(screen.getByText(/Precio 25[.\s]000 pesos colombianos/i)).toHaveClass('visually-hidden');
+    expect(screen.getByText(/\$\s*25[.\s]000/i)).toHaveAttribute('aria-hidden', 'true');
     expect(screen.getByRole('button', { name: 'Continuar al pago' })).toBeDisabled();
   });
 

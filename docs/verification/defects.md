@@ -4,7 +4,7 @@
 
 ## Estado
 
-`CLOSED_OR_ACCEPTED_BY_SAME_SHA_MANIFEST`. El registro versionado conserva `DEF-E6-01`, `DEF-E6-02` y `DEF-E6-03` con su causa y regresión; su cierre efectivo y `EVD-E6-37/38` sólo los autoriza el manifiesto runtime del mismo SHA.
+`CLOSED_OR_ACCEPTED_BY_SAME_SHA_MANIFEST`. El registro versionado conserva `DEF-E6-01`, `DEF-E6-02`, `DEF-E6-03` y `DEF-E6-04` con su causa y regresión; su cierre efectivo y `EVD-E6-37/38` sólo los autoriza el manifiesto runtime del mismo SHA.
 
 ## Registro
 
@@ -13,8 +13,9 @@
 | `DEF-E6-01` | El foco se pierde al resolver superficies asíncronas del diálogo | P1 accesibilidad                     | RNF-03; SC-EN-02-01; UAT-16/36         | `ENV-E6-LOCAL`; `SHA_BY_SAME_SHA_MANIFEST` | Abrir durante carga y resolver checkout/config sin cambiar de step                     | Esperado: heading nuevo enfocado; actual: `BODY`                                    | `CHG-E6-02`; spec diálogo; axe E6                       | El effect dependía sólo de `progress.step`, no de la superficie asíncrona           | UX/QA | `VERIFIED_BY_SAME_SHA_MANIFEST` | `SHA_BY_SAME_SHA_MANIFEST` | 19/19 focal + axe 0 violaciones      | `STATUS_BY_SAME_SHA_MANIFEST` | `STATUS_BY_SAME_SHA_MANIFEST`; E6-02/03 |
 | `DEF-E6-02` | Recovery/final renavega continuamente a la misma ruta de estado  | P1 funcional/rendimiento             | RF-12/13; AC-US-09-02/12-01; UAT-27/31 | `ENV-E6-LOCAL`; `SHA_BY_SAME_SHA_MANIFEST` | Recuperar una transacción final ya ubicada en su ruta canónica y renderizar el diálogo | Esperado: no renavegar; actual: `onStatusRoute` se invocaba en cada render          | `CHG-E6-04`; spec diálogo; Lighthouse focal             | Faltaban guardas de igualdad de `progress.transactionId` y `mode !== 'status'`      | UX/QA | `VERIFIED_BY_SAME_SHA_MANIFEST` | `SHA_BY_SAME_SHA_MANIFEST` | 19/19 focal; Lighthouse final PASS   | `STATUS_BY_SAME_SHA_MANIFEST` | `STATUS_BY_SAME_SHA_MANIFEST`; E6-02/03 |
 | `DEF-E6-03` | Narrador comunica importes COP como dólares                      | P1 accesibilidad/claridad financiera | RNF-03; A11Y-MAN-01-C01; UAT-16        | `ENV-E6-LOCAL`; `SHA_BY_SAME_SHA_MANIFEST` | Recorrer precio, resumen y CTA de pago con Narrador                                    | Esperado: pesos colombianos; actual: el símbolo de moneda se anunciaba como dólares | `CHG-E6-05`; specs de precio/resumen; revisión Narrador | El nombre accesible reutilizaba el símbolo visual ambiguo sin nombrar la moneda COP | UX/QA | `VERIFIED_BY_SAME_SHA_MANIFEST` | `SHA_BY_SAME_SHA_MANIFEST` | 22/22 focal + nombres accesibles COP | `STATUS_BY_SAME_SHA_MANIFEST` | `STATUS_BY_SAME_SHA_MANIFEST`; E6-02/03 |
+| `DEF-E6-04` | Etiquetas ARIA sobre elementos genéricos no portables            | P1 accesibilidad/robustez            | RNF-03; A11Y-MAN-01-C01; UAT-16        | `ENV-E6-LOCAL`; `SHA_BY_SAME_SHA_MANIFEST` | Ejecutar axe sobre precio y captura de pago                                            | Esperado: semántica válida; actual: `aria-label` requería revisión por soporte      | `CHG-E6-06`; specs focales; axe 14/14                   | Se aplicó `aria-label` a un párrafo y a un grupo genérico sin rol compatible        | UX/QA | `VERIFIED_BY_SAME_SHA_MANIFEST` | `SHA_BY_SAME_SHA_MANIFEST` | 15/15 focal; avisos ARIA 3 → 0       | `STATUS_BY_SAME_SHA_MANIFEST` | `STATUS_BY_SAME_SHA_MANIFEST`; E6-02/03 |
 
-El siguiente hallazgo usa `DEF-E6-04`. No crear IDs para bloqueos de autorización.
+El siguiente hallazgo usa `DEF-E6-05`. No crear IDs para bloqueos de autorización.
 
 ## Control de cambios
 
@@ -25,6 +26,7 @@ El siguiente hallazgo usa `DEF-E6-04`. No crear IDs para bloqueos de autorizaci�
 | `CHG-E6-03`        | Retirar `@lhci/cli@0.15.0` por dos HIGH transitivas y usar Lighthouse 13.4.1 directo | `package.json`, lockfile y runner de perf | Audit dev+prod, perf y full regression     | `SHA_BY_SAME_SHA_MANIFEST` | `STATUS_BY_SAME_SHA_MANIFEST` |
 | `CHG-E6-04`        | Evitar la renavegación repetida de la ruta final y cerrar `DEF-E6-02`; §37.1         | Diálogo y regresión de status/recovery    | Lighthouse, UAT-27/31 y full regression    | `SHA_BY_SAME_SHA_MANIFEST` | `STATUS_BY_SAME_SHA_MANIFEST` |
 | `CHG-E6-05`        | Nombrar explícitamente COP para tecnología de asistencia y cerrar `DEF-E6-03`        | Precio, resumen y CTA de pago             | A11y manual/auto, UAT-16 y full regression | `SHA_BY_SAME_SHA_MANIFEST` | `STATUS_BY_SAME_SHA_MANIFEST` |
+| `CHG-E6-06`        | Reemplazar etiquetas ARIA no portables y cerrar `DEF-E6-04`                          | Precio y agrupación de captura            | A11y manual/auto, UAT-16 y full regression | `SHA_BY_SAME_SHA_MANIFEST` | `STATUS_BY_SAME_SHA_MANIFEST` |
 | `CHG-E6-UAT-22-45` | Aplicar `CHG-16` y OpenAPI a ERR-12/13 postaceptación                                | UAT-22/45 y su runner                     | UAT-22/45 y full UAT                       | `SHA_BY_SAME_SHA_MANIFEST` | `STATUS_BY_SAME_SHA_MANIFEST` |
 
 ## Bloqueos externos (no defectos)

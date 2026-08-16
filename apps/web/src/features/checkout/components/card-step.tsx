@@ -140,7 +140,11 @@ export const CardStep = ({ adapter, expired = false, onTokenized }: CardStepProp
         </div>
       )}
 
-      <div className="form-grid payment-boundary" aria-label="Superficie segura de pago">
+      <div
+        className="form-grid payment-boundary"
+        role="group"
+        aria-label="Superficie segura de pago"
+      >
         <label className="field field-wide">
           <span>Número de tarjeta</span>
           <input
