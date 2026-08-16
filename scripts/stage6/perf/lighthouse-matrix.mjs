@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import {
   PRODUCT_ID,
@@ -355,6 +356,40 @@ const versionsFrom = (snapshots, key) => [...new Set(snapshots.map((snapshot) =>
 const cleanupDirectory = (directory) =>
   rm(directory, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
 
+export const browserArgumentsForRuntime = (
+  browserArguments,
+  { platform = process.platform, ci = process.env.CI === 'true' } = {},
+) => [
+  ...browserArguments,
+  ...(platform === 'linux' && ci && !browserArguments.includes('--no-sandbox')
+    ? ['--no-sandbox']
+    : []),
+];
+
+export const selfTestLighthouseBrowserArguments = () => {
+  const base = ['--disable-gpu'];
+  check(
+    browserArgumentsForRuntime(base, { platform: 'linux', ci: true }).join(',') ===
+      '--disable-gpu,--no-sandbox',
+    'LIGHTHOUSE_LINUX_CI_SANDBOX_ARGUMENT_MISSING',
+  );
+  check(
+    browserArgumentsForRuntime(base, { platform: 'linux', ci: false }).join(',') ===
+      '--disable-gpu',
+    'LIGHTHOUSE_LOCAL_SANDBOX_WAS_DISABLED',
+  );
+  check(
+    browserArgumentsForRuntime(base, { platform: 'win32', ci: true }).join(',') === '--disable-gpu',
+    'LIGHTHOUSE_NON_LINUX_SANDBOX_WAS_DISABLED',
+  );
+  check(
+    browserArgumentsForRuntime([...base, '--no-sandbox'], { platform: 'linux', ci: true }).join(
+      ',',
+    ) === '--disable-gpu,--no-sandbox',
+    'LIGHTHOUSE_SANDBOX_ARGUMENT_DUPLICATED',
+  );
+};
+
 const preparePage = async (page) => {
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1, isMobile: true });
   page.setDefaultTimeout(15_000);
@@ -365,7 +400,7 @@ const withProfileBrowser = async ({ config, executablePath, puppeteer }, working
     executablePath,
     headless: true,
     userDataDir: path.join(workingDirectory, '.lighthouse-profile'),
-    args: config.browserArguments,
+    args: browserArgumentsForRuntime(config.browserArguments),
   });
   try {
     const page = await browser.newPage();
@@ -771,6 +806,7 @@ const validateVersionedConfig = (config, installedVersion) => {
 };
 
 export const runLighthouseAudit = async (executablePath) => {
+  selfTestLighthouseBrowserArguments();
   let lighthouse;
   let lighthouseVersion;
   let puppeteer;
