@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
+
+import { writeSanitizedJsonAtomic } from '../stage6/lib/artifact-sanitizer.mjs';
 
 const application = process.argv[2];
 if (application !== 'api' && application !== 'web') {
@@ -58,8 +60,9 @@ if (!validEvidence) {
 
 const status = result.status === 0 && evidence.status === 'PASS' ? 'PASS' : 'FAIL';
 if (evidence.status !== status) {
-  const temporaryEvidence = `${evidencePath}.${process.pid}.tmp`;
-  writeFileSync(temporaryEvidence, `${JSON.stringify({ ...evidence, status }, null, 2)}\n`, 'utf8');
-  renameSync(temporaryEvidence, evidencePath);
+  await writeSanitizedJsonAtomic(evidencePath, `${application}-tests.json`, {
+    ...evidence,
+    status,
+  });
 }
 process.exitCode = status === 'PASS' ? 0 : 1;

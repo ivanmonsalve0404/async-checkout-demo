@@ -1,9 +1,18 @@
 /* eslint-disable @typescript-eslint/no-require-imports, no-undef -- Jest loads custom reporters through CommonJS. */
-const { mkdirSync, renameSync, writeFileSync } = require('node:fs');
-const { basename, dirname, resolve } = require('node:path');
+const { basename, resolve } = require('node:path');
+const { pathToFileURL } = require('node:url');
+
+const sanitizerModuleUrl = pathToFileURL(
+  resolve(__dirname, '..', 'stage6', 'lib', 'artifact-sanitizer.mjs'),
+).href;
+let sanitizerModulePromise;
+const sanitizerModule = () => {
+  sanitizerModulePromise ??= import(sanitizerModuleUrl);
+  return sanitizerModulePromise;
+};
 
 class SanitizedJestReporter {
-  onRunComplete(_contexts, results) {
+  async onRunComplete(_contexts, results) {
     const application = basename(process.cwd());
     if (application !== 'api' && application !== 'web') {
       throw new Error('Sanitized Jest evidence is restricted to api or web');
@@ -34,11 +43,21 @@ class SanitizedJestReporter {
       pendingTests: results.numPendingTests,
       containsTestPayloads: false,
     };
-    mkdirSync(dirname(evidencePath), { recursive: true });
-    const temporaryEvidence = `${evidencePath}.${process.pid}.tmp`;
-    writeFileSync(temporaryEvidence, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
-    renameSync(temporaryEvidence, evidencePath);
+    const { writeSanitizedJsonAtomic } = await sanitizerModule();
+    await writeSanitizedJsonAtomic(evidencePath, `${application}-tests.json`, evidence);
   }
 }
 
 module.exports = SanitizedJestReporter;
+
+if (require.main === module && process.argv.includes('--self-test')) {
+  sanitizerModule()
+    .then(({ selfTestArtifactSanitizer }) => {
+      selfTestArtifactSanitizer();
+      process.stdout.write('sanitized Jest reporter bridge self-test: PASS\n');
+    })
+    .catch(() => {
+      process.stderr.write('sanitized Jest reporter bridge self-test: FAIL\n');
+      process.exitCode = 1;
+    });
+}

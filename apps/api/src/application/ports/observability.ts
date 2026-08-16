@@ -16,6 +16,7 @@ export const domainEventNames = [
   'reconcile.retry_scheduled',
   'reconcile.exhausted',
   'reconcile.deduplicated',
+  'sandbox_guard.blocked',
 ] as const;
 
 export const metricNames = [
@@ -49,6 +50,7 @@ export const metricNames = [
   'provider_unavailable_total',
   'provider_unknown_outcomes_total',
   'provider_protocol_errors_total',
+  'sandbox_guard_blocked_total',
 ] as const;
 
 export type DomainEventName = (typeof domainEventNames)[number];

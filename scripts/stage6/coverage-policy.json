@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "minimum": {
+    "branches": 85,
+    "functions": 85,
+    "lines": 85,
+    "statements": 85
+  },
+  "api": [
+    "./src/application/use-cases/checkout-service.ts",
+    "./src/domain/checkout/checkout.ts",
+    "./src/infrastructure/logging/safe-logger.ts",
+    "./src/infrastructure/persistence/dynamodb-checkout.repository.ts",
+    "./src/infrastructure/persistence/in-memory-catalog.repository.ts",
+    "./src/infrastructure/persistence/in-memory-checkout.repository.ts",
+    "./src/interfaces/http/checkout-http.ts"
+  ],
+  "web": [
+    "./src/features/checkout/api/checkout-api.ts",
+    "./src/features/checkout/components/checkout-dialog.tsx",
+    "./src/features/checkout/model/checkout-slice.ts",
+    "./src/features/checkout/model/checkout-storage.ts",
+    "./src/features/checkout/services/submit-payment.ts",
+    "./src/features/checkout/services/use-transaction-polling.ts"
+  ]
+}

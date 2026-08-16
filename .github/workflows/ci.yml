@@ -44,14 +44,56 @@ jobs:
           node scripts/security/validate-workflows.mjs
           node scripts/security/scan-repository.mjs
 
-  verify:
-    name: Verify
+  codeql:
+    name: CodeQL
     needs: metadata
+    outputs:
+      sarif_status: ${{ steps.codeql_gate.outputs.status }}
+      sarif_high: ${{ steps.codeql_gate.outputs.high }}
+      sarif_critical: ${{ steps.codeql_gate.outputs.critical }}
+      sarif_sha256: ${{ steps.codeql_gate.outputs.sarif_sha256 }}
+    permissions:
+      contents: read
+      security-events: write
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out the repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          languages: javascript-typescript
+          build-mode: none
+      - name: Analyze JavaScript and TypeScript
+        id: codeql_analyze
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          category: /language:javascript-typescript
+          output: codeql-results
+          upload: always
+      - name: Enforce the CodeQL SARIF severity gate
+        id: codeql_gate
+        shell: bash
+        env:
+          CODEQL_SARIF_PATH: ${{ steps.codeql_analyze.outputs.sarif-output }}
+        run: node scripts/stage6/security/codeql-sarif.mjs --input "${CODEQL_SARIF_PATH}" --github-output "${GITHUB_OUTPUT}"
+
+  verify:
+    name: Verify
+    needs: [metadata, codeql]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
       - name: Set up Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
@@ -65,8 +107,8 @@ jobs:
           test "$(pnpm --version)" = "${PNPM_VERSION}"
       - name: Install from the frozen lockfile
         run: pnpm install --frozen-lockfile
-      - name: Install the smoke-test browser
-        run: pnpm exec playwright install --with-deps --only-shell chromium
+      - name: Install the verification browsers
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
       - name: Prepare the pinned DynamoDB Local image
         shell: bash
         env:
@@ -76,24 +118,58 @@ jobs:
           docker pull "${DYNAMODB_LOCAL_IMAGE}"
           repo_digest="$(docker image inspect "${DYNAMODB_LOCAL_IMAGE}" --format '{{index .RepoDigests 0}}')"
           test "${repo_digest##*@}" = "${DYNAMODB_LOCAL_IMAGE_DIGEST}"
-      - name: Run the complete local verification contract
-        run: pnpm verify
-      - name: Preserve sanitized verification reports
+      - name: Materialize optional manual accessibility evidence
+        if: ${{ vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 != '' }}
+        shell: bash
+        env:
+          STAGE6_A11Y_MANUAL_EVIDENCE_B64: ${{ vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 }}
+        run: |
+          umask 077
+          target="${RUNNER_TEMP}/stage6-a11y-manual.json"
+          printf '%s' "${STAGE6_A11Y_MANUAL_EVIDENCE_B64}" | base64 --decode > "${target}"
+          echo "STAGE6_A11Y_MANUAL_EVIDENCE=${target}" >> "${GITHUB_ENV}"
+      - name: Materialize optional authorized external evidence
+        if: ${{ vars.STAGE6_EXTERNAL_EVIDENCE_B64 != '' }}
+        shell: bash
+        env:
+          STAGE6_EXTERNAL_EVIDENCE_B64: ${{ vars.STAGE6_EXTERNAL_EVIDENCE_B64 }}
+        run: |
+          umask 077
+          target="${RUNNER_TEMP}/stage6-external-evidence.json"
+          printf '%s' "${STAGE6_EXTERNAL_EVIDENCE_B64}" | base64 --decode > "${target}"
+          echo "STAGE6_EXTERNAL_EVIDENCE=${target}" >> "${GITHUB_ENV}"
+      - name: Run the complete Stage 6 local verification contract
+        env:
+          STAGE6_CODEQL_RESULT: ${{ needs.codeql.result }}
+          STAGE6_CODEQL_SHA: ${{ github.sha }}
+          STAGE6_CODEQL_SARIF_STATUS: ${{ needs.codeql.outputs.sarif_status }}
+          STAGE6_CODEQL_HIGH: ${{ needs.codeql.outputs.sarif_high }}
+          STAGE6_CODEQL_CRITICAL: ${{ needs.codeql.outputs.sarif_critical }}
+          STAGE6_CODEQL_SARIF_SHA256: ${{ needs.codeql.outputs.sarif_sha256 }}
+        run: pnpm verify:stage6
+      - name: Scan verification report upload set
+        id: stage6_upload_scan
         if: ${{ always() }}
+        run: node scripts/stage6/upload-artifact-scan.mjs
+      - name: Preserve sanitized verification reports
+        if: ${{ always() && steps.stage6_upload_scan.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: verification-reports
           if-no-files-found: ignore
           path: |
-            apps/api/coverage/
-            apps/web/coverage/
+            coverage/api/coverage-summary.json
+            coverage/web/coverage-summary.json
             infra/cdk.out/*.template.json
+            output/evidence/runtime/stage-5-dynamodb-integration.json
+            output/evidence/runtime/stage-5-smoke-results.json
+            output/evidence/runtime/stage-6/
           retention-days: 7
 
   summary:
     name: Summary
     if: ${{ always() }}
-    needs: [metadata, verify]
+    needs: [metadata, codeql, verify]
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
@@ -101,6 +177,8 @@ jobs:
         shell: bash
         run: |
           echo "metadata=${{ needs.metadata.result }}" >> "${GITHUB_STEP_SUMMARY}"
+          echo "codeql=${{ needs.codeql.result }}" >> "${GITHUB_STEP_SUMMARY}"
           echo "verify=${{ needs.verify.result }}" >> "${GITHUB_STEP_SUMMARY}"
           test "${{ needs.metadata.result }}" = "success"
+          test "${{ needs.codeql.result }}" = "success"
           test "${{ needs.verify.result }}" = "success"

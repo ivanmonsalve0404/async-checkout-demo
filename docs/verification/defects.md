@@ -1,0 +1,58 @@
+# Etapa 6 — Defectos, regresiones y flakiness
+
+<!-- stage6-status-authority: ART-VER-15 SAME_SHA_RUNTIME_MANIFEST -->
+
+## Estado
+
+`CLOSED_OR_ACCEPTED_BY_SAME_SHA_MANIFEST`. El registro versionado conserva `DEF-E6-01` y `DEF-E6-02` con su causa y regresión; su cierre efectivo y `EVD-E6-37/38` sólo los autoriza el manifiesto runtime del mismo SHA.
+
+## Registro
+
+| ID          | Título                                                           | Severidad                | Requisito/AC/UAT                       | Entorno/SHA                                | Pasos                                                                                  | Esperado/actual                                                            | Evidencia                                   | Causa                                                                          | Owner | Estado                          | Fix SHA                    | Regresión                          | Re-run                        | Gate                                    |
+| ----------- | ---------------------------------------------------------------- | ------------------------ | -------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------ | ----- | ------------------------------- | -------------------------- | ---------------------------------- | ----------------------------- | --------------------------------------- |
+| `DEF-E6-01` | El foco se pierde al resolver superficies asíncronas del diálogo | P1 accesibilidad         | RNF-03; SC-EN-02-01; UAT-16/36         | `ENV-E6-LOCAL`; `SHA_BY_SAME_SHA_MANIFEST` | Abrir durante carga y resolver checkout/config sin cambiar de step                     | Esperado: heading nuevo enfocado; actual: `BODY`                           | `CHG-E6-02`; spec diálogo; axe E6           | El effect dependía sólo de `progress.step`, no de la superficie asíncrona      | UX/QA | `VERIFIED_BY_SAME_SHA_MANIFEST` | `SHA_BY_SAME_SHA_MANIFEST` | 19/19 focal + axe 0 violaciones    | `STATUS_BY_SAME_SHA_MANIFEST` | `STATUS_BY_SAME_SHA_MANIFEST`; E6-02/03 |
+| `DEF-E6-02` | Recovery/final renavega continuamente a la misma ruta de estado  | P1 funcional/rendimiento | RF-12/13; AC-US-09-02/12-01; UAT-27/31 | `ENV-E6-LOCAL`; `SHA_BY_SAME_SHA_MANIFEST` | Recuperar una transacción final ya ubicada en su ruta canónica y renderizar el diálogo | Esperado: no renavegar; actual: `onStatusRoute` se invocaba en cada render | `CHG-E6-04`; spec diálogo; Lighthouse focal | Faltaban guardas de igualdad de `progress.transactionId` y `mode !== 'status'` | UX/QA | `VERIFIED_BY_SAME_SHA_MANIFEST` | `SHA_BY_SAME_SHA_MANIFEST` | 19/19 focal; Lighthouse final PASS | `STATUS_BY_SAME_SHA_MANIFEST` | `STATUS_BY_SAME_SHA_MANIFEST`; E6-02/03 |
+
+El siguiente hallazgo usa `DEF-E6-03`. No crear IDs para bloqueos de autorización.
+
+## Control de cambios
+
+| ID                 | Motivo y autoridad                                                                   | Artefactos afectados                      | Reejecución obligatoria                 | SHA                        | Estado                        |
+| ------------------ | ------------------------------------------------------------------------------------ | ----------------------------------------- | --------------------------------------- | -------------------------- | ----------------------------- |
+| `CHG-E6-01`        | Reconciliar E5 tras merge y cuatro checks verdes; regla de entrada E6                | Intake y gate heredado                    | Preflight                               | `eaa20cc`                  | `VERIFIED`                    |
+| `CHG-E6-02`        | Corregir `DEF-E6-01` en la superficie común de foco; §37.1                           | Diálogo y regresión de foco/axe           | A11y, UAT-16/36 y full regression       | `SHA_BY_SAME_SHA_MANIFEST` | `STATUS_BY_SAME_SHA_MANIFEST` |
+| `CHG-E6-03`        | Retirar `@lhci/cli@0.15.0` por dos HIGH transitivas y usar Lighthouse 13.4.1 directo | `package.json`, lockfile y runner de perf | Audit dev+prod, perf y full regression  | `SHA_BY_SAME_SHA_MANIFEST` | `STATUS_BY_SAME_SHA_MANIFEST` |
+| `CHG-E6-04`        | Evitar la renavegación repetida de la ruta final y cerrar `DEF-E6-02`; §37.1         | Diálogo y regresión de status/recovery    | Lighthouse, UAT-27/31 y full regression | `SHA_BY_SAME_SHA_MANIFEST` | `STATUS_BY_SAME_SHA_MANIFEST` |
+| `CHG-E6-UAT-22-45` | Aplicar `CHG-16` y OpenAPI a ERR-12/13 postaceptación                                | UAT-22/45 y su runner                     | UAT-22/45 y full UAT                    | `SHA_BY_SAME_SHA_MANIFEST` | `STATUS_BY_SAME_SHA_MANIFEST` |
+
+## Bloqueos externos (no defectos)
+
+| Bloqueo                    | Estado         | Afecta                          | Tratamiento                                       |
+| -------------------------- | -------------- | ------------------------------- | ------------------------------------------------- |
+| Sandbox externo            | `BLOCKED_AUTH` | `EVD-E6-24` y smoke contractual | `NOT_RUN_AUTH_REQUIRED`; cero request             |
+| Target QA propio/DAST/edge | `BLOCKED_AUTH` | `EVD-E6-33` y parte edge de 34  | `NOT_RUN_AUTH_REQUIRED`; no escanear terceros     |
+| Cloud/HTTPS                | `BLOCKED_AUTH` | `UAT-33`, etapa 7               | `NOT_RUN_AUTH_REQUIRED`; cero deploy              |
+| `ADR-09`                   | `BLOCKED`      | Adapter/captura/webhook reales  | Mantener fake y fail-closed; no inventar contrato |
+
+## Flujo y política
+
+`NEW → TRIAGED → IN_PROGRESS → FIXED → VERIFIED → CLOSED`.
+
+Estados alternos: `DUPLICATE`, `NOT_REPRODUCIBLE` con evidencia, `ACCEPTED_RISK` sólo P2/P3, `BLOCKED_AUTH` y `REOPENED`.
+
+- P0/P1 abiertos al release: 0; nunca se aceptan como riesgo.
+- Un fix crea nuevo candidato, invalida evidencia afectada y agrega regresión automática cuando sea técnicamente posible.
+- “No volvió a pasar” no cierra un defecto sin causa o hipótesis sustentada y reejecución.
+- Un fallo inicial que pasa al retry es `FLAKY`; no cuenta como PASS.
+- Flaky P0/P1 falla el gate; flaky P2 requiere defecto, owner y fecha corta.
+- Dinero, idempotencia, stock y seguridad nunca se omiten ni se ponen en cuarentena.
+
+## Resumen de cierre
+
+| Métrica                    | Umbral | Estado actual                 |
+| -------------------------- | -----: | ----------------------------- |
+| P0 abiertos                |      0 | `STATUS_BY_SAME_SHA_MANIFEST` |
+| P1 abiertos                |      0 | `STATUS_BY_SAME_SHA_MANIFEST` |
+| P2 sin aceptación          |      0 | `STATUS_BY_SAME_SHA_MANIFEST` |
+| Flaky crítico              |      0 | `STATUS_BY_SAME_SHA_MANIFEST` |
+| Fixes sin regresión/re-run |      0 | `STATUS_BY_SAME_SHA_MANIFEST` |

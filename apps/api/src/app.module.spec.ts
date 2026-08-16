@@ -6,7 +6,10 @@ import {
 } from './application/use-cases/checkout-service';
 import { CHECKOUT_REPOSITORY } from './application/ports/checkout-repository';
 import { MERCHANT_CONTRACT_PORT } from './application/ports/merchant-contract';
+import { OBSERVABILITY } from './application/ports/observability';
+import { PAYMENT_PROVIDER } from './application/ports/payment-provider';
 import { APP_CONFIG, loadAppConfig } from './infrastructure/configuration/app-config';
+import { FakeObservability } from './infrastructure/observability/observability.adapter';
 import { FakeMerchantContractAdapter } from './infrastructure/payment/fake-merchant-contract.adapter';
 import { SandboxMerchantContractAdapter } from './infrastructure/payment/sandbox-merchant-contract.adapter';
 import { DynamoDbCheckoutRepository } from './infrastructure/persistence/dynamodb-checkout.repository';
@@ -49,6 +52,26 @@ describe('AppModule adapter wiring', () => {
       .compile();
 
     expect(module.get(MERCHANT_CONTRACT_PORT)).toBeInstanceOf(expected);
+    await module.close();
+  });
+
+  it('emits one sanitized incident when the sandbox adapter is disabled', async () => {
+    const observability = new FakeObservability();
+    const module = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(APP_CONFIG)
+      .useValue(loadAppConfig({ APP_ENV: 'test', PAYMENT_ADAPTER: 'sandbox' }))
+      .overrideProvider(OBSERVABILITY)
+      .useValue(observability)
+      .compile();
+
+    module.get(PAYMENT_PROVIDER);
+    expect(observability.events).toEqual([
+      {
+        name: 'sandbox_guard.blocked',
+        fields: { errorCode: 'ENVIRONMENT_DISABLED' },
+      },
+    ]);
+    expect(observability.count('sandbox_guard_blocked_total')).toBe(1);
     await module.close();
   });
 

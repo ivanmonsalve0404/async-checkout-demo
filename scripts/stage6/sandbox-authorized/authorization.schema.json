@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://async-checkout.invalid/schemas/stage6-auth02-authorization-v1.json",
+  "title": "Stage 6 AUTH-E6-02 execution authorization",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaId",
+    "schemaVersion",
+    "stage",
+    "commitSha",
+    "runId",
+    "reviewerAlias",
+    "authorization",
+    "target",
+    "fixture",
+    "containsSensitiveData"
+  ],
+  "properties": {
+    "schemaId": { "const": "async-checkout-stage6-auth02-authorization" },
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 6 },
+    "commitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "runId": {
+      "type": "string",
+      "pattern": "^e6-[0-9]{8}t[0-9]{6}z-[0-9a-f]{8}$"
+    },
+    "reviewerAlias": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,31}$" },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "scope",
+        "approvalSha256",
+        "approvedTargetSha256",
+        "approvedAtUtc",
+        "expiresAtUtc",
+        "ownerAlias",
+        "maxRequests"
+      ],
+      "properties": {
+        "id": { "const": "AUTH-E6-02" },
+        "status": { "const": "APPROVED" },
+        "scope": { "const": "AUTHORIZED_PROVIDER_SANDBOX_SMOKE" },
+        "approvalSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "approvedTargetSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "approvedAtUtc": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+        },
+        "expiresAtUtc": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+        },
+        "ownerAlias": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,31}$" },
+        "maxRequests": { "type": "integer", "minimum": 7, "maximum": 100 }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "classification",
+        "environment",
+        "hostSha256",
+        "allowlistVerified",
+        "production"
+      ],
+      "properties": {
+        "classification": { "const": "AUTHORIZED_PROVIDER_SANDBOX" },
+        "environment": { "const": "sandbox" },
+        "hostSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "allowlistVerified": { "const": true },
+        "production": { "const": false }
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "cardNumberSha256", "authorized", "rawValueCaptured"],
+      "properties": {
+        "classification": { "const": "AUTHORIZED_PROVIDER_TEST_CARD" },
+        "cardNumberSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "authorized": { "const": true },
+        "rawValueCaptured": { "const": false }
+      }
+    },
+    "containsSensitiveData": { "const": false }
+  }
+}

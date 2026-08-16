@@ -1,0 +1,327 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:async-checkout-demo:stage6:a11y-manual-evidence:2",
+  "title": "Stage 6 manual accessibility evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaId",
+    "schemaVersion",
+    "stage",
+    "protocolVersion",
+    "protocolDocumentSha256",
+    "commitSha",
+    "runId",
+    "executedAtUtc",
+    "reviewerAlias",
+    "browser",
+    "screenReader",
+    "status",
+    "cases",
+    "axeIncompleteReviews",
+    "containsSensitiveData"
+  ],
+  "properties": {
+    "schemaId": {
+      "const": "urn:async-checkout-demo:stage6:a11y-manual-evidence:2"
+    },
+    "schemaVersion": { "const": 2 },
+    "stage": { "const": 6 },
+    "protocolVersion": { "const": "E6-A11Y-MANUAL-2" },
+    "protocolDocumentSha256": { "$ref": "#/$defs/sha256" },
+    "commitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "runId": {
+      "description": "Unique run ID of the human manual execution; ingestion campaigns record their own run ID separately.",
+      "type": "string",
+      "pattern": "^e6-[0-9]{8}t[0-9]{6}z-[0-9a-f]{8}$"
+    },
+    "executedAtUtc": { "type": "string", "format": "date-time" },
+    "reviewerAlias": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$"
+    },
+    "browser": { "$ref": "#/$defs/safeTool" },
+    "screenReader": { "$ref": "#/$defs/safeTool" },
+    "status": { "$ref": "#/$defs/status" },
+    "cases": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        { "$ref": "#/$defs/case01" },
+        { "$ref": "#/$defs/case02" },
+        { "$ref": "#/$defs/case03" },
+        { "$ref": "#/$defs/case04" }
+      ],
+      "items": false
+    },
+    "axeIncompleteReviews": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/axeReview" }
+    },
+    "containsSensitiveData": { "const": false }
+  },
+  "$defs": {
+    "status": { "type": "string", "enum": ["PASS", "FAIL"] },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "safeTool": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._()+/-]*$"
+    },
+    "actualResult": {
+      "type": "string",
+      "minLength": 24,
+      "maxLength": 500,
+      "pattern": "^[^\\r\\n]+$"
+    },
+    "defectId": { "type": "string", "pattern": "^DEF-E6-[0-9]{2,}$" },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "actualResult"],
+      "properties": {
+        "id": { "type": "string" },
+        "status": { "$ref": "#/$defs/status" },
+        "actualResult": { "$ref": "#/$defs/actualResult" }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "evidenceId", "status", "actualResult", "checks"],
+      "properties": {
+        "id": { "type": "string" },
+        "evidenceId": { "type": "string" },
+        "status": { "$ref": "#/$defs/status" },
+        "actualResult": { "$ref": "#/$defs/actualResult" },
+        "checks": { "type": "array" },
+        "defectId": { "$ref": "#/$defs/defectId" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "FAIL" } } },
+          "then": { "required": ["defectId"] },
+          "else": { "not": { "required": ["defectId"] } }
+        }
+      ]
+    },
+    "case01": {
+      "allOf": [
+        { "$ref": "#/$defs/case" },
+        {
+          "properties": {
+            "id": { "const": "A11Y-MAN-01" },
+            "evidenceId": { "const": "EVD-E6-28/A11Y-MAN-01" },
+            "checks": {
+              "minItems": 4,
+              "maxItems": 4,
+              "prefixItems": [
+                { "$ref": "#/$defs/check01a" },
+                { "$ref": "#/$defs/check01b" },
+                { "$ref": "#/$defs/check01c" },
+                { "$ref": "#/$defs/check01d" }
+              ],
+              "items": false
+            }
+          }
+        }
+      ]
+    },
+    "case02": {
+      "allOf": [
+        { "$ref": "#/$defs/case" },
+        {
+          "properties": {
+            "id": { "const": "A11Y-MAN-02" },
+            "evidenceId": { "const": "EVD-E6-28/A11Y-MAN-02" },
+            "checks": {
+              "minItems": 5,
+              "maxItems": 5,
+              "prefixItems": [
+                { "$ref": "#/$defs/check02a" },
+                { "$ref": "#/$defs/check02b" },
+                { "$ref": "#/$defs/check02c" },
+                { "$ref": "#/$defs/check02d" },
+                { "$ref": "#/$defs/check02e" }
+              ],
+              "items": false
+            }
+          }
+        }
+      ]
+    },
+    "case03": {
+      "allOf": [
+        { "$ref": "#/$defs/case" },
+        {
+          "properties": {
+            "id": { "const": "A11Y-MAN-03" },
+            "evidenceId": { "const": "EVD-E6-28/A11Y-MAN-03" },
+            "checks": {
+              "minItems": 4,
+              "maxItems": 4,
+              "prefixItems": [
+                { "$ref": "#/$defs/check03a" },
+                { "$ref": "#/$defs/check03b" },
+                { "$ref": "#/$defs/check03c" },
+                { "$ref": "#/$defs/check03d" }
+              ],
+              "items": false
+            }
+          }
+        }
+      ]
+    },
+    "case04": {
+      "allOf": [
+        { "$ref": "#/$defs/case" },
+        {
+          "properties": {
+            "id": { "const": "A11Y-MAN-04" },
+            "evidenceId": { "const": "EVD-E6-28/A11Y-MAN-04" },
+            "checks": {
+              "minItems": 4,
+              "maxItems": 4,
+              "prefixItems": [
+                { "$ref": "#/$defs/check04a" },
+                { "$ref": "#/$defs/check04b" },
+                { "$ref": "#/$defs/check04c" },
+                { "$ref": "#/$defs/check04d" }
+              ],
+              "items": false
+            }
+          }
+        }
+      ]
+    },
+    "check01a": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-01-C01" } } }
+      ]
+    },
+    "check01b": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-01-C02" } } }
+      ]
+    },
+    "check01c": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-01-C03" } } }
+      ]
+    },
+    "check01d": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-01-C04" } } }
+      ]
+    },
+    "check02a": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-02-C01" } } }
+      ]
+    },
+    "check02b": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-02-C02" } } }
+      ]
+    },
+    "check02c": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-02-C03" } } }
+      ]
+    },
+    "check02d": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-02-C04" } } }
+      ]
+    },
+    "check02e": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-02-C05" } } }
+      ]
+    },
+    "check03a": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-03-C01" } } }
+      ]
+    },
+    "check03b": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-03-C02" } } }
+      ]
+    },
+    "check03c": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-03-C03" } } }
+      ]
+    },
+    "check03d": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-03-C04" } } }
+      ]
+    },
+    "check04a": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-04-C01" } } }
+      ]
+    },
+    "check04b": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-04-C02" } } }
+      ]
+    },
+    "check04c": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-04-C03" } } }
+      ]
+    },
+    "check04d": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "id": { "const": "A11Y-MAN-04-C04" } } }
+      ]
+    },
+    "axeReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ruleId", "surfaces", "nodeCount", "status", "actualResult"],
+      "properties": {
+        "ruleId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" },
+        "surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" }
+        },
+        "nodeCount": { "type": "integer", "minimum": 1 },
+        "status": { "$ref": "#/$defs/status" },
+        "actualResult": { "$ref": "#/$defs/actualResult" },
+        "defectId": { "$ref": "#/$defs/defectId" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "FAIL" } } },
+          "then": { "required": ["defectId"] },
+          "else": { "not": { "required": ["defectId"] } }
+        }
+      ]
+    }
+  }
+}

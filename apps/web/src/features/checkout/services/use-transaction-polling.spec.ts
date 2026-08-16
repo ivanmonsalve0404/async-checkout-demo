@@ -1,6 +1,10 @@
 import { act, renderHook } from '@testing-library/react';
 import type { TransactionResponse } from '../api/checkout-api';
-import { transactionPollingDelaysMs, useTransactionPolling } from './use-transaction-polling';
+import {
+  transactionPollingDelayMs,
+  transactionPollingDelaysMs,
+  useTransactionPolling,
+} from './use-transaction-polling';
 
 const acceptedAt = '2026-01-01T00:00:00.000Z';
 const transaction: TransactionResponse = {
@@ -28,6 +32,10 @@ describe('transaction polling policy', () => {
     jest.useRealTimers();
   });
 
+  it('uses the final bounded delay for a defensive negative attempt', () => {
+    expect(transactionPollingDelayMs(-1)).toBe(10_000);
+  });
+
   it('polls deterministically at 2, 3, 5, 8, then 10 seconds', async () => {
     const refetch = jest.fn().mockResolvedValue(undefined);
     renderHook(() => useTransactionPolling(transaction.transactionId, transaction, refetch));
@@ -53,6 +61,33 @@ describe('transaction polling policy', () => {
     expect(refetch).not.toHaveBeenCalled();
   });
 
+  it('starts already stopped after the ten-minute window', () => {
+    jest.setSystemTime(new Date(Date.parse(acceptedAt) + 10 * 60 * 1_000));
+    const { result } = renderHook(() =>
+      useTransactionPolling(transaction.transactionId, transaction, jest.fn()),
+    );
+
+    expect(result.current.automaticPollingStopped).toBe(true);
+  });
+
+  it('ignores a refetch that settles after unmount', async () => {
+    let resolve: (() => void) | undefined;
+    const refetch = jest.fn(
+      () =>
+        new Promise<void>((done) => {
+          resolve = done;
+        }),
+    );
+    const { unmount } = renderHook(() =>
+      useTransactionPolling(transaction.transactionId, transaction, refetch),
+    );
+
+    await act(async () => jest.advanceTimersByTimeAsync(2_000));
+    unmount();
+    await act(async () => resolve?.());
+
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
   it('cancels the pending timer on unmount', async () => {
     const refetch = jest.fn().mockResolvedValue(undefined);
     const { unmount } = renderHook(() =>

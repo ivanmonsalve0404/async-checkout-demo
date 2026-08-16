@@ -61,14 +61,23 @@ import { OriginValidationMiddleware } from './interfaces/http/middleware/origin-
 import { RateLimitMiddleware } from './interfaces/http/middleware/rate-limit.middleware';
 import { RequestLoggingMiddleware } from './interfaces/http/middleware/request-logging.middleware';
 
-const createPaymentProvider = (config: AppConfig): PaymentProvider => {
-  if (config.paymentAdapter === 'sandbox') {
-    // ADR-09 remains blocked: no host, private key, or transport is guessed at runtime.
-    return new SandboxPaymentProvider({ enabled: false });
+const createPaymentProvider = (
+  config: AppConfig,
+  observability: ObservabilityPort,
+): PaymentProvider => {
+  const provider =
+    config.paymentAdapter === 'sandbox'
+      ? // ADR-09 remains blocked: no host, private key, or transport is guessed at runtime.
+        new SandboxPaymentProvider({ enabled: false })
+      : config.fakePaymentScenario.startsWith('FAKE-E5-')
+        ? new E5ScriptedPaymentProvider(config.fakePaymentScenario as E5PaymentScenario)
+        : new ScriptedPaymentProvider(config.fakePaymentScenario as FakePaymentScenario);
+  const readiness = provider.getPublicConfiguration();
+  if (config.paymentAdapter === 'sandbox' && !readiness.ok) {
+    observability.event('sandbox_guard.blocked', { errorCode: readiness.error.code });
+    observability.increment('sandbox_guard_blocked_total');
   }
-  return config.fakePaymentScenario.startsWith('FAKE-E5-')
-    ? new E5ScriptedPaymentProvider(config.fakePaymentScenario as E5PaymentScenario)
-    : new ScriptedPaymentProvider(config.fakePaymentScenario as FakePaymentScenario);
+  return provider;
 };
 
 const createMerchantContractAdapter = (config: AppConfig): MerchantContractPort =>
@@ -135,7 +144,7 @@ export const selectReconciliationBackoffPolicy = (
     },
     {
       provide: PAYMENT_PROVIDER,
-      inject: [APP_CONFIG],
+      inject: [APP_CONFIG, OBSERVABILITY],
       useFactory: createPaymentProvider,
     },
     {

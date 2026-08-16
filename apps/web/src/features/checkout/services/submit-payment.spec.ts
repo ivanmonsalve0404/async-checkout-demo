@@ -90,4 +90,28 @@ describe('payment command boundary', () => {
     });
     await expect(submitPayment(input, malformed)).rejects.toThrow();
   });
+  it('uses the platform fetch boundary by default', async () => {
+    jest.mocked(globalThis.fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        transactionId: 'transaction_123456',
+        statusUrl: '/api/v1/transactions/transaction_123456',
+        submissionState: 'ACCEPTED',
+        acceptedAt: '2026-01-01T00:00:00Z',
+      }),
+    } as Response);
+
+    await expect(submitPayment(input)).resolves.toMatchObject({
+      transactionId: 'transaction_123456',
+    });
+  });
+  it('fails closed when an error response is not readable JSON', async () => {
+    const unreadable = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => Promise.reject(new SyntaxError('synthetic invalid JSON')),
+    });
+
+    await expect(submitPayment(input, unreadable)).rejects.toEqual(new PaymentCommandError(502));
+  });
 });

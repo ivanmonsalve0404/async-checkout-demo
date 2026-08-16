@@ -110,6 +110,7 @@ const transaction = (overrides: Partial<TransactionResponse> = {}): TransactionR
 let checkoutResult: Record<string, unknown>;
 let transactionResult: Record<string, unknown>;
 let checkoutRefetch: jest.Mock;
+let configurationResult: Record<string, unknown>;
 let transactionRefetch: jest.Mock;
 let configurationRefetch: jest.Mock;
 let createTrigger: jest.Mock;
@@ -165,12 +166,13 @@ const configureHooks = (transactionData: TransactionResponse | undefined = undef
   };
   mockCreate.mockReturnValue([createTrigger, { isLoading: false }] as never);
   mockCheckout.mockImplementation(() => checkoutResult as never);
-  mockConfiguration.mockReturnValue({
+  configurationResult = {
     data: configuration,
     isLoading: false,
     isError: false,
     refetch: configurationRefetch,
-  } as never);
+  };
+  mockConfiguration.mockImplementation(() => configurationResult as never);
   mockTransaction.mockImplementation(() => transactionResult as never);
   mockCustomer.mockReturnValue([customerTrigger] as never);
   mockDelivery.mockReturnValue([deliveryTrigger] as never);
@@ -191,6 +193,8 @@ const renderDialog = (
   readonly onClose: jest.Mock;
   readonly onStatusRoute: jest.Mock;
   readonly onReturn: jest.Mock;
+  readonly rerender: () => void;
+  readonly unmount: () => void;
 } => {
   const store = storeOverride ?? createAppStore();
   if (prepared) {
@@ -214,7 +218,7 @@ const renderDialog = (
   const onClose = jest.fn();
   const onStatusRoute = jest.fn();
   const onReturn = jest.fn();
-  render(
+  const view = () => (
     <Provider store={store}>
       <button data-testid="product-checkout-cta" type="button">
         Comprar
@@ -227,9 +231,17 @@ const renderDialog = (
         onStatusRoute={onStatusRoute}
         onReturn={onReturn}
       />
-    </Provider>,
+    </Provider>
   );
-  return { store, onClose, onStatusRoute, onReturn };
+  const rendered = render(view());
+  return {
+    store,
+    onClose,
+    onStatusRoute,
+    onReturn,
+    rerender: () => rendered.rerender(view()),
+    unmount: rendered.unmount,
+  };
 };
 
 const validNumber = (): string => {
@@ -419,6 +431,19 @@ describe('CheckoutDialog orchestration', () => {
     });
   });
 
+  it('does not renavigate when the canonical transaction is already on the status route', async () => {
+    checkoutResult = {
+      ...checkoutResult,
+      data: { ...checkout, activeTransactionId: 'transaction_123456' },
+    };
+    transactionResult.data = transaction();
+    const { onStatusRoute, rerender } = renderDialog('status');
+
+    expect(await screen.findByTestId('transaction-approved')).toBeVisible();
+    rerender();
+
+    expect(onStatusRoute).not.toHaveBeenCalled();
+  });
   it('delegates bounded polling outside RTK and renders unknown distinctly', async () => {
     transactionResult.data = transaction({
       checkoutStatus: 'PAYMENT_PENDING',
@@ -609,6 +634,17 @@ describe('CheckoutDialog orchestration', () => {
     expect(await screen.findByTestId('checkout-expired')).toHaveTextContent('sesión venció');
   });
 
+  it('fails closed when checkout creation loses the network and returns safely', async () => {
+    createTrigger.mockImplementation(() => ({
+      unwrap: () => Promise.reject(new TypeError('synthetic network failure')),
+    }));
+    const { onReturn } = renderDialog('capture', false);
+
+    expect(await screen.findByTestId('checkout-expired')).toHaveTextContent('Revisa tu conexión');
+    await userEvent.click(screen.getByRole('button', { name: 'Volver al producto' }));
+
+    expect(onReturn).toHaveBeenCalledTimes(1);
+  });
   it('creates a fresh idempotency key when persistent recovery has no session state', async () => {
     localStorage.setItem(
       'checkout.progress.ids.v1',
@@ -623,13 +659,57 @@ describe('CheckoutDialog orchestration', () => {
     expect(createTrigger).not.toHaveBeenCalled();
   });
 
+  it('moves focus as the asynchronous checkout surfaces resolve', async () => {
+    checkoutResult = {
+      data: undefined,
+      isLoading: true,
+      error: undefined,
+      refetch: checkoutRefetch,
+    };
+    configurationResult = {
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      refetch: configurationRefetch,
+    };
+    const { rerender } = renderDialog();
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Preparando checkout' })).toHaveFocus(),
+    );
+
+    checkoutResult = {
+      data: checkout,
+      isLoading: false,
+      error: undefined,
+      refetch: checkoutRefetch,
+    };
+    rerender();
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Preparando método de pago' })).toHaveFocus(),
+    );
+
+    configurationResult = {
+      data: configuration,
+      isLoading: false,
+      isError: false,
+      refetch: configurationRefetch,
+    };
+    rerender();
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Método de pago' })).toHaveFocus(),
+    );
+  });
+
   it('traps focus, closes with Escape, and restores the launcher', async () => {
-    const { onClose } = renderDialog();
+    const { onClose, unmount } = renderDialog();
     const close = screen.getByRole('button', { name: 'Cerrar checkout' });
     close.focus();
     await userEvent.keyboard('{Tab}');
     expect(document.activeElement).not.toBe(document.body);
     await userEvent.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalledTimes(1);
+    unmount();
+    render(<button data-testid="product-checkout-cta">Comprar</button>);
+    await waitFor(() => expect(screen.getByTestId('product-checkout-cta')).toHaveFocus());
   });
 });

@@ -172,8 +172,12 @@ export const CheckoutDialog = ({
       return;
     }
     if (checkout.activeTransactionId !== undefined && checkout.activeTransactionId !== null) {
-      dispatch(transactionAccepted(checkout.activeTransactionId));
-      onStatusRoute();
+      if (progress.transactionId !== checkout.activeTransactionId) {
+        dispatch(transactionAccepted(checkout.activeTransactionId));
+      }
+      if (mode !== 'status') {
+        onStatusRoute();
+      }
       return;
     }
     if (
@@ -189,6 +193,7 @@ export const CheckoutDialog = ({
     clearPaymentSecrets,
     dispatch,
     getPaymentToken,
+    mode,
     onStatusRoute,
     progress.step,
     progress.transactionId,
@@ -204,7 +209,6 @@ export const CheckoutDialog = ({
   }, [checkoutQuery.error, dispatch]);
 
   useEffect(() => {
-    const opener = document.querySelector<HTMLElement>('[data-testid="product-checkout-cta"]');
     const background = document.querySelector<HTMLElement>('[data-testid="product-surface"]');
     const previousOverflow = document.body.style.overflow;
     background?.setAttribute('inert', '');
@@ -213,13 +217,23 @@ export const CheckoutDialog = ({
     return () => {
       background?.removeAttribute('inert');
       document.body.style.overflow = previousOverflow;
-      opener?.focus();
+      queueMicrotask(() =>
+        document.querySelector<HTMLElement>('[data-testid="product-checkout-cta"]')?.focus(),
+      );
     };
   }, []);
 
+  const focusSurface =
+    recoveryError !== undefined
+      ? `recovery:${recoveryError}`
+      : checkoutQuery.data === undefined
+        ? 'checkout-loading'
+        : progress.step === 'payment' && configurationQuery.isLoading
+          ? 'payment-loading'
+          : progress.step;
   useEffect(() => {
     queueMicrotask(() => dialogRef.current?.querySelector<HTMLElement>('h2')?.focus());
-  }, [progress.step]);
+  }, [focusSurface]);
 
   const close = (): void => {
     if (submittingRef.current) {
