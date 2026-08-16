@@ -20,6 +20,27 @@ const isProblem = (value: unknown): value is ProblemDetails => {
   );
 };
 
+const bodyParsingStatus = (exception: unknown): 400 | 413 | null => {
+  if (exception instanceof SyntaxError) return 400;
+  if (exception instanceof HttpException && exception.getStatus() === 400) {
+    return 400;
+  }
+  if (typeof exception !== 'object' || exception === null) return null;
+  const candidate = exception as Readonly<{ status?: unknown; type?: unknown }>;
+  if (
+    (candidate.status === 400 ||
+      (candidate as Readonly<{ statusCode?: unknown }>).statusCode === 400) &&
+    (candidate.type === 'entity.parse.failed' || candidate.type === 'encoding.unsupported')
+  ) {
+    return 400;
+  }
+  return (candidate.status === 413 ||
+    (candidate as Readonly<{ statusCode?: unknown }>).statusCode === 413) &&
+    candidate.type === 'entity.too.large'
+    ? 413
+    : null;
+};
+
 @Catch()
 export class ProblemFilter implements ExceptionFilter {
   public catch(exception: unknown, host: ArgumentsHost): void {
@@ -27,10 +48,20 @@ export class ProblemFilter implements ExceptionFilter {
     const request = context.getRequest<RequestWithCorrelation>();
     const response = context.getResponse<Response>();
     const knownResponse = exception instanceof HttpException ? exception.getResponse() : null;
-    const problem = isProblem(knownResponse)
-      ? knownResponse
-      : createProblem('INTERNAL_ERROR', 500, request.correlationId, request.originalUrl);
+    const parsingStatus = bodyParsingStatus(exception);
+    const problem =
+      parsingStatus !== null
+        ? createProblem(
+            'REQUEST_MALFORMED',
+            parsingStatus,
+            request.correlationId,
+            request.originalUrl,
+          )
+        : isProblem(knownResponse)
+          ? knownResponse
+          : createProblem('INTERNAL_ERROR', 500, request.correlationId, request.originalUrl);
 
+    response.setHeader('Cache-Control', 'no-store');
     response.status(problem.status).type('application/problem+json').send(problem);
   }
 }

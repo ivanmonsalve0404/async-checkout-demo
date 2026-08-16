@@ -6,6 +6,7 @@ import { AppRouter } from './app/router/app-router';
 import { readPublicConfig } from './shared/config/public-config';
 import './styles.css';
 
+import './features/checkout/components/checkout.css';
 const config = readPublicConfig(import.meta.env);
 const container = document.getElementById('root');
 if (container === null) {

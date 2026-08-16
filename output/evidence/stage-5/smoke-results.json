@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 4,
+  "environment": "local-memory-fake-only",
+  "networkPolicy": "loopback-only-enforced",
+  "apiNetworkGuard": "node-connect-guard",
+  "browserExternalRequests": 0,
+  "apiExternalRequestsBlocked": 0,
+  "networkGuardCanaries": "PASS",
+  "providerExternalSmoke": "NOT_RUN_AUTH_REQUIRED",
+  "screenshots": 0,
+  "traces": 0,
+  "node": "v24.19.0",
+  "packageManager": "pnpm@11.19.0",
+  "smokeScriptSha256": "1981f13fc5387f73c44994a15949b4c9a49dd3a05cb2396d269397d74cf4009f",
+  "exitCode": 0,
+  "passed": 12,
+  "total": 12,
+  "results": [
+    {
+      "id": "SMK-E5-01",
+      "title": "producto → checkout → aprobado → stock actualizado",
+      "status": "PASS",
+      "browserExternalRequests": 0,
+      "apiExternalRequestsBlocked": 0,
+      "networkGuardCanaries": "PASS"
+    },
+    {
+      "id": "SMK-E5-02",
+      "title": "declinado → reserva liberada → sin entrega",
+      "status": "PASS",
+      "browserExternalRequests": 0,
+      "apiExternalRequestsBlocked": 0,
+      "networkGuardCanaries": "PASS"
+    },
+    {
+      "id": "SMK-E5-03",
+      "title": "error final → reserva liberada → sin entrega",
+      "status": "PASS",
+      "browserExternalRequests": 0,
+      "apiExternalRequestsBlocked": 0,
+      "networkGuardCanaries": "PASS"
+    },
+    {
+      "id": "SMK-E5-04",
+      "title": "pending → volver al producto → recuperar el mismo intento",
+      "status": "PASS",
+      "browserExternalRequests": 0,
+      "apiExternalRequestsBlocked": 0,
+      "networkGuardCanaries": "PASS"
+    },
+    {
+      "id": "SMK-E5-05",
+      "title": "refresh en datos de entrega",
+      "status": "PASS",
+      "browserExternalRequests": 0,
+      "apiExternalRequestsBlocked": 0,
+      "networkGuardCanaries": "PASS"
+    },
+    {
+      "id": "SMK-E5-06",
+      "title": "refresh durante pago pendiente",
+      "status": "PASS",
+      "browserExternalRequests": 0,
+      "apiExternalRequestsBlocked": 0,
+      "networkGuardCanaries": "PASS"
+    },
+    {
+      "id": "SMK-E5-07",
+      "title": "doble clic → una transacción lógica",
+      "status": "PASS",
+      "browserExternalRequests": 0,
+      "apiExternalRequestsBlocked": 0,
+      "networkGuardCanaries": "PASS"
+    },
+    {
+      "id": "SMK-E5-08",
+      "title": "dos requests concurrentes contra último stock",
+      "status": "PASS",
+      "browserExternalRequests": 0,
+      "apiExternalRequestsBlocked": 0,
+      "networkGuardCanaries": "PASS"
+    },
+    {
+      "id": "SMK-E5-09",
+      "title": "quote vencido/reprecio",
+      "status": "PASS",
+      "browserExternalRequests": 0,
+      "apiExternalRequestsBlocked": 0,
+      "networkGuardCanaries": "PASS"
+    },
+    {
+      "id": "SMK-E5-10",
+      "title": "sesión expirada",
+      "status": "PASS",
+      "browserExternalRequests": 0,
+      "apiExternalRequestsBlocked": 0,
+      "networkGuardCanaries": "PASS"
+    },
+    {
+      "id": "SMK-E5-11",
+      "title": "respuesta externa divergente bloqueada",
+      "status": "PASS",
+      "browserExternalRequests": 0,
+      "apiExternalRequestsBlocked": 0,
+      "networkGuardCanaries": "PASS"
+    },
+    {
+      "id": "SMK-E5-12",
+      "title": "replay de finalización sin efectos duplicados",
+      "status": "PASS",
+      "browserExternalRequests": 0,
+      "apiExternalRequestsBlocked": 0,
+      "networkGuardCanaries": "PASS"
+    }
+  ]
+}

@@ -13,7 +13,11 @@ export class CatalogSeedService implements OnModuleInit {
   ) {}
 
   public async onModuleInit(): Promise<void> {
-    const seed = createProductSeed(this.config.productSeedId, this.config.publicAssetOrigin);
+    const seed = createProductSeed(
+      this.config.productSeedId,
+      this.config.publicAssetOrigin,
+      this.config.productInitialStock,
+    );
     const result = await this.repository.seedIfAbsent(seed);
     if (!result.ok) {
       throw new Error('Catalog seed could not be established');

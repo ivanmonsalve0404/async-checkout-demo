@@ -35,6 +35,19 @@ describe('ProductView', () => {
     expect(screen.getByRole('button', { name: 'Sin disponibilidad' })).toBeDisabled();
   });
 
+  it('allows an existing checkout to resume while its reservation holds the stock', async () => {
+    const onCheckout = jest.fn();
+    render(
+      <ProductView
+        state={{ kind: 'success', product: { ...product, available: 0 } }}
+        onCheckout={onCheckout}
+        hasProgress
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Continuar compra' }));
+    expect(onCheckout).toHaveBeenCalledTimes(1);
+  });
+
   it('renders a controlled missing state', () => {
     render(<ProductView state={{ kind: 'not-found' }} />);
     expect(screen.getByRole('heading', { name: 'Producto no disponible' })).toBeInTheDocument();

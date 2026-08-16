@@ -10,6 +10,9 @@ export type ProductViewState =
 
 export interface ProductViewProps {
   readonly state: ProductViewState;
+  readonly onCheckout?: (() => void) | undefined;
+  readonly hasProgress?: boolean;
+  readonly returnNotice?: 'APPROVED' | 'FAILED' | undefined;
 }
 
 const StatusPanel = ({ title, message }: Readonly<{ title: string; message: string }>) => (
@@ -19,7 +22,12 @@ const StatusPanel = ({ title, message }: Readonly<{ title: string; message: stri
   </section>
 );
 
-export const ProductView = ({ state }: ProductViewProps) => {
+export const ProductView = ({
+  state,
+  onCheckout,
+  hasProgress = false,
+  returnNotice,
+}: ProductViewProps) => {
   if (state.kind === 'loading') {
     return (
       <section className="product-card" aria-busy="true" aria-label="Cargando producto">
@@ -66,35 +74,52 @@ export const ProductView = ({ state }: ProductViewProps) => {
   const { product } = state;
   const isOutOfStock = product.available === 0;
   return (
-    <article className="product-card" aria-labelledby="product-title">
-      <div className="product-media">
-        <img src={product.imageUrl} alt={product.name} width="800" height="600" />
-      </div>
-      <div className="product-copy">
-        <p className="eyebrow">Producto seleccionado</p>
-        <h1 id="product-title">{product.name}</h1>
-        <p className="description">{product.description}</p>
-        <p
-          className="price"
-          aria-label={`Precio ${formatMoney(product.unitPrice.amountInCents, product.unitPrice.currency)}`}
-        >
-          {formatMoney(product.unitPrice.amountInCents, product.unitPrice.currency)}
-        </p>
-        <p className={isOutOfStock ? 'stock danger-text' : 'stock success-text'} aria-live="polite">
-          {isOutOfStock ? 'Agotado por ahora' : `${product.available} unidades disponibles`}
-        </p>
-        <button
-          className="primary-action"
-          type="button"
-          disabled
-          aria-describedby="foundation-note"
-        >
-          {isOutOfStock ? 'Sin disponibilidad' : 'Continuar al pago'}
-        </button>
-        <p id="foundation-note" className="foundation-note">
-          El checkout se habilitará en la etapa 5. Esta vista no captura datos de pago.
-        </p>
-      </div>
-    </article>
+    <div data-testid="product-surface">
+      {returnNotice !== undefined && (
+        <div className="return-banner" role="status" aria-live="polite" tabIndex={-1}>
+          {returnNotice === 'APPROVED'
+            ? 'Compra completada. Actualizamos la disponibilidad.'
+            : 'Volviste al producto. Actualizamos la disponibilidad.'}
+        </div>
+      )}
+      <article className="product-card" aria-labelledby="product-title">
+        <div className="product-media">
+          <img src={product.imageUrl} alt={product.name} width="800" height="600" />
+        </div>
+        <div className="product-copy">
+          <p className="eyebrow">Producto seleccionado</p>
+          <h1 id="product-title">{product.name}</h1>
+          <p className="description">{product.description}</p>
+          <p
+            className="price"
+            aria-label={`Precio ${formatMoney(product.unitPrice.amountInCents, product.unitPrice.currency)}`}
+          >
+            {formatMoney(product.unitPrice.amountInCents, product.unitPrice.currency)}
+          </p>
+          <p
+            className={isOutOfStock ? 'stock danger-text' : 'stock success-text'}
+            aria-live="polite"
+          >
+            {isOutOfStock ? 'Agotado por ahora' : `${product.available} unidades disponibles`}
+          </p>
+          <button
+            className="primary-action"
+            type="button"
+            disabled={(isOutOfStock && !hasProgress) || onCheckout === undefined}
+            onClick={onCheckout}
+            data-testid="product-checkout-cta"
+          >
+            {hasProgress
+              ? 'Continuar compra'
+              : isOutOfStock
+                ? 'Sin disponibilidad'
+                : 'Continuar al pago'}
+          </button>
+          <p className="foundation-note">
+            Precio, total y disponibilidad serán verificados por el servidor.
+          </p>
+        </div>
+      </article>
+    </div>
   );
 };

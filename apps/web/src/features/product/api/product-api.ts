@@ -6,14 +6,18 @@ export type ProductResponse = components['schemas']['ProductResponse'];
 
 const productResponseSchema = z
   .object({
-    productId: z.string().min(8).max(128),
-    sku: z.string().min(1).max(128),
-    name: z.string().min(1).max(200),
-    description: z.string().min(1).max(2_000),
-    imageUrl: z.string().url(),
+    productId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/),
+    sku: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[A-Za-z0-9_-]+$/),
+    name: z.string().min(1).max(120),
+    description: z.string().min(1).max(1_000),
+    imageUrl: z.string().url().max(2_048),
     unitPrice: z
       .object({
-        amountInCents: z.number().int().nonnegative(),
+        amountInCents: z.number().int().min(0).max(999_999_999_999),
         currency: z.literal('COP'),
       })
       .strict(),
@@ -34,6 +38,7 @@ export const productApi = baseApi.injectEndpoints({
     getProduct: builder.query<ProductResponse, string>({
       query: buildProductRequest,
       transformResponse: parseProductResponse,
+      providesTags: (_result, _error, productId) => [{ type: 'Product', id: productId }],
     }),
   }),
 });

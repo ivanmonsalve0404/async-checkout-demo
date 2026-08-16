@@ -10,6 +10,10 @@ describe('GetProductAvailability', () => {
     result: ReturnType<typeof ok> | ReturnType<typeof err>,
   ): CatalogRepository => ({
     findById: jest.fn().mockResolvedValue(result),
+    listActive: jest.fn().mockResolvedValue(ok([])),
+    reserve: jest.fn().mockResolvedValue(result),
+    consume: jest.fn().mockResolvedValue(result),
+    release: jest.fn().mockResolvedValue(result),
     isReady: jest.fn().mockResolvedValue(true),
     seedIfAbsent: jest.fn().mockResolvedValue(ok('EXISTS')),
   });

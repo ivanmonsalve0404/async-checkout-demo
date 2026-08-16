@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest --config jest.config.cjs --runInBand",
-    "test:coverage": "jest --config jest.config.cjs --coverage --runInBand",
+    "test:coverage": "node ../../scripts/evidence/run-jest-coverage.mjs api",
     "test:contract": "jest --config jest.config.cjs --runInBand --testPathPatterns=contract",
     "seed": "tsx src/infrastructure/persistence/seed.cli.ts"
   },

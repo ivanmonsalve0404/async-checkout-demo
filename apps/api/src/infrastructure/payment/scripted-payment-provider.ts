@@ -3,6 +3,7 @@ import type {
   ProviderCreateOutcome,
   ProviderError,
   ProviderPaymentCommand,
+  ProviderObservation,
   ProviderStatus,
 } from '../../application/ports/payment-provider';
 import type { Result } from '../../application/result/result';
@@ -27,10 +28,21 @@ interface FakeScript {
   readonly reads: readonly ProviderStatus[];
 }
 
+type StoredPayment = Pick<ProviderPaymentCommand, 'reference' | 'amountInCents' | 'currency'>;
+
+const retainPayment = (command: ProviderPaymentCommand): StoredPayment => ({
+  reference: command.reference,
+  amountInCents: command.amountInCents,
+  currency: command.currency,
+});
+
 const acknowledged = (status: 'PENDING' | 'APPROVED' | 'DECLINED'): ProviderCreateOutcome => ({
   kind: 'ACKNOWLEDGED',
   providerId: 'provider-fake-001',
   status,
+  reference: 'reference-placeholder',
+  amountInCents: 0,
+  currency: 'COP',
 });
 
 const scripts: Readonly<Record<FakePaymentScenario, FakeScript>> = {
@@ -55,31 +67,68 @@ export const fakePaymentScenarios = Object.freeze(Object.keys(scripts) as FakePa
 
 export class ScriptedPaymentProvider implements PaymentProvider {
   private readIndex = 0;
+  private readonly commands = new Map<string, StoredPayment>();
 
   public constructor(private readonly scenario: FakePaymentScenario) {}
 
   public getPublicConfiguration(): Result<
-    Readonly<{ mode: 'fake'; installments: readonly number[] }>,
+    Readonly<{
+      mode: 'fake';
+      captureVariant: 'FAKE_CONTRACT';
+      publicKey: string;
+      installments: readonly number[];
+    }>,
     ProviderError
   > {
-    return ok({ mode: 'fake', installments: [1, 2, 3] });
+    return ok({
+      mode: 'fake',
+      captureVariant: 'FAKE_CONTRACT',
+      publicKey: 'FAKE_CONTRACT_NO_CARD_DATA',
+      installments: [1, 2, 3],
+    });
   }
 
   public createOnce(
     command: ProviderPaymentCommand,
   ): Promise<Result<ProviderCreateOutcome, ProviderError>> {
-    void command;
-    return Promise.resolve(ok(scripts[this.scenario].create));
+    const scripted = scripts[this.scenario].create;
+    const providerId = 'provider_' + command.reference;
+    if (scripted.kind === 'OUTCOME_UNKNOWN') {
+      this.commands.set(providerId, retainPayment(command));
+      return Promise.resolve(ok(scripted));
+    }
+    if (scripted.kind !== 'ACKNOWLEDGED') return Promise.resolve(ok(scripted));
+    this.commands.set(providerId, retainPayment(command));
+    return Promise.resolve(
+      ok({
+        ...scripted,
+        providerId,
+        reference: command.reference,
+        amountInCents: command.amountInCents,
+        currency: command.currency,
+      }),
+    );
+  }
+  public getByReference(reference: string): Promise<Result<ProviderObservation, ProviderError>> {
+    return this.getById('provider_' + reference);
   }
 
-  public getById(providerId: string): Promise<Result<ProviderStatus, ProviderError>> {
-    void providerId;
-    const value = scripts[this.scenario].reads[this.readIndex];
-    if (value === undefined) {
+  public getById(providerId: string): Promise<Result<ProviderObservation, ProviderError>> {
+    const command = this.commands.get(providerId);
+    const status = scripts[this.scenario].reads[this.readIndex];
+    if (command === undefined || status === undefined) {
       return Promise.resolve(err({ code: 'FAKE_SCRIPT_EXHAUSTED' }));
     }
     this.readIndex += 1;
-    return Promise.resolve(ok(value));
+    return Promise.resolve(
+      ok({
+        providerId,
+        reference: command.reference,
+        amountInCents: command.amountInCents,
+        currency: command.currency,
+        status,
+      }),
+    );
   }
 
   public verifyAndNormalizeEvent(
