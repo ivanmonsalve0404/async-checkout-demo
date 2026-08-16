@@ -106,14 +106,15 @@ export const reportAuthorityReady = (text, expectedHeadingCount = 27) => {
   ) {
     return false;
   }
-  const sections = headings.map((heading, index) => {
+  const rawSections = headings.map((heading, index) => {
     const contentStart = (heading.index ?? 0) + heading[0].length;
     const contentEnd = headings[index + 1]?.index ?? text.length;
-    return text
-      .slice(contentStart, contentEnd)
-      .replace(/<!--[^]*?-->/gu, '')
-      .trim();
+    return text.slice(contentStart, contentEnd);
   });
+  if (rawSections.some((content) => content.includes('<!--') || content.includes('-->'))) {
+    return false;
+  }
+  const sections = rawSections.map((content) => content.trim());
   if (new Set(sections).size !== REPORT_SECTION_AUTHORITY.length) return false;
   return sections.every((content, index) => {
     if (content.length < 24 || !content.includes('STATUS_BY_SAME_SHA_MANIFEST')) return false;
@@ -230,6 +231,30 @@ export const selfTestDocumentAuthority = () => {
   assert.equal(reportAuthorityReady(repeatedFiller), false);
   assert.equal(
     reportAuthorityReady(populatedReport.replace('releasePolicy', 'release-state')),
+    false,
+  );
+  assert.equal(
+    reportAuthorityReady(
+      populatedReport.replace(
+        'STATUS_BY_SAME_SHA_MANIFEST',
+        '<!-- STATUS_BY_SAME_SHA_MANIFEST -->',
+      ),
+    ),
+    false,
+  );
+  assert.equal(
+    reportAuthorityReady(
+      populatedReport.replace(
+        'STATUS_BY_SAME_SHA_MANIFEST',
+        '<!-- outer <!-- STATUS_BY_SAME_SHA_MANIFEST -->',
+      ),
+    ),
+    false,
+  );
+  assert.equal(
+    reportAuthorityReady(
+      populatedReport.replace('STATUS_BY_SAME_SHA_MANIFEST', '<!-- STATUS_BY_SAME_SHA_MANIFEST'),
+    ),
     false,
   );
   assert.equal(finalAuthorityText('Narrativa histórica PENDING_FREEZE y NOT_SCORED.'), true);
