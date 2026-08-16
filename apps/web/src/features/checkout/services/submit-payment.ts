@@ -88,5 +88,5 @@ export const submitPayment = async (
     throw new PaymentCommandError(response.status, code);
   }
   const value: unknown = await response.json();
-  return responseSchema.parse(value) as PaymentSubmissionResponse;
+  return responseSchema.parse(value);
 };

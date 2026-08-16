@@ -4,6 +4,7 @@ import { Provider } from 'react-redux';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { createAppStore } from '../../../app/store/store';
 import { checkoutRoutes } from '../../checkout/testing-contract';
+import { checkoutRecovered } from '../../checkout/model/checkout-slice';
 import { ProductPage, toViewState } from './product-page';
 import type { ProductQueryState } from './product-page';
 import { useGetProductQuery } from '../api/product-api';
@@ -108,6 +109,41 @@ describe('product query state mapping', () => {
     await userEvent.click(screen.getByTestId('product-checkout-cta'));
     expect(screen.getByTestId('location')).toHaveTextContent(
       checkoutRoutes.capture('product-demo-001'),
+    );
+  });
+
+  it('reopens the active transaction even while its reservation holds all stock', async () => {
+    const data = {
+      productId: 'product-demo-001',
+      sku: 'SKU_1',
+      name: 'Producto visible',
+      description: 'Descripción visible',
+      imageUrl: 'http://localhost/product.svg',
+      unitPrice: { amountInCents: 100, currency: 'COP' as const },
+      available: 0,
+    };
+    mockUseGetProductQuery.mockReturnValue(query({ data }) as never);
+    const store = createAppStore();
+    store.dispatch(
+      checkoutRecovered({
+        checkoutId: 'checkout_123456',
+        transactionId: 'transaction_123456',
+        idempotencyKey: 'idem_1234567890123456',
+      }),
+    );
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter>
+          <ProductPage productId="product-demo-001" />
+          <LocationProbe />
+        </MemoryRouter>
+      </Provider>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Continuar compra' }));
+    expect(screen.getByTestId('location')).toHaveTextContent(
+      checkoutRoutes.status('product-demo-001'),
     );
   });
 

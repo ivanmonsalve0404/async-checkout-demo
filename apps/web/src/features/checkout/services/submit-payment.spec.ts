@@ -32,7 +32,10 @@ describe('payment command boundary', () => {
         'Idempotency-Key': input.idempotencyKey,
       },
     });
-    const body = String(command.init.body);
+    if (typeof command.init.body !== 'string') {
+      throw new Error('Expected a JSON request body');
+    }
+    const body = command.init.body;
     expect(body).not.toMatch(/number|securityCode|expiry|holderName|pan|cvc/i);
     expect(JSON.parse(body)).toEqual(input.body);
   });

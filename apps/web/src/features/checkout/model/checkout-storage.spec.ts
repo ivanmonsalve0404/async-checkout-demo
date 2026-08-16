@@ -25,7 +25,7 @@ const stores = (): ProgressStores => ({
 });
 
 describe('checkout progress allowlist', () => {
-  it('persists only opaque IDs, step, and idempotency key in their scopes', () => {
+  it('persists only opaque IDs and step while keeping the idempotency key in memory', () => {
     const storage = stores();
     persistCheckoutProgress(
       {
@@ -46,11 +46,14 @@ describe('checkout progress allowlist', () => {
     expect(serialized).toContain('checkout_123456');
     expect(serialized).toContain('transaction_123456');
     expect(serialized).toContain('status');
+    expect(serialized).not.toContain('idempotencyKey');
+    expect(serialized).not.toContain('idem_1234567890123456');
     expect(serialized).not.toContain('APPROVED');
     expect(serialized).not.toMatch(/email|address|amount/i);
     expect(readCheckoutProgress(storage)).toMatchObject({
       checkoutId: 'checkout_123456',
       transactionId: 'transaction_123456',
+      idempotencyKey: undefined,
       step: 'status',
       modalOpen: false,
     });

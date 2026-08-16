@@ -5,12 +5,12 @@ info:
   version: 1.0.0
   summary: Contrato HTTP del checkout invitado asíncrono
   description: |
-    Contrato contract-first de Etapa 3. Está diseñado, no implementado.
+    Contrato contract-first de Etapa 3 consumido por la construcción de Etapa 5.
     El servidor es autoridad de precio, moneda, stock, cotización y estado.
     Los datos completos de tarjeta nunca forman parte de esta API. Los valores
     efímeros de pago y aceptación sólo aparecen como campos de escritura sin
     ejemplos, defaults ni persistencia.
-  x-status: DESIGNED_NOT_IMPLEMENTED
+  x-status: STAGE_5_LOCAL_FAKE_VERIFIED
   x-source-baseline:
     requirements: 33 RF identities and 28 RNF identities
     acceptanceCriteria: 45
@@ -27,6 +27,8 @@ info:
     paymentSubmission: Every locally accepted payment submission and its semantic replay return the same 202 body and Location
     asyncOutcomes: Provider uncertainty and later incidents are represented by the local transaction resource
     localStateVocabulary: E0-E2 values NOT_SENT and ACKNOWLEDGED are preserved
+    stage5RateLimiting: Checkout creation 10/min by network+origin; customer/delivery 10/min and payment 2/min by network and capability
+    globalReadThrottle: DEFERRED_STAGE_7 to API Gateway; local GET operations do not advertise 429 or quota headers
 servers:
   - url: https://checkout.example.invalid
     description: Symbolic HTTPS demo host; reserved invalid domain
@@ -43,6 +45,15 @@ tags:
   - { name: Webhooks, description: Optional P1 signed event accelerator; polling remains mandatory }
   - { name: Operations, description: Sanitized documentation and technical health }
 security: []
+x-payment-adapters:
+  fake:
+    status: GREEN
+    externalNetwork: false
+  sandbox:
+    status: READY_DISABLED
+    externalSmoke: NOT_RUN_AUTH_REQUIRED
+    externalNetwork: false
+    activationRequires: [AUTH-E5-01, AUTH-E5-02, SPK-02]
 x-canonical-error-catalog:
   - { id: ERR-01, code: REQUEST_MALFORMED, disposition: PROBLEM_400 }
   - { id: ERR-02, code: ORIGIN_FORBIDDEN, disposition: PROBLEM_403 }
@@ -79,23 +90,21 @@ paths:
       parameters:
         - $ref: '#/components/parameters/CorrelationId'
       x-api-id: API-01
-      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-status: IMPLEMENTED_LOCAL
       x-trace:
         requirements: [RF-01, RF-25, RF-16]
         acceptanceCriteria: [AC-US-01-01, AC-US-01-02]
         scenarios: [SC-US-01-01, SC-US-01-02]
         uat: [UAT-18, UAT-38]
         data: [DAT-01, DAT-02, DAT-03, DAT-04, DAT-05, DAT-06, DAT-07, DAT-10]
-        errors: [ERR-19, ERR-20]
+        errors: [ERR-02, ERR-20]
         uxFlows: [UXF-01, UXF-02]
       responses:
         '200':
           description: Colección pública de productos activos
           headers:
-            Cache-Control: { $ref: '#/components/headers/PublicCatalogCache' }
+            Cache-Control: { $ref: '#/components/headers/RevalidateCache' }
             X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
-            X-RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
-            X-RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProductCollectionResponse' }
@@ -111,7 +120,7 @@ paths:
                         unitPrice: { amountInCents: 2500000, currency: COP }
                         available: 1
                     count: 1
-        '429': { $ref: '#/components/responses/RateLimited' }
+        '403': { $ref: '#/components/responses/OriginForbidden' }
         '500': { $ref: '#/components/responses/InternalError' }
   /api/v1/products/{productId}:
     get:
@@ -124,26 +133,26 @@ paths:
         - $ref: '#/components/parameters/ProductId'
         - $ref: '#/components/parameters/CorrelationId'
       x-api-id: API-02
-      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-status: IMPLEMENTED_LOCAL
       x-trace:
         requirements: [RF-01, RF-25]
         acceptanceCriteria: [AC-US-01-01, AC-US-01-03]
         scenarios: [SC-US-01-01, SC-US-01-03]
         uat: [UAT-37]
         data: [DAT-01, DAT-02, DAT-03, DAT-04, DAT-05, DAT-06, DAT-07, DAT-10]
-        errors: [ERR-04, ERR-19, ERR-20]
+        errors: [ERR-02, ERR-04, ERR-20]
         uxFlows: [UXF-01, UXF-02]
       responses:
         '200':
           description: Producto público
           headers:
-            Cache-Control: { $ref: '#/components/headers/PublicCatalogCache' }
+            Cache-Control: { $ref: '#/components/headers/RevalidateCache' }
             X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProductResponse' }
+        '403': { $ref: '#/components/responses/OriginForbidden' }
         '404': { $ref: '#/components/responses/ProductNotFound' }
-        '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
   /api/v1/stock/{productId}:
     get:
@@ -156,14 +165,14 @@ paths:
         - $ref: '#/components/parameters/ProductId'
         - $ref: '#/components/parameters/CorrelationId'
       x-api-id: API-03
-      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-status: IMPLEMENTED_LOCAL
       x-trace:
         requirements: [RF-25, RF-29]
         acceptanceCriteria: [AC-US-01-02, AC-US-11-01, AC-US-11-02]
         scenarios: [SC-US-01-02, SC-US-11-01, SC-US-11-02]
         uat: [UAT-06, UAT-38]
         data: [DAT-01, DAT-10]
-        errors: [ERR-04, ERR-19, ERR-20]
+        errors: [ERR-02, ERR-04, ERR-20]
         uxFlows: [UXF-02]
       responses:
         '200':
@@ -180,8 +189,8 @@ paths:
                     productId: PRODUCT_ID_OPAQUE
                     available: 1
                     asOf: '2026-01-01T00:00:00Z'
+        '403': { $ref: '#/components/responses/OriginForbidden' }
         '404': { $ref: '#/components/responses/ProductNotFound' }
-        '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
   /api/v1/checkouts:
     post:
@@ -204,7 +213,7 @@ paths:
               oneProduct:
                 value: { productId: PRODUCT_ID_OPAQUE }
       x-api-id: API-04
-      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-status: IMPLEMENTED
       x-browser-security:
         csrf: Same-origin plus Origin and Fetch Metadata validation
         cookie: HttpOnly; Secure; SameSite=Strict; Path=/api/v1
@@ -227,6 +236,8 @@ paths:
             Cache-Control: { $ref: '#/components/headers/NoStore' }
             Vary: { $ref: '#/components/headers/VaryOrigin' }
             X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+            X-RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            X-RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CheckoutCreatedResponse' }
@@ -248,6 +259,8 @@ paths:
                       expiresAt: '2026-01-01T00:15:00Z'
                     expiresAt: '2026-01-01T00:30:00Z'
         '400': { $ref: '#/components/responses/RequestMalformed' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '403': { $ref: '#/components/responses/OriginForbidden' }
         '404': { $ref: '#/components/responses/ProductNotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -269,14 +282,14 @@ paths:
         - $ref: '#/components/parameters/OptionalOrigin'
         - $ref: '#/components/parameters/CorrelationId'
       x-api-id: API-05
-      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-status: IMPLEMENTED
       x-trace:
         requirements: [RF-13, RF-32]
         acceptanceCriteria: [AC-US-09-01, AC-US-09-02, AC-US-09-05]
         scenarios: [SC-US-09-01, SC-US-09-03, SC-EN-11-02, SC-EN-11-04]
         uat: [UAT-17, UAT-25, UAT-26, UAT-28]
         data: [DAT-11, DAT-12, DAT-13, DAT-15, DAT-16, DAT-17, DAT-18, DAT-19, DAT-20, DAT-21, DAT-22, DAT-29, DAT-32, DAT-42, DAT-43, DAT-44, DAT-45, DAT-46, DAT-47, DAT-48, DAT-49, DAT-50]
-        errors: [ERR-02, ERR-03, ERR-08, ERR-19, ERR-20]
+        errors: [ERR-02, ERR-03, ERR-08, ERR-20]
         uxFlows: [UXF-12, UXF-13]
       responses:
         '200':
@@ -291,7 +304,6 @@ paths:
         '403': { $ref: '#/components/responses/OriginForbidden' }
         '404': { $ref: '#/components/responses/CheckoutHidden' }
         '410': { $ref: '#/components/responses/CheckoutExpired' }
-        '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
   /api/v1/checkouts/{checkoutId}/customer:
     put:
@@ -312,7 +324,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ReplaceCustomerRequest' }
       x-api-id: API-06
-      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-status: IMPLEMENTED
       x-decision-status: ASSUMED_FIELDS_FROM_DEC-07
       x-trace:
         requirements: [RF-21, RF-27, RF-32]
@@ -329,10 +341,14 @@ paths:
             ETag: { $ref: '#/components/headers/StrongETag' }
             Cache-Control: { $ref: '#/components/headers/NoStore' }
             X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+            X-RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            X-RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CustomerResponse' }
         '400': { $ref: '#/components/responses/RequestMalformed' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '403': { $ref: '#/components/responses/OriginForbidden' }
         '404': { $ref: '#/components/responses/CheckoutHidden' }
         '410': { $ref: '#/components/responses/CheckoutExpired' }
@@ -359,7 +375,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ReplaceDeliveryDetailsRequest' }
       x-api-id: API-07
-      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-status: IMPLEMENTED
       x-decision-status: ASSUMED_FIELDS_FROM_DEC-07
       x-trace:
         requirements: [RF-22, RF-28, RF-32]
@@ -376,10 +392,14 @@ paths:
             ETag: { $ref: '#/components/headers/StrongETag' }
             Cache-Control: { $ref: '#/components/headers/NoStore' }
             X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+            X-RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            X-RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DeliveryDetailsResponse' }
         '400': { $ref: '#/components/responses/RequestMalformed' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '403': { $ref: '#/components/responses/OriginForbidden' }
         '404': { $ref: '#/components/responses/CheckoutHidden' }
         '410': { $ref: '#/components/responses/CheckoutExpired' }
@@ -401,7 +421,7 @@ paths:
         - $ref: '#/components/parameters/OptionalOrigin'
         - $ref: '#/components/parameters/CorrelationId'
       x-api-id: API-08
-      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-status: IMPLEMENTED
       x-decision-status: BLOCKED_REAL_PROVIDER_UNTIL_SPK-02
       x-trace:
         requirements: [RF-17, RF-23]
@@ -409,7 +429,7 @@ paths:
         scenarios: [SC-US-03-03, SC-EN-24-01]
         uat: [UAT-19, UAT-20, UAT-32]
         data: [DAT-35, DAT-36, DAT-37, DAT-38, DAT-39, DAT-60]
-        errors: [ERR-02, ERR-19, ERR-20, ERR-23, ERR-24]
+        errors: [ERR-02, ERR-20, ERR-23, ERR-24]
         uxFlows: [UXF-04, UXF-13]
       responses:
         '200':
@@ -422,7 +442,6 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PaymentConfigurationResponse' }
         '403': { $ref: '#/components/responses/OriginForbidden' }
-        '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/v1/checkouts/{checkoutId}/transactions:
@@ -450,7 +469,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/PaymentSubmissionRequest' }
       x-api-id: API-09
-      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-status: IMPLEMENTED
       x-stable-accepted-response:
         status: 202
         replayInvariantFields: [transactionId, statusUrl, submissionState, acceptedAt, Location]
@@ -470,6 +489,8 @@ paths:
             Location: { $ref: '#/components/headers/Location' }
             Cache-Control: { $ref: '#/components/headers/NoStore' }
             X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+            X-RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            X-RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PaymentSubmissionResponse' }
@@ -481,9 +502,11 @@ paths:
                     submissionState: ACCEPTED
                     acceptedAt: '2026-01-01T00:00:00Z'
         '400': { $ref: '#/components/responses/RequestMalformed' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '403': { $ref: '#/components/responses/OriginForbidden' }
         '404': { $ref: '#/components/responses/CheckoutHidden' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '409': { $ref: '#/components/responses/PaymentConflict' }
         '410': { $ref: '#/components/responses/CheckoutExpired' }
         '412': { $ref: '#/components/responses/PreconditionFailed' }
         '422': { $ref: '#/components/responses/FieldInvalid' }
@@ -506,14 +529,14 @@ paths:
         - $ref: '#/components/parameters/OptionalOrigin'
         - $ref: '#/components/parameters/CorrelationId'
       x-api-id: API-10
-      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-status: IMPLEMENTED
       x-trace:
         requirements: [RF-09, RF-13, RF-26, RF-31, RF-32]
         acceptanceCriteria: [AC-US-06-01, AC-US-06-02, AC-US-06-03, AC-US-09-03, AC-US-09-04]
         scenarios: [SC-US-06-01, SC-US-06-02, SC-US-09-02]
         uat: [UAT-03, UAT-23, UAT-27, UAT-34, UAT-35, UAT-40, UAT-41, UAT-42]
         data: [DAT-11, DAT-15, DAT-23, DAT-24, DAT-29, DAT-30, DAT-31, DAT-32, DAT-33, DAT-34, DAT-35, DAT-51, DAT-52, DAT-69]
-        errors: [ERR-02, ERR-03, ERR-12, ERR-13, ERR-14, ERR-18, ERR-19, ERR-20, ERR-21, ERR-22]
+        errors: [ERR-02, ERR-03, ERR-12, ERR-13, ERR-14, ERR-18, ERR-20, ERR-21, ERR-22]
         uxFlows: [UXF-09, UXF-10, UXF-11, UXF-12, UXF-13]
       responses:
         '200':
@@ -543,7 +566,6 @@ paths:
                     updatedAt: '2026-01-01T00:00:30Z'
         '403': { $ref: '#/components/responses/OriginForbidden' }
         '404': { $ref: '#/components/responses/CheckoutHidden' }
-        '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
   /api/v1/webhooks/payment:
     post:
@@ -565,7 +587,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/PaymentWebhookRequest' }
       x-api-id: API-11
-      x-status: DEFERRED_P1_DESIGNED_NOT_IMPLEMENTED
+      x-status: DEFERRED_P1
       x-decision-status: BLOCKED_REAL_PROVIDER_UNTIL_SPK-02_AND_ISOLATION
       x-trace:
         requirements: [RF-33]
@@ -582,6 +604,8 @@ paths:
             Cache-Control: { $ref: '#/components/headers/NoStore' }
             X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
         '400': { $ref: '#/components/responses/RequestMalformed' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '401': { $ref: '#/components/responses/WebhookSignatureInvalid' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
@@ -598,14 +622,14 @@ paths:
         - $ref: '#/components/parameters/OptionalOrigin'
         - $ref: '#/components/parameters/CorrelationId'
       x-api-id: API-12
-      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-status: IMPLEMENTED
       x-trace:
         requirements: [RF-10, RF-28, RF-32]
         acceptanceCriteria: [AC-US-07-01, AC-US-07-02]
         scenarios: [SC-US-07-01, SC-US-07-02, SC-EN-11-02]
         uat: [UAT-01, UAT-17, UAT-43]
         data: [DAT-11, DAT-15, DAT-29, DAT-41, DAT-45, DAT-46, DAT-47, DAT-48, DAT-49, DAT-50, DAT-51, DAT-52]
-        errors: [ERR-02, ERR-03, ERR-19, ERR-20]
+        errors: [ERR-02, ERR-03, ERR-20]
         uxFlows: [UXF-01, UXF-11]
       responses:
         '200':
@@ -618,7 +642,6 @@ paths:
               schema: { $ref: '#/components/schemas/DeliveryResponse' }
         '403': { $ref: '#/components/responses/OriginForbidden' }
         '404': { $ref: '#/components/responses/CheckoutHidden' }
-        '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
   /api/docs:
     get:
@@ -630,14 +653,14 @@ paths:
       parameters:
         - $ref: '#/components/parameters/CorrelationId'
       x-api-id: API-13
-      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-status: IMPLEMENTED_LOCAL
       x-trace:
         requirements: [RF-15, RNF-11]
         acceptanceCriteria: []
         scenarios: [SC-EN-07-01]
         uat: [UAT-30]
         data: []
-        errors: [ERR-19, ERR-20]
+        errors: [ERR-02, ERR-20]
         uxFlows: []
       responses:
         '200':
@@ -648,7 +671,7 @@ paths:
           content:
             text/html:
               schema: { type: string }
-        '429': { $ref: '#/components/responses/RateLimited' }
+        '403': { $ref: '#/components/responses/OriginForbidden' }
         '500': { $ref: '#/components/responses/InternalError' }
   /api/health:
     get:
@@ -660,14 +683,14 @@ paths:
       parameters:
         - $ref: '#/components/parameters/CorrelationId'
       x-api-id: API-14
-      x-status: DESIGNED_NOT_IMPLEMENTED
+      x-status: IMPLEMENTED_LOCAL
       x-trace:
         requirements: [RNF-14, RNF-23]
         acceptanceCriteria: []
         scenarios: [SC-EN-24-01]
         uat: [UAT-32, UAT-47]
         data: [DAT-69]
-        errors: [ERR-20, ERR-23, ERR-24]
+        errors: [ERR-02, ERR-20, ERR-23, ERR-24]
         uxFlows: [UXF-13]
       responses:
         '200':
@@ -683,13 +706,14 @@ paths:
                   value:
                     status: ok
                     checkedAt: '2026-01-01T00:00:00Z'
+        '403': { $ref: '#/components/responses/OriginForbidden' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 components:
   securitySchemes:
     CheckoutCapability:
       type: apiKey
       in: cookie
-      name: checkout_capability
+      name: __Secure-checkout_cap
       description: |
         Capability aleatoria de al menos 256 bits emitida sólo mediante una
         cookie HttpOnly, Secure, SameSite=Strict y Path=/api/v1. El servidor
@@ -784,7 +808,7 @@ components:
       name: X-Correlation-Id
       in: header
       required: false
-      description: ID opaco opcional; el servidor genera uno seguro si falta.
+      description: Hint opaco no confiable; el servidor nunca lo refleja ni registra y siempre genera un ID seguro nuevo.
       schema: { $ref: '#/components/schemas/CorrelationId' }
   headers:
     CorrelationId:
@@ -817,12 +841,6 @@ components:
         type: string
         const: no-store
       example: no-store
-    PublicCatalogCache:
-      description: Cache pública breve; una reserva siempre revalida stock en backend.
-      schema:
-        type: string
-        const: public, max-age=30
-      example: public, max-age=30
     RevalidateCache:
       description: La disponibilidad se revalida y nunca autoriza una reserva.
       schema:
@@ -878,6 +896,22 @@ components:
                 code: REQUEST_MALFORMED
                 correlationId: CORRELATION_ID_SAFE
                 retryable: false
+    PayloadTooLarge:
+      description: ERR-01 REQUEST_MALFORMED; el body supera 16 KiB y ningún caso de uso se ejecuta.
+      headers:
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    UnsupportedMediaType:
+      description: ERR-01 REQUEST_MALFORMED; los comandos sólo aceptan application/json.
+      headers:
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     OriginForbidden:
       description: ERR-02 ORIGIN_FORBIDDEN; no revela recursos.
       headers:
@@ -917,6 +951,16 @@ components:
       description: |
         Conflicto de negocio con precondición técnicamente válida. El code
         distingue ERR-06, ERR-07, ERR-10, ERR-11 o ERR-18.
+      headers:
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    PaymentConflict:
+      description: |
+        Conflicto del comando de pago. Location se emite cuando code es
+        PAYMENT_ALREADY_IN_PROGRESS y apunta a la transacción activa.
       headers:
         Cache-Control: { $ref: '#/components/headers/NoStore' }
         Location: { $ref: '#/components/headers/Location' }
@@ -970,6 +1014,8 @@ components:
         Cache-Control: { $ref: '#/components/headers/NoStore' }
         Retry-After: { $ref: '#/components/headers/OptionalRetryAfter' }
         X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+        X-RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+        X-RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -1360,8 +1406,9 @@ components:
       properties:
         termsAcceptanceToken:
           type: string
-          minLength: 1
-          maxLength: 4096
+          minLength: 76
+          maxLength: 556
+          pattern: '^[A-Za-z0-9_-]{32,512}\.[A-Za-z0-9_-]{43}$'
           writeOnly: true
           description: C3 efímero; no se persiste, registra ni incluye en el digest.
           x-data-class: C3
@@ -1369,8 +1416,9 @@ components:
           x-loggable: false
         personalDataAcceptanceToken:
           type: string
-          minLength: 1
-          maxLength: 4096
+          minLength: 76
+          maxLength: 556
+          pattern: '^[A-Za-z0-9_-]{32,512}\.[A-Za-z0-9_-]{43}$'
           writeOnly: true
           description: C3 efímero; no se persiste, registra ni incluye en el digest.
           x-data-class: C3
@@ -1385,10 +1433,11 @@ components:
           $ref: '#/components/schemas/OpaqueId'
         paymentMethodToken:
           type: string
-          minLength: 1
-          maxLength: 4096
+          minLength: 17
+          maxLength: 137
+          pattern: '^tok_fake_[A-Za-z0-9_-]{8,128}$'
           writeOnly: true
-          description: Token C3 efímero, de uso único y persistencia cero; sin ejemplo.
+          description: Token C3 efímero del adapter fake de etapa 5; persistencia cero y sin ejemplo. El adapter sandbox permanece deshabilitado y requiere cambio contractual tras SPK-02.
           x-data-class: C3
           x-ephemeral: true
           x-loggable: false

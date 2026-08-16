@@ -49,6 +49,16 @@ describe('checkout API runtime contracts', () => {
     ).toMatchObject({ product, status: 'DRAFT' });
     expect(() => parseCheckoutCreated({ ...created, total: money })).toThrow();
     expect(() => parseCheckout({ ...created, product: { ...product, available: -1 } })).toThrow();
+    expect(() => parseCheckoutCreated({ ...created, expiresAt: 'tomorrow' })).toThrow();
+    expect(() =>
+      parseCheckout({
+        ...created,
+        product: {
+          ...product,
+          unitPrice: { amountInCents: 1_000_000_000_000, currency: 'COP' },
+        },
+      }),
+    ).toThrow();
   });
 
   it('requires both independent acceptance contracts', () => {
@@ -73,6 +83,9 @@ describe('checkout API runtime contracts', () => {
       expiresAt: '2099-01-01T00:00:00Z',
     };
     expect(parsePaymentConfiguration(configuration)).toEqual(configuration);
+    expect(() =>
+      parsePaymentConfiguration({ ...configuration, allowedInstallments: [1, 1] }),
+    ).toThrow();
     expect(() =>
       parsePaymentConfiguration({
         ...configuration,
@@ -104,5 +117,9 @@ describe('checkout API runtime contracts', () => {
     expect(parseTransaction(transaction)).toEqual(transaction);
     expect(checkoutEtag(7)).toBe('"checkout-v7"');
     expect(() => parseTransaction({ ...transaction, paymentStatus: 'UNKNOWN' })).toThrow();
+    expect(() =>
+      parseTransaction({ ...transaction, allowedActions: ['QUERY', 'QUERY'] }),
+    ).toThrow();
+    expect(() => parseTransaction({ ...transaction, updatedAt: 'not-a-date' })).toThrow();
   });
 });

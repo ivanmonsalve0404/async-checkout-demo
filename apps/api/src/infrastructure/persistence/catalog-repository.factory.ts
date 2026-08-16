@@ -5,20 +5,28 @@ import type { AppConfig } from '../configuration/app-config';
 import { DynamoDbCatalogRepository } from './dynamodb-catalog.repository';
 import { InMemoryCatalogRepository } from './in-memory-catalog.repository';
 
-export const createCatalogRepository = (config: AppConfig): CatalogRepository => {
-  if (config.dataAdapter === 'memory') {
-    return new InMemoryCatalogRepository();
-  }
+export const DYNAMODB_DOCUMENT_CLIENT = Symbol('DYNAMODB_DOCUMENT_CLIENT');
 
+export const createDynamoDocumentClient = (config: AppConfig): DynamoDBDocumentClient => {
   const lowLevelClient = new DynamoDBClient({
     endpoint: config.dynamoDbEndpoint,
     region: 'us-east-1',
     credentials: { accessKeyId: 'local', secretAccessKey: 'local' },
   });
+  return DynamoDBDocumentClient.from(lowLevelClient, {
+    marshallOptions: { removeUndefinedValues: true },
+  });
+};
+
+export const createCatalogRepository = (
+  config: AppConfig,
+  client?: DynamoDBDocumentClient,
+): CatalogRepository => {
+  if (config.dataAdapter === 'memory') {
+    return new InMemoryCatalogRepository();
+  }
   return new DynamoDbCatalogRepository(
-    DynamoDBDocumentClient.from(lowLevelClient, {
-      marshallOptions: { removeUndefinedValues: true },
-    }),
+    client ?? createDynamoDocumentClient(config),
     config.catalogTableName,
   );
 };

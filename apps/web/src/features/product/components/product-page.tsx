@@ -53,14 +53,14 @@ export const ProductPage = ({
   const progress = useAppSelector((state) => state.checkout);
   const hasProgress = progress.checkoutId !== undefined;
   const openProgress = (): void => {
-    navigate(
+    void navigate(
       progress.transactionId === undefined
         ? checkoutRoutes.capture(productId)
         : checkoutRoutes.status(productId),
     );
   };
   const backToProduct = (): void => {
-    navigate(checkoutRoutes.product(productId), { replace: true });
+    void navigate(checkoutRoutes.product(productId), { replace: true });
   };
 
   return (
@@ -72,7 +72,7 @@ export const ProductPage = ({
           error: query.error,
           refetch: query.refetch,
         })}
-        onCheckout={query.data?.available === 0 ? undefined : openProgress}
+        onCheckout={query.data?.available === 0 && !hasProgress ? undefined : openProgress}
         hasProgress={hasProgress}
         returnNotice={progress.returnNotice}
       />
@@ -81,7 +81,7 @@ export const ProductPage = ({
           productId={productId}
           mode={mode}
           onClose={backToProduct}
-          onStatusRoute={() => navigate(checkoutRoutes.status(productId), { replace: true })}
+          onStatusRoute={() => void navigate(checkoutRoutes.status(productId), { replace: true })}
           onReturn={() => {
             void query.refetch();
             backToProduct();

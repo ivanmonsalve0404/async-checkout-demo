@@ -19,7 +19,6 @@ export interface ProgressStores {
 const IDS_KEY = 'checkout.progress.ids.v1';
 const SESSION_KEY = 'checkout.progress.session.v1';
 const opaqueIdPattern = /^[A-Za-z0-9_-]{8,128}$/;
-const idempotencyPattern = /^[A-Za-z0-9._~-]{16,128}$/;
 
 const parseObject = (value: string | null): Record<string, unknown> | undefined => {
   if (value === null) {
@@ -59,10 +58,9 @@ export const readCheckoutProgress = (stores: ProgressStores): CheckoutUiState =>
       ids === undefined ||
       session === undefined ||
       !hasOnlyKeys(ids, ['checkoutId', 'transactionId']) ||
-      !hasOnlyKeys(session, ['step', 'idempotencyKey']) ||
+      !hasOnlyKeys(session, ['step']) ||
       !validOptional(ids.checkoutId, opaqueIdPattern) ||
       !validOptional(ids.transactionId, opaqueIdPattern) ||
-      !validOptional(session.idempotencyKey, idempotencyPattern) ||
       (step !== undefined && !checkoutSteps.includes(step as CheckoutStep)) ||
       (ids.transactionId !== undefined && ids.checkoutId === undefined)
     ) {
@@ -73,7 +71,6 @@ export const readCheckoutProgress = (stores: ProgressStores): CheckoutUiState =>
       ...initialCheckoutState,
       checkoutId: ids.checkoutId,
       transactionId: ids.transactionId,
-      idempotencyKey: session.idempotencyKey,
       step: (step as CheckoutStep | undefined) ?? 'payment',
     };
   } catch {
@@ -92,9 +89,6 @@ export const persistCheckoutProgress = (state: CheckoutUiState, stores: Progress
       ids.transactionId = state.transactionId;
     }
     const session: Record<string, string> = { step: state.step };
-    if (state.idempotencyKey !== undefined) {
-      session.idempotencyKey = state.idempotencyKey;
-    }
     stores.persistent.setItem(IDS_KEY, JSON.stringify(ids));
     stores.session.setItem(SESSION_KEY, JSON.stringify(session));
   } catch {

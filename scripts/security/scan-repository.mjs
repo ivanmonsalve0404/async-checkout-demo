@@ -280,6 +280,31 @@ function main() {
   process.stdout.write(
     'secret-scan: PASS (' + files.length + ' files; history=' + historyStatus + ')\n',
   );
+
+  const evidencePath = argumentValue('--evidence');
+  if (evidencePath !== undefined) {
+    const resolvedEvidencePath = path.resolve(rootDirectory, evidencePath);
+    const rootPrefix = rootDirectory.endsWith(path.sep) ? rootDirectory : rootDirectory + path.sep;
+    if (!resolvedEvidencePath.startsWith(rootPrefix)) {
+      throw new Error('secret-scan evidence path escapes the repository');
+    }
+    fs.mkdirSync(path.dirname(resolvedEvidencePath), { recursive: true });
+    fs.writeFileSync(
+      resolvedEvidencePath,
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          status: 'PASS',
+          findings: 0,
+          filesScanned: files.length,
+          history: historyStatus,
+        },
+        null,
+        2,
+      ) + '\n',
+      'utf8',
+    );
+  }
 }
 
 main();

@@ -36,7 +36,33 @@ function collectReferences(source) {
   return references;
 }
 
+function inspectContentMediaTypes(source) {
+  const lines = source.split(/\r?\n/);
+  const mediaTypePattern = /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const contentMatch = /^(\s*)content:\s*$/.exec(lines[index]);
+    if (!contentMatch) continue;
+
+    const contentIndent = contentMatch[1].length;
+    for (let childIndex = index + 1; childIndex < lines.length; childIndex += 1) {
+      const line = lines[childIndex];
+      if (line.trim() === '' || line.trimStart().startsWith('#')) continue;
+
+      const indent = line.length - line.trimStart().length;
+      if (indent <= contentIndent) break;
+      if (indent !== contentIndent + 2) continue;
+
+      const keyMatch = /^\s*([^:]+):\s*$/.exec(line);
+      if (keyMatch && !mediaTypePattern.test(keyMatch[1])) {
+        fail(`Invalid media type under content: ${keyMatch[1]}`);
+      }
+    }
+  }
+}
+
 function inspectContract(source) {
+  inspectContentMediaTypes(source);
   if (source.charCodeAt(0) === 0xfeff) fail('UTF-8 BOM is not allowed');
   if (!/^openapi:\s*3\.1\.2\s*$/m.test(source)) fail('OpenAPI must remain at 3.1.2');
 
@@ -189,6 +215,14 @@ async function test() {
       ),
     /non-local reference/,
     'remote references must fail closed',
+  );
+  assert.throws(
+    () =>
+      inspectContract(
+        contract.source.replace('            application/json:', '            X-RateLimit-Limit:'),
+      ),
+    /Invalid media type/,
+    'response content must contain media types only',
   );
   const current = await loadGenerated();
   assert.equal(current, first, 'committed output must match generation');

@@ -55,6 +55,7 @@ export interface TransactionStepProps {
   readonly transaction: TransactionResponse | undefined;
   readonly loading: boolean;
   readonly error: boolean;
+  readonly automaticPollingStopped?: boolean;
   readonly onRefresh: () => void;
   readonly onReturn: (approved: boolean) => void;
   readonly onRetry: () => void;
@@ -64,6 +65,7 @@ export const TransactionStep = ({
   transaction,
   loading,
   error,
+  automaticPollingStopped = false,
   onRefresh,
   onReturn,
   onRetry,
@@ -119,9 +121,24 @@ export const TransactionStep = ({
       {approved && transaction.deliveryId !== undefined && (
         <p className="success-text">Entrega confirmada.</p>
       )}
+      {transaction.allowedActions.includes('CONTACT_SUPPORT') && (
+        <p data-testid="contact-support">
+          <strong>Contacta soporte</strong> e indica la referencia{' '}
+          <code>{transaction.transactionId}</code>.
+        </p>
+      )}
+      {!final && automaticPollingStopped && (
+        <p role="status" data-testid="transaction-polling-paused">
+          Pausamos las consultas automáticas. Puedes consultar el estado manualmente.
+        </p>
+      )}
       {!final && (
         <button className="primary-action" type="button" onClick={onRefresh} disabled={loading}>
-          {loading ? 'Consultando…' : 'Consultar estado'}
+          {loading
+            ? 'Consultando…'
+            : automaticPollingStopped
+              ? 'Consultar estado manualmente'
+              : 'Consultar estado'}
         </button>
       )}
       {canRetry && (

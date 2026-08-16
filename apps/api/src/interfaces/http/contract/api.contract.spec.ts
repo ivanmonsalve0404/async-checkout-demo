@@ -31,7 +31,8 @@ describe('API contract walking skeleton', () => {
       .set('x-correlation-id', 'correlation-health-01')
       .expect(200);
     expect(response.headers['cache-control']).toBe('no-store');
-    expect(response.headers['x-correlation-id']).toBe('correlation-health-01');
+    expect(response.headers['x-correlation-id']).toMatch(/^[0-9a-f-]{36}$/);
+    expect(response.headers['x-correlation-id']).not.toBe('correlation-health-01');
     expect(Object.keys(response.body).sort()).toEqual(['checkedAt', 'status']);
     expect(response.body).toMatchObject({ status: 'ok' });
   });
@@ -40,7 +41,7 @@ describe('API contract walking skeleton', () => {
     const response = await request(application.getHttpServer())
       .get('/api/v1/products/product-demo-001')
       .expect(200);
-    expect(response.headers['cache-control']).toBe('public, max-age=300');
+    expect(response.headers['cache-control']).toBe('no-cache');
     expect(Object.keys(response.body).sort()).toEqual([
       'available',
       'description',

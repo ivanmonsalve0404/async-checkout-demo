@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { PaymentTokenizationAdapter } from '../services/payment-tokenization';
 import {
   digitsOnly,
@@ -10,6 +10,7 @@ import {
 
 export interface CardStepProps {
   readonly adapter: PaymentTokenizationAdapter;
+  readonly expired?: boolean;
   readonly onTokenized: (token: string) => void;
 }
 
@@ -30,18 +31,56 @@ const formatExpiry = (value: string): string => {
   const digits = digitsOnly(value).slice(0, 4);
   return digits.length > 2 ? digits.slice(0, 2) + '/' + digits.slice(2) : digits;
 };
+export const cardInputTtlMs = 5 * 60 * 1_000;
 
-export const CardStep = ({ adapter, onTokenized }: CardStepProps) => {
+export const CardStep = ({ adapter, expired = false, onTokenized }: CardStepProps) => {
   const [card, setCard] = useState<CardInput>(emptyCard);
   const [errors, setErrors] = useState<CardValidationErrors>({});
   const [submitting, setSubmitting] = useState(false);
   const [tokenizationError, setTokenizationError] = useState<string>();
+  const [captureExpired, setCaptureExpired] = useState(false);
   const summaryRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(true);
+  const captureTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+      if (captureTimerRef.current !== undefined) {
+        globalThis.clearTimeout(captureTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  const hasCardData =
+    card.number.length > 0 ||
+    card.expiry.length > 0 ||
+    card.securityCode.length > 0 ||
+    card.holderName.length > 0;
+  useEffect(() => {
+    if (!hasCardData) {
+      if (captureTimerRef.current !== undefined) {
+        globalThis.clearTimeout(captureTimerRef.current);
+        captureTimerRef.current = undefined;
+      }
+      return;
+    }
+    captureTimerRef.current ??= globalThis.setTimeout(() => {
+      captureTimerRef.current = undefined;
+      if (!mountedRef.current) return;
+      setCard(emptyCard);
+      setErrors({});
+      setTokenizationError(undefined);
+      setCaptureExpired(true);
+      queueMicrotask(() => summaryRef.current?.focus());
+    }, cardInputTtlMs);
+  }, [hasCardData]);
   const update = (field: keyof CardInput, value: string): void => {
     setCard((current) => ({ ...current, [field]: value }));
     setErrors((current) => ({ ...current, [field]: undefined }));
     setTokenizationError(undefined);
+    setCaptureExpired(false);
   };
 
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
@@ -52,14 +91,19 @@ export const CardStep = ({ adapter, onTokenized }: CardStepProps) => {
       queueMicrotask(() => summaryRef.current?.focus());
       return;
     }
+    setCard(emptyCard);
     setSubmitting(true);
     setTokenizationError(undefined);
     try {
       const token = await adapter.tokenize(card);
-      setCard(emptyCard);
+      if (!mountedRef.current) {
+        return;
+      }
       onTokenized(token);
     } catch {
-      setCard(emptyCard);
+      if (!mountedRef.current) {
+        return;
+      }
       setTokenizationError(
         adapter.mode === 'SANDBOX_READY_DISABLED'
           ? 'La captura sandbox sigue deshabilitada. Usa el proveedor falso local.'
@@ -67,9 +111,12 @@ export const CardStep = ({ adapter, onTokenized }: CardStepProps) => {
       );
       queueMicrotask(() => summaryRef.current?.focus());
     } finally {
-      setSubmitting(false);
+      if (mountedRef.current) {
+        setSubmitting(false);
+      }
     }
   };
+  const methodExpired = expired || captureExpired;
 
   return (
     <form onSubmit={(event) => void submit(event)} noValidate data-testid="checkout-step-payment">
@@ -81,10 +128,15 @@ export const CardStep = ({ adapter, onTokenized }: CardStepProps) => {
         <p>Los datos se usan sólo para crear un token efímero y esta aplicación no los guarda.</p>
       </header>
 
-      {(hasCardErrors(errors) || tokenizationError !== undefined) && (
+      {(hasCardErrors(errors) || tokenizationError !== undefined || methodExpired) && (
         <div className="error-summary" role="alert" tabIndex={-1} ref={summaryRef}>
           <strong>Revisa el método de pago</strong>
-          <p>{tokenizationError ?? 'Corrige los campos indicados para continuar.'}</p>
+          <p>
+            {tokenizationError ??
+              (methodExpired
+                ? 'El método de pago venció. Vuelve a ingresar todos los datos para continuar.'
+                : 'Corrige los campos indicados para continuar.')}
+          </p>
         </div>
       )}
 

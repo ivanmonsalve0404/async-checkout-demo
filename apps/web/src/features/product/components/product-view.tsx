@@ -105,14 +105,14 @@ export const ProductView = ({
           <button
             className="primary-action"
             type="button"
-            disabled={isOutOfStock || onCheckout === undefined}
+            disabled={(isOutOfStock && !hasProgress) || onCheckout === undefined}
             onClick={onCheckout}
             data-testid="product-checkout-cta"
           >
-            {isOutOfStock
-              ? 'Sin disponibilidad'
-              : hasProgress
-                ? 'Continuar compra'
+            {hasProgress
+              ? 'Continuar compra'
+              : isOutOfStock
+                ? 'Sin disponibilidad'
                 : 'Continuar al pago'}
           </button>
           <p className="foundation-note">

@@ -10,16 +10,24 @@ export type PaymentConfigurationResponse = components['schemas']['PaymentConfigu
 export type TransactionResponse = components['schemas']['TransactionResponse'];
 
 const opaqueId = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/);
+const dateTime = z.string().datetime({ offset: true });
 const money = z
-  .object({ amountInCents: z.number().int().nonnegative(), currency: z.literal('COP') })
+  .object({
+    amountInCents: z.number().int().min(0).max(999_999_999_999),
+    currency: z.literal('COP'),
+  })
   .strict();
 const product = z
   .object({
     productId: opaqueId,
-    sku: z.string().min(1).max(64),
+    sku: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[A-Za-z0-9_-]+$/),
     name: z.string().min(1).max(120),
     description: z.string().min(1).max(1_000),
-    imageUrl: z.string().url(),
+    imageUrl: z.string().url().max(2_048),
     unitPrice: money,
     available: z.number().int().min(0).max(999_999),
   })
@@ -34,7 +42,7 @@ const quote = z
     baseFee: money,
     deliveryFee: money,
     total: money,
-    expiresAt: z.string().min(1),
+    expiresAt: dateTime,
   })
   .strict();
 const customer = z
@@ -66,7 +74,7 @@ const checkoutCreated = z
     status: z.literal('DRAFT'),
     version: z.number().int().positive(),
     quote,
-    expiresAt: z.string().min(1),
+    expiresAt: dateTime,
   })
   .strict();
 
@@ -80,14 +88,14 @@ const checkout = z
     customer: customer.nullable().optional(),
     deliveryDetails: delivery.nullable().optional(),
     activeTransactionId: opaqueId.nullable().optional(),
-    expiresAt: z.string().min(1),
+    expiresAt: dateTime,
   })
   .strict();
 
 const acceptanceContract = z
   .object({
     type: z.enum(['TERMS', 'PERSONAL_DATA']),
-    permalink: z.string().url(),
+    permalink: z.string().url().max(2_048),
     version: z.string().min(1).max(128),
     acceptanceToken: z.string().min(1).max(4_096),
   })
@@ -96,7 +104,11 @@ const paymentConfiguration = z
   .object({
     captureVariant: z.enum(['DIRECT_JWE', 'HOSTED_COMPONENT', 'FAKE_CONTRACT']),
     sandboxPublicKey: z.string().min(1).max(4_096),
-    allowedInstallments: z.array(z.number().int().min(1).max(36)).min(1).max(36),
+    allowedInstallments: z
+      .array(z.number().int().min(1).max(36))
+      .min(1)
+      .max(36)
+      .refine((installments) => new Set(installments).size === installments.length),
     acceptanceContracts: z
       .array(acceptanceContract)
       .length(2)
@@ -106,7 +118,7 @@ const paymentConfiguration = z
           contracts.some(({ type }) => type === 'PERSONAL_DATA'),
         'Both acceptance contracts are required',
       ),
-    expiresAt: z.string().min(1),
+    expiresAt: dateTime,
   })
   .strict();
 
@@ -144,19 +156,20 @@ const transaction = z
         z.enum(['QUERY', 'WAIT', 'RETURN_TO_PRODUCT', 'START_NEW_CHECKOUT', 'CONTACT_SUPPORT']),
       )
       .min(1)
-      .max(5),
+      .max(5)
+      .refine((actions) => new Set(actions).size === actions.length),
     retryAfterSeconds: z.number().int().min(1).max(300).optional(),
-    acceptedAt: z.string().min(1),
-    updatedAt: z.string().min(1),
+    acceptedAt: dateTime,
+    updatedAt: dateTime,
   })
   .strict();
 
 export const parseCheckoutCreated = (value: unknown): CheckoutCreatedResponse =>
-  checkoutCreated.parse(value) as CheckoutCreatedResponse;
+  checkoutCreated.parse(value);
 export const parseCheckout = (value: unknown): CheckoutResponse =>
   checkout.parse(value) as CheckoutResponse;
 export const parsePaymentConfiguration = (value: unknown): PaymentConfigurationResponse =>
-  paymentConfiguration.parse(value) as PaymentConfigurationResponse;
+  paymentConfiguration.parse(value);
 export const parseTransaction = (value: unknown): TransactionResponse =>
   transaction.parse(value) as TransactionResponse;
 
@@ -188,8 +201,7 @@ export const checkoutApi = baseApi.injectEndpoints({
         headers: { 'If-Match': checkoutEtag(version) },
         body,
       }),
-      transformResponse: (value: unknown) =>
-        customer.parse(value) as components['schemas']['CustomerResponse'],
+      transformResponse: (value: unknown) => customer.parse(value),
       invalidatesTags: (_result, _error, { checkoutId }) => [{ type: 'Checkout', id: checkoutId }],
     }),
     replaceDelivery: builder.mutation<

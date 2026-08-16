@@ -1,0 +1,425 @@
+{
+  "schemaVersion": 1,
+  "tests": [
+    {
+      "id": "TC-UNIT-01",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/web test",
+      "evidence": [
+        {
+          "file": "apps/web/src/features/checkout/validation/card-validation.spec.ts",
+          "pattern": "describe('card validation'"
+        },
+        {
+          "file": "apps/web/src/shared/lib/format-money.spec.ts",
+          "pattern": "formats integer cents as COP without floating-point input"
+        }
+      ]
+    },
+    {
+      "id": "TC-UNIT-03",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/domain/checkout/checkout.spec.ts",
+          "pattern": "describe('checkout domain policies'"
+        }
+      ]
+    },
+    {
+      "id": "TC-UNIT-04",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/infrastructure/persistence/in-memory-checkout.repository.spec.ts",
+          "pattern": "atomically reserves stock and returns stable idempotent replays"
+        }
+      ]
+    },
+    {
+      "id": "TC-UNIT-09",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/application/use-cases/checkout-service.spec.ts",
+          "pattern": "uses the merchant contract port and fails closed"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-01",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:contract",
+      "evidence": [
+        {
+          "file": "apps/api/src/interfaces/http/contract/checkout.e5.contract.spec.ts",
+          "pattern": "serves API-01/03 and the complete capability checkout"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-02",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/infrastructure/persistence/dynamodb-catalog.repository.spec.ts",
+          "pattern": "seeds DBITEM01–03 atomically"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-03",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:contract",
+      "evidence": [
+        {
+          "file": "apps/api/src/interfaces/http/contract/checkout.e5.contract.spec.ts",
+          "pattern": "complete capability checkout without PAN/CVC"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-04",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/application/use-cases/checkout-service.spec.ts",
+          "pattern": "completes APPROVED, consumes the reservation"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-05",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:integration",
+      "evidence": [
+        {
+          "file": "apps/api/src/infrastructure/persistence/dynamodb-checkout.integration.spec.ts",
+          "pattern": "DynamoDbCheckoutRepository local integration"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-06",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/infrastructure/persistence/in-memory-checkout.repository.spec.ts",
+          "pattern": "releases failed reservations and marks proven-not-sent"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-07",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/infrastructure/payment/sandbox-payment-provider.spec.ts",
+          "pattern": "maps timeout, non-JSON, malformed JSON model"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-08",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/application/use-cases/checkout-service.spec.ts",
+          "pattern": "uses claim/lease so two workers query"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-09",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/application/use-cases/checkout-service.spec.ts",
+          "pattern": "preserves one unit under concurrent checkout submissions"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-10",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/application/use-cases/checkout-service.spec.ts",
+          "pattern": "recovers a crash after prepare"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-11",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:contract",
+      "evidence": [
+        {
+          "file": "apps/api/src/infrastructure/security/system-runtime-security.spec.ts",
+          "pattern": "keeps persisted hashes and acceptance tokens valid"
+        },
+        {
+          "file": "apps/api/src/interfaces/http/contract/checkout.e5.contract.spec.ts",
+          "pattern": "returns safe problems for forbidden origin"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-12",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:contract",
+      "evidence": [
+        {
+          "file": "apps/api/src/interfaces/http/contract/checkout.e5.contract.spec.ts",
+          "pattern": "returns safe problems for forbidden origin"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-13",
+      "status": "DEFERRED_P1",
+      "reason": "El webhook real requiere aislamiento y autorización; Stage 5 conserva sólo el contrato diferido.",
+      "authority": "ADR-09 / AUTH-E5"
+    },
+    {
+      "id": "TC-INT-15",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/application/use-cases/checkout-service.spec.ts",
+          "pattern": "keeps approved inventory safe when delivery data is absent"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-16",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/domain/checkout/checkout.spec.ts",
+          "pattern": "['VOIDED', true]"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-17",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/infrastructure/persistence/dynamodb-checkout.repository.spec.ts",
+          "pattern": "preserves the original final and records a conflicting later final"
+        }
+      ]
+    },
+    {
+      "id": "TC-INT-18",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/infrastructure/persistence/in-memory-checkout.repository.spec.ts",
+          "pattern": "finalizes APPROVED exactly once with one delivery"
+        }
+      ]
+    },
+    {
+      "id": "TC-CONTRACT-01",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/infrastructure/payment/e5-scripted-payment-provider.spec.ts",
+          "pattern": "describe('E5ScriptedPaymentProvider'"
+        }
+      ]
+    },
+    {
+      "id": "TC-CONTRACT-02",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/api test",
+      "evidence": [
+        {
+          "file": "apps/api/src/infrastructure/payment/e5-scripted-payment-provider.spec.ts",
+          "pattern": "isolates deterministic read progress per external transaction"
+        }
+      ]
+    },
+    {
+      "id": "TC-CONTRACT-03",
+      "status": "EXECUTABLE",
+      "runner": "pnpm --filter @checkout/web test",
+      "evidence": [
+        {
+          "file": "apps/web/src/features/checkout/components/card-step.spec.tsx",
+          "pattern": "tokenizes once, returns only the opaque token"
+        }
+      ]
+    },
+    {
+      "id": "TC-CONTRACT-04",
+      "status": "DEFERRED_P1",
+      "reason": "El webhook firmado es P1 y permanece bloqueado hasta aislamiento del comercio compartido.",
+      "authority": "ADR-09 / DEP-08"
+    },
+    {
+      "id": "TC-CONTRACT-05",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:contract",
+      "evidence": [
+        {
+          "file": "apps/api/src/interfaces/http/contract/api.contract.spec.ts",
+          "pattern": "serves only sanitized local documentation"
+        },
+        {
+          "file": "scripts/contracts/contracts.mjs",
+          "pattern": "response content must contain media types only"
+        }
+      ]
+    },
+    {
+      "id": "TC-E2E-01",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:smoke",
+      "evidence": [
+        {
+          "file": "scripts/smoke/run.mjs",
+          "pattern": "SMK-E5-01"
+        }
+      ]
+    },
+    {
+      "id": "TC-E2E-02",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:smoke",
+      "evidence": [
+        {
+          "file": "scripts/smoke/run.mjs",
+          "pattern": "SMK-E5-02"
+        }
+      ]
+    },
+    {
+      "id": "TC-E2E-03",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:smoke",
+      "evidence": [
+        {
+          "file": "scripts/smoke/run.mjs",
+          "pattern": "SMK-E5-03"
+        }
+      ]
+    },
+    {
+      "id": "TC-E2E-04",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:smoke",
+      "evidence": [
+        {
+          "file": "scripts/smoke/run.mjs",
+          "pattern": "SMK-E5-04"
+        }
+      ]
+    },
+    {
+      "id": "TC-E2E-05",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:smoke",
+      "evidence": [
+        {
+          "file": "scripts/smoke/run.mjs",
+          "pattern": "SMK-E5-05"
+        }
+      ]
+    },
+    {
+      "id": "TC-E2E-06",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:smoke",
+      "evidence": [
+        {
+          "file": "scripts/smoke/run.mjs",
+          "pattern": "SMK-E5-06"
+        }
+      ]
+    },
+    {
+      "id": "TC-E2E-07",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:smoke",
+      "evidence": [
+        {
+          "file": "scripts/smoke/run.mjs",
+          "pattern": "SMK-E5-07"
+        }
+      ]
+    },
+    {
+      "id": "TC-E2E-08",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:smoke",
+      "evidence": [
+        {
+          "file": "scripts/smoke/run.mjs",
+          "pattern": "SMK-E5-08"
+        }
+      ]
+    },
+    {
+      "id": "TC-E2E-09",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:smoke",
+      "evidence": [
+        {
+          "file": "scripts/smoke/run.mjs",
+          "pattern": "SMK-E5-09"
+        }
+      ]
+    },
+    {
+      "id": "TC-E2E-10",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:smoke",
+      "evidence": [
+        {
+          "file": "scripts/smoke/run.mjs",
+          "pattern": "SMK-E5-10"
+        }
+      ]
+    },
+    {
+      "id": "TC-E2E-11",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:smoke",
+      "evidence": [
+        {
+          "file": "scripts/smoke/run.mjs",
+          "pattern": "SMK-E5-11"
+        }
+      ]
+    },
+    {
+      "id": "TC-E2E-12",
+      "status": "EXECUTABLE",
+      "runner": "pnpm test:smoke",
+      "evidence": [
+        {
+          "file": "scripts/smoke/run.mjs",
+          "pattern": "SMK-E5-12"
+        }
+      ]
+    }
+  ]
+}

@@ -21,5 +21,15 @@ describe('productApi', () => {
     expect(parseProductResponse(product)).toEqual(product);
     expect(() => parseProductResponse({ ...product, unexpected: true })).toThrow();
     expect(() => parseProductResponse({ unsafe: 'shape' })).toThrow();
+    expect(() => parseProductResponse({ ...product, sku: 'not allowed' })).toThrow();
+    expect(() => parseProductResponse({ ...product, name: 'x'.repeat(121) })).toThrow();
+    expect(() => parseProductResponse({ ...product, description: 'x'.repeat(1_001) })).toThrow();
+    expect(() => parseProductResponse({ ...product, productId: 'invalid id' })).toThrow();
+    expect(() =>
+      parseProductResponse({
+        ...product,
+        unitPrice: { amountInCents: 1_000_000_000_000, currency: 'COP' },
+      }),
+    ).toThrow();
   });
 });

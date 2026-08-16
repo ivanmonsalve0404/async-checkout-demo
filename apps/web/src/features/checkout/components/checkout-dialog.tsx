@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { baseApi } from '../../../app/api/base-api';
 import { useAppDispatch, useAppSelector } from '../../../app/store/store';
 import {
@@ -9,6 +9,7 @@ import {
   useReplaceCustomerMutation,
   useReplaceDeliveryMutation,
   type CustomerRequest,
+  type CheckoutResponse,
   type DeliveryRequest,
 } from '../api/checkout-api';
 import {
@@ -23,6 +24,9 @@ import {
 } from '../model/checkout-slice';
 import { selectTokenizationAdapter } from '../services/payment-tokenization';
 import { PaymentCommandError, submitPayment } from '../services/submit-payment';
+import { saveWithCanonicalRecovery } from '../services/save-with-canonical-recovery';
+import { useEphemeralPaymentToken } from '../services/use-ephemeral-payment-token';
+import { useTransactionPolling } from '../services/use-transaction-polling';
 import { AcceptancesStep, type PaymentSelection } from './acceptances-step';
 import { CardStep } from './card-step';
 import { CustomerDeliveryStep } from './customer-delivery-step';
@@ -43,6 +47,19 @@ const readErrorStatus = (error: unknown): number | undefined => {
   }
   return typeof error.status === 'number' ? error.status : undefined;
 };
+
+const customerMatches = (checkout: CheckoutResponse, expected: CustomerRequest): boolean =>
+  checkout.customer?.fullName === expected.fullName &&
+  checkout.customer.email === expected.email &&
+  checkout.customer.phone === expected.phone;
+
+const deliveryMatches = (checkout: CheckoutResponse, expected: DeliveryRequest): boolean =>
+  checkout.deliveryDetails?.addressLine1 === expected.addressLine1 &&
+  checkout.deliveryDetails.city === expected.city &&
+  checkout.deliveryDetails.region === expected.region &&
+  checkout.deliveryDetails.addressLine2 === expected.addressLine2 &&
+  checkout.deliveryDetails.postalCode === expected.postalCode &&
+  checkout.deliveryDetails.deliveryInstructions === expected.deliveryInstructions;
 
 const focusableSelector =
   'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -67,21 +84,40 @@ export const CheckoutDialog = ({
     skip: progress.step === 'status',
     refetchOnMountOrArgChange: true,
   });
-  const [pollingInterval, setPollingInterval] = useState(1_500);
   const transactionQuery = useGetTransactionQuery(progress.transactionId ?? '', {
     skip: progress.transactionId === undefined,
-    pollingInterval: progress.transactionId === undefined ? 0 : pollingInterval,
+    pollingInterval: 0,
     refetchOnFocus: true,
     refetchOnReconnect: true,
     refetchOnMountOrArgChange: true,
   });
+  const { automaticPollingStopped } = useTransactionPolling(
+    progress.transactionId,
+    transactionQuery.data,
+    transactionQuery.refetch,
+  );
   const dialogRef = useRef<HTMLDivElement>(null);
   const startedRef = useRef(false);
-  const paymentTokenRef = useRef<string | undefined>(undefined);
+  const submittingRef = useRef(false);
   const selectionRef = useRef<PaymentSelection | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const [recoveryError, setRecoveryError] = useState<'missing' | 'expired' | 'network'>();
   const [submissionUncertain, setSubmissionUncertain] = useState(false);
+  const [paymentExpired, setPaymentExpired] = useState(false);
+  const expirePayment = useCallback((): void => {
+    selectionRef.current = undefined;
+    setPaymentExpired(true);
+    dispatch(stepChanged('payment'));
+  }, [dispatch]);
+  const {
+    clear: clearPaymentToken,
+    get: getPaymentToken,
+    set: setPaymentToken,
+  } = useEphemeralPaymentToken(expirePayment);
+  const clearPaymentSecrets = useCallback((): void => {
+    clearPaymentToken();
+    selectionRef.current = undefined;
+  }, [clearPaymentToken]);
 
   const paymentAdapter = useMemo(
     () =>
@@ -130,8 +166,7 @@ export const CheckoutDialog = ({
       return;
     }
     if (checkout.status === 'EXPIRED') {
-      paymentTokenRef.current = undefined;
-      selectionRef.current = undefined;
+      clearPaymentSecrets();
       dispatch(progressCleared());
       setRecoveryError('expired');
       return;
@@ -145,27 +180,20 @@ export const CheckoutDialog = ({
       progress.transactionId === undefined &&
       !submissionUncertain &&
       progress.step !== 'payment' &&
-      paymentTokenRef.current === undefined
+      getPaymentToken() === undefined
     ) {
       dispatch(stepChanged('payment'));
     }
   }, [
     checkoutQuery.data,
+    clearPaymentSecrets,
     dispatch,
+    getPaymentToken,
     onStatusRoute,
     progress.step,
     progress.transactionId,
     submissionUncertain,
   ]);
-
-  useEffect(() => {
-    const current = transactionQuery.data;
-    setPollingInterval(
-      current === undefined || current.paymentStatus === 'PENDING'
-        ? Math.min(Math.max((current?.retryAfterSeconds ?? 2) * 1_000, 1_000), 10_000)
-        : 0,
-    );
-  }, [transactionQuery.data]);
 
   useEffect(() => {
     const status = readErrorStatus(checkoutQuery.error);
@@ -194,11 +222,10 @@ export const CheckoutDialog = ({
   }, [progress.step]);
 
   const close = (): void => {
-    if (submitting) {
+    if (submittingRef.current) {
       return;
     }
-    paymentTokenRef.current = undefined;
-    selectionRef.current = undefined;
+    clearPaymentSecrets();
     dispatch(closeCheckout());
     onClose();
   };
@@ -234,19 +261,32 @@ export const CheckoutDialog = ({
     delivery: DeliveryRequest,
   ): Promise<void> => {
     const checkout = checkoutQuery.data;
-    if (checkout === undefined || progress.checkoutId === undefined) {
+    const checkoutId = progress.checkoutId;
+    if (checkout === undefined || checkoutId === undefined) {
       throw new Error('CHECKOUT_NOT_READY');
     }
-    const savedCustomer = await replaceCustomer({
-      checkoutId: progress.checkoutId,
-      version: checkout.version,
-      body: customer,
-    }).unwrap();
-    await replaceDelivery({
-      checkoutId: progress.checkoutId,
-      version: savedCustomer.version,
-      body: delivery,
-    }).unwrap();
+    const customerVersion = await saveWithCanonicalRecovery<CheckoutResponse>(
+      checkout.version,
+      (version) =>
+        replaceCustomer({
+          checkoutId,
+          version,
+          body: customer,
+        }).unwrap(),
+      () => checkoutQuery.refetch(),
+      (canonical) => customerMatches(canonical, customer),
+    );
+    await saveWithCanonicalRecovery<CheckoutResponse>(
+      customerVersion,
+      (version) =>
+        replaceDelivery({
+          checkoutId,
+          version,
+          body: delivery,
+        }).unwrap(),
+      () => checkoutQuery.refetch(),
+      (canonical) => deliveryMatches(canonical, delivery),
+    );
     await checkoutQuery.refetch();
     dispatch(stepChanged('acceptances'));
   };
@@ -263,8 +303,11 @@ export const CheckoutDialog = ({
   };
 
   const startPayment = async (): Promise<void> => {
+    if (submittingRef.current) {
+      return;
+    }
     const checkout = checkoutQuery.data;
-    const token = paymentTokenRef.current;
+    const token = getPaymentToken();
     const selection = selectionRef.current;
     if (
       checkout === undefined ||
@@ -276,6 +319,7 @@ export const CheckoutDialog = ({
       dispatch(stepChanged('payment'));
       return;
     }
+    submittingRef.current = true;
     setSubmitting(true);
     setSubmissionUncertain(false);
     try {
@@ -293,13 +337,11 @@ export const CheckoutDialog = ({
           },
         },
       });
-      paymentTokenRef.current = undefined;
-      selectionRef.current = undefined;
+      clearPaymentSecrets();
       dispatch(transactionAccepted(accepted.transactionId));
       onStatusRoute();
     } catch (error) {
-      paymentTokenRef.current = undefined;
-      selectionRef.current = undefined;
+      clearPaymentSecrets();
       if (error instanceof PaymentCommandError && error.status === 410) {
         dispatch(progressCleared());
         setRecoveryError('expired');
@@ -314,42 +356,38 @@ export const CheckoutDialog = ({
       } else if (error instanceof PaymentCommandError && error.status === 422) {
         await configurationQuery.refetch();
         dispatch(stepChanged('payment'));
-      } else if (
-        error instanceof PaymentCommandError &&
-        error.status === 409 &&
-        error.code !== 'IDEMPOTENCY_CONFLICT' &&
-        error.code !== 'PAYMENT_ALREADY_IN_PROGRESS'
-      ) {
-        restartQuote();
       } else if (!(await recoverAfterSubmission())) {
         setSubmissionUncertain(true);
         dispatch(stepChanged('status'));
       }
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
 
   const restartQuote = (): void => {
-    paymentTokenRef.current = undefined;
-    selectionRef.current = undefined;
+    clearPaymentSecrets();
     dispatch(progressCleared());
     dispatch(baseApi.util.invalidateTags([{ type: 'Product', id: productId }]));
     onReturn();
   };
 
   const retryPayment = (): void => {
-    paymentTokenRef.current = undefined;
-    selectionRef.current = undefined;
+    clearPaymentSecrets();
     dispatch(returnedToProduct('FAILED'));
     setSubmissionUncertain(false);
     onClose();
   };
 
   const returnToProduct = (approved: boolean): void => {
-    paymentTokenRef.current = undefined;
-    selectionRef.current = undefined;
-    dispatch(returnedToProduct(approved ? 'APPROVED' : 'FAILED'));
+    clearPaymentSecrets();
+    dispatch(
+      transactionQuery.data?.paymentStatus !== 'PENDING' &&
+        transactionQuery.data?.integrityStatus === 'OK'
+        ? returnedToProduct(approved ? 'APPROVED' : 'FAILED')
+        : closeCheckout(),
+    );
     dispatch(baseApi.util.invalidateTags([{ type: 'Product', id: productId }]));
     onReturn();
   };
@@ -453,8 +491,10 @@ export const CheckoutDialog = ({
             ) : (
               <CardStep
                 adapter={paymentAdapter}
+                expired={paymentExpired}
                 onTokenized={(token) => {
-                  paymentTokenRef.current = token;
+                  setPaymentToken(token);
+                  setPaymentExpired(false);
                   dispatch(stepChanged('customer'));
                 }}
               />
@@ -463,7 +503,7 @@ export const CheckoutDialog = ({
             <CustomerDeliveryStep
               checkout={checkout}
               onBack={() => {
-                paymentTokenRef.current = undefined;
+                clearPaymentSecrets();
                 dispatch(stepChanged('payment'));
               }}
               onSave={saveCustomerDelivery}
@@ -512,7 +552,8 @@ export const CheckoutDialog = ({
           ) : (
             <TransactionStep
               transaction={transaction}
-              loading={transactionQuery.isFetching && pollingInterval > 0}
+              loading={transactionQuery.isFetching}
+              automaticPollingStopped={automaticPollingStopped}
               error={transactionQuery.isError}
               onRefresh={() => void transactionQuery.refetch()}
               onReturn={returnToProduct}

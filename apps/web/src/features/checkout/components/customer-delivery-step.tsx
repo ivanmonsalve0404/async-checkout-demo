@@ -18,9 +18,7 @@ interface FormErrors {
 }
 
 const normalizedText = (value: FormDataEntryValue | null): string =>
-  String(value ?? '')
-    .trim()
-    .replace(/\s+/g, ' ');
+  (typeof value === 'string' ? value : '').trim().replace(/\s+/g, ' ');
 
 export const readCustomerDelivery = (
   form: HTMLFormElement,

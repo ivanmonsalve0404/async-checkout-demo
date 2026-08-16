@@ -29,7 +29,12 @@ describe('checkout UI state', () => {
     state = checkoutReducer(state, transactionAccepted('transaction_123456'));
     expect(state).toMatchObject({ step: 'status', transactionId: 'transaction_123456' });
     state = checkoutReducer(state, closeCheckout());
-    expect(state.modalOpen).toBe(false);
+    expect(state).toMatchObject({
+      checkoutId: 'checkout_123456',
+      transactionId: 'transaction_123456',
+      idempotencyKey: 'idem_1234567890123456',
+      modalOpen: false,
+    });
     state = checkoutReducer(state, progressCleared());
     expect(state.checkoutId).toBeUndefined();
   });
@@ -47,7 +52,12 @@ describe('checkout UI state', () => {
     expect(state).toMatchObject({ step: 'payment', idempotencyKey: 'idem_abcdefghijklmnop' });
     expect(state.transactionId).toBeUndefined();
     state = checkoutReducer(state, returnedToProduct('FAILED'));
-    expect(state.returnNotice).toBe('FAILED');
+    expect(state).toMatchObject({
+      checkoutId: undefined,
+      transactionId: undefined,
+      idempotencyKey: undefined,
+      returnNotice: 'FAILED',
+    });
     state = checkoutReducer(state, returnNoticeCleared());
     expect(state.returnNotice).toBeUndefined();
   });

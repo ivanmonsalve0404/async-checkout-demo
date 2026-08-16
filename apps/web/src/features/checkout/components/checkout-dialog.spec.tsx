@@ -15,6 +15,7 @@ import {
 } from '../api/checkout-api';
 import { checkoutCreated, checkoutRecovered } from '../model/checkout-slice';
 import { PaymentCommandError, submitPayment } from '../services/submit-payment';
+import { paymentTokenTtlMs } from '../services/use-ephemeral-payment-token';
 import { passesLuhn } from '../validation/card-validation';
 import { CheckoutDialog } from './checkout-dialog';
 
@@ -198,6 +199,7 @@ const renderDialog = (
         checkoutRecovered({
           checkoutId: checkout.checkoutId,
           transactionId: 'transaction_123456',
+          idempotencyKey: 'idem_1234567890123456',
         }),
       );
     } else {
@@ -286,7 +288,7 @@ describe('CheckoutDialog orchestration', () => {
   it('executes the five-step fake checkout and polls only the local transaction', async () => {
     const approved = transaction();
     transactionResult.data = approved;
-    const { onStatusRoute } = renderDialog();
+    const { store, onStatusRoute } = renderDialog();
     await advanceToReview();
     await userEvent.dblClick(screen.getByTestId('checkout-submit'));
     await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
@@ -295,15 +297,117 @@ describe('CheckoutDialog orchestration', () => {
     const containsSensitiveAlias = sensitiveAliases.some((alias) =>
       new RegExp('"' + alias + '"\\s*:', 'i').test(serializedCommand),
     );
-    const containsSensitiveValue = [validNumber(), syntheticExpiry(), syntheticSecurityCode()].some(
-      (value) => serializedCommand.includes(value),
-    );
+    const sensitiveValues = new Set([validNumber(), syntheticExpiry(), syntheticSecurityCode()]);
+    let containsSensitiveValue = false;
+    JSON.parse(serializedCommand, (_key, value: unknown) => {
+      if (typeof value === 'string' && sensitiveValues.has(value)) containsSensitiveValue = true;
+      return value;
+    });
     expect(containsSensitiveAlias).toBe(false);
     expect(containsSensitiveValue).toBe(false);
     expect(onStatusRoute).toHaveBeenCalled();
     expect(await screen.findByTestId('transaction-approved')).toBeVisible();
     expect(customerTrigger).toHaveBeenCalledTimes(1);
     expect(deliveryTrigger).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByTestId('return-product'));
+    expect(store.getState().checkout).toMatchObject({
+      checkoutId: undefined,
+      transactionId: undefined,
+      idempotencyKey: undefined,
+      returnNotice: 'APPROVED',
+    });
+  });
+
+  it('rejects a five-minute-old token and returns to an empty card capture', async () => {
+    const capturedAt = Date.parse('2026-01-01T00:00:00Z');
+    const now = jest.spyOn(Date, 'now').mockReturnValue(capturedAt);
+    try {
+      renderDialog();
+      await advanceToReview();
+
+      now.mockReturnValue(capturedAt + paymentTokenTtlMs);
+      await userEvent.click(screen.getByTestId('checkout-submit'));
+
+      expect(await screen.findByTestId('checkout-step-payment')).toBeVisible();
+      expect(screen.getByRole('alert')).toHaveTextContent('método de pago venció');
+      expect(screen.getByRole('textbox', { name: /Número de tarjeta/ })).toHaveValue('');
+      expect(screen.getByRole('textbox', { name: /Vencimiento/ })).toHaveValue('');
+      expect(screen.getByRole('textbox', { name: /Código de seguridad/ })).toHaveValue('');
+      expect(screen.getByRole('textbox', { name: /Nombre en la tarjeta/ })).toHaveValue('');
+      expect(mockSubmit).not.toHaveBeenCalled();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('reconciles a lost customer response and one delivery 412 without losing the form', async () => {
+    const customerSnapshot = {
+      checkoutId: checkout.checkoutId,
+      customerId: 'customer_123456',
+      version: 2,
+      fullName: 'Persona Sintética',
+      email: 'persona@example.test',
+      phone: '+573000000000',
+    };
+    const customerApplied: CheckoutResponse = {
+      ...checkout,
+      version: 2,
+      customer: customerSnapshot,
+    };
+    const concurrentSnapshot: CheckoutResponse = {
+      ...customerApplied,
+      version: 3,
+    };
+    const readySnapshot: CheckoutResponse = {
+      ...concurrentSnapshot,
+      status: 'READY',
+      version: 4,
+      deliveryDetails: {
+        checkoutId: checkout.checkoutId,
+        version: 4,
+        addressLine1: 'Calle sintética 123',
+        city: 'Bogotá',
+        region: 'Cundinamarca',
+      },
+    };
+    customerTrigger = jest.fn(() => ({
+      unwrap: () => Promise.reject(new TypeError('response lost')),
+    }));
+    deliveryTrigger = jest.fn(({ version }: { readonly version: number }) => ({
+      unwrap: () =>
+        version === 2
+          ? Promise.reject(Object.assign(new Error('precondition failed'), { status: 412 }))
+          : Promise.resolve({
+              checkoutId: checkout.checkoutId,
+              version: 4,
+              addressLine1: 'Calle sintética 123',
+              city: 'Bogotá',
+              region: 'Cundinamarca',
+            }),
+    }));
+    mockCustomer.mockReturnValue([customerTrigger] as never);
+    mockDelivery.mockReturnValue([deliveryTrigger] as never);
+    checkoutRefetch
+      .mockReset()
+      .mockResolvedValueOnce({ data: customerApplied })
+      .mockResolvedValueOnce({ data: concurrentSnapshot })
+      .mockResolvedValueOnce({ data: readySnapshot });
+
+    renderDialog();
+    await advanceToReview();
+
+    expect(customerTrigger).toHaveBeenCalledTimes(1);
+    expect(deliveryTrigger).toHaveBeenCalledTimes(2);
+    expect(deliveryTrigger.mock.calls.map(([request]) => request.version)).toEqual([2, 3]);
+    expect(deliveryTrigger.mock.calls[0]?.[0]).toMatchObject({
+      body: {
+        addressLine1: 'Calle sintética 123',
+        city: 'Bogotá',
+        region: 'Cundinamarca',
+      },
+    });
+    expect(checkoutRefetch).toHaveBeenCalledTimes(3);
+    expect(screen.getByTestId('checkout-step-review')).toBeVisible();
   });
 
   it('stops RTK polling at a terminal state without waiting', async () => {
@@ -315,7 +419,7 @@ describe('CheckoutDialog orchestration', () => {
     });
   });
 
-  it('uses bounded Retry-After while pending and renders unknown distinctly', async () => {
+  it('delegates bounded polling outside RTK and renders unknown distinctly', async () => {
     transactionResult.data = transaction({
       checkoutStatus: 'PAYMENT_PENDING',
       paymentStatus: 'PENDING',
@@ -329,8 +433,81 @@ describe('CheckoutDialog orchestration', () => {
     expect(await screen.findByTestId('transaction-unknown')).toBeVisible();
     await waitFor(() => {
       const options = mockTransaction.mock.calls.at(-1)?.[1] as { pollingInterval: number };
-      expect(options.pollingInterval).toBe(7_000);
+      expect(options.pollingInterval).toBe(0);
     });
+  });
+
+  it.each([
+    ['pending', 'ACKNOWLEDGED', 'transaction-pending'],
+    ['unknown', 'UNKNOWN', 'transaction-unknown'],
+  ] as const)(
+    'preserves and reopens the same %s attempt',
+    async (_label, dispatchPhase, testId) => {
+      const inFlight = transaction({
+        checkoutStatus: 'PAYMENT_PENDING',
+        paymentStatus: 'PENDING',
+        dispatchPhase,
+        providerStatus: 'PENDING',
+        reservationStatus: 'ACTIVE',
+        allowedActions: ['QUERY', 'WAIT', 'RETURN_TO_PRODUCT'],
+      });
+      configureHooks(inFlight);
+      const { store, onReturn } = renderDialog('status');
+
+      await userEvent.click(await screen.findByTestId('return-product'));
+
+      expect(onReturn).toHaveBeenCalledTimes(1);
+      expect(store.getState().checkout).toMatchObject({
+        checkoutId: 'checkout_123456',
+        transactionId: 'transaction_123456',
+        idempotencyKey: 'idem_1234567890123456',
+        step: 'status',
+        modalOpen: false,
+      });
+
+      cleanup();
+      configureHooks(inFlight);
+      renderDialog('status', false, store);
+
+      expect(await screen.findByTestId(testId)).toBeVisible();
+      expect(mockTransaction.mock.calls.at(-1)?.[0]).toBe('transaction_123456');
+      expect(store.getState().checkout.idempotencyKey).toBe('idem_1234567890123456');
+      expect(mockSubmit).not.toHaveBeenCalled();
+    },
+  );
+
+  it('preserves and reopens an integrity conflict with a safe support reference', async () => {
+    const conflicted = transaction({
+      paymentStatus: 'APPROVED',
+      providerStatus: 'APPROVED',
+      reservationStatus: 'ACTIVE',
+      integrityStatus: 'APPROVED_INVENTORY_CONFLICT',
+      recoveryCode: 'STATE_TRANSITION_CONFLICT',
+      allowedActions: ['QUERY', 'RETURN_TO_PRODUCT', 'CONTACT_SUPPORT'],
+    });
+    configureHooks(conflicted);
+    const { store, onReturn } = renderDialog('status');
+
+    expect(await screen.findByTestId('contact-support')).toHaveTextContent('transaction_123456');
+    await userEvent.click(screen.getByTestId('return-product'));
+
+    expect(onReturn).toHaveBeenCalledTimes(1);
+    expect(store.getState().checkout).toMatchObject({
+      checkoutId: 'checkout_123456',
+      transactionId: 'transaction_123456',
+      idempotencyKey: 'idem_1234567890123456',
+      step: 'status',
+      modalOpen: false,
+      returnNotice: undefined,
+    });
+
+    cleanup();
+    configureHooks(conflicted);
+    renderDialog('status', false, store);
+
+    expect(await screen.findByTestId('transaction-conflict')).toBeVisible();
+    expect(mockTransaction.mock.calls.at(-1)?.[0]).toBe('transaction_123456');
+    expect(mockSubmit).not.toHaveBeenCalled();
   });
 
   it('clears a final failed checkout before starting another attempt', async () => {
@@ -346,6 +523,39 @@ describe('CheckoutDialog orchestration', () => {
     expect(store.getState().checkout.checkoutId).toBeUndefined();
     expect(store.getState().checkout.idempotencyKey).toBeUndefined();
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers a generic 409 from the canonical active transaction without restarting', async () => {
+    const conflicted = transaction({
+      paymentStatus: 'APPROVED',
+      providerStatus: 'APPROVED',
+      reservationStatus: 'ACTIVE',
+      integrityStatus: 'FINAL_STATE_CONFLICT',
+      recoveryCode: 'STATE_TRANSITION_CONFLICT',
+      allowedActions: ['QUERY', 'RETURN_TO_PRODUCT', 'CONTACT_SUPPORT'],
+    });
+    configureHooks(conflicted);
+    checkoutRefetch.mockResolvedValueOnce({ data: checkout }).mockResolvedValue({
+      data: { ...checkout, activeTransactionId: 'transaction_123456' },
+    });
+    mockSubmit.mockRejectedValue(new PaymentCommandError(409));
+    const { store, onStatusRoute, onReturn } = renderDialog();
+
+    await advanceToReview();
+    await userEvent.click(screen.getByTestId('checkout-submit'));
+
+    expect(await screen.findByTestId('transaction-conflict')).toBeVisible();
+    expect(onStatusRoute).toHaveBeenCalledTimes(1);
+    expect(onReturn).not.toHaveBeenCalled();
+    expect(checkoutRefetch).toHaveBeenCalledTimes(2);
+    expect(mockSubmit).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('retry-payment')).not.toBeInTheDocument();
+    expect(store.getState().checkout).toMatchObject({
+      checkoutId: 'checkout_123456',
+      transactionId: 'transaction_123456',
+      idempotencyKey: 'idem_1234567890123456',
+      step: 'status',
+    });
   });
 
   it.each([

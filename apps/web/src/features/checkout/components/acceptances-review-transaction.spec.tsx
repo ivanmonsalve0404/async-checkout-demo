@@ -178,11 +178,12 @@ describe('acceptance, review, and transaction steps', () => {
         paymentStatus: 'APPROVED',
         providerStatus: 'APPROVED',
         integrityStatus: 'APPROVED_INVENTORY_CONFLICT',
+        allowedActions: ['QUERY', 'RETURN_TO_PRODUCT', 'CONTACT_SUPPORT'],
       },
       'Necesitamos revisar',
     ],
   ] as const)('maps and renders %s safely', (_expected, overrides, title) => {
-    const value = transaction(overrides as Partial<TransactionResponse>);
+    const value = transaction(overrides);
     expect(transactionPresentation(value)).toBe(_expected);
     render(
       <TransactionStep
@@ -195,6 +196,14 @@ describe('acceptance, review, and transaction steps', () => {
       />,
     );
     expect(screen.getByRole('heading')).toHaveTextContent(title);
+    if (_expected === 'conflict') {
+      expect(screen.getByTestId('contact-support')).toHaveTextContent('transaction_123456');
+    }
+    if (value.allowedActions.includes('START_NEW_CHECKOUT')) {
+      expect(screen.getByTestId('retry-payment')).toBeVisible();
+    } else {
+      expect(screen.queryByTestId('retry-payment')).not.toBeInTheDocument();
+    }
   });
 
   it('returns the canonical approved result to the product', async () => {
@@ -246,6 +255,27 @@ describe('acceptance, review, and transaction steps', () => {
       />,
     );
     await userEvent.click(screen.getByRole('button', { name: 'Consultar estado' }));
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps pending state recoverable after automatic polling stops', async () => {
+    const refresh = jest.fn();
+    render(
+      <TransactionStep
+        transaction={transaction()}
+        loading={false}
+        error={false}
+        automaticPollingStopped
+        onRefresh={refresh}
+        onReturn={jest.fn()}
+        onRetry={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('transaction-polling-paused')).toHaveTextContent(
+      'consultar el estado manualmente',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Consultar estado manualmente' }));
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 });
