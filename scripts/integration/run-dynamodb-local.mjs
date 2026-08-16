@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const IMAGE = 'amazon/dynamodb-local:2.6.1';
+const IMAGE_DIGEST = 'sha256:1856c05cc66a0e49dc1099e483ad2851477eeebe2135250ac11a1d1227db54b1';
 const RUN_LABEL = 'com.async-checkout.integration-run';
 const SUITE_NAME = 'DynamoDbCheckoutRepository local integration';
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
@@ -182,10 +183,10 @@ const writeEvidence = () => {
 };
 
 try {
-  const image = docker(['image', 'inspect', IMAGE, '--format', '{{.Id}}']);
-  imageDigest = image.stdout.trim();
-  if (!/^sha256:[a-f0-9]{64}$/u.test(imageDigest)) {
-    throw new Error('The pinned local DynamoDB image has an invalid digest');
+  const image = docker(['image', 'inspect', IMAGE, '--format', '{{index .RepoDigests 0}}']);
+  imageDigest = image.stdout.trim().split('@').at(-1) ?? '';
+  if (imageDigest !== IMAGE_DIGEST) {
+    throw new Error('The local DynamoDB image does not match the pinned registry digest');
   }
 
   docker(['network', 'create', '--label', `${RUN_LABEL}=${runToken}`, networkName]);
