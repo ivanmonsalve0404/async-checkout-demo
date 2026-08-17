@@ -37,14 +37,54 @@ export const git = (arguments_, options = {}) => {
   return typeof result.stdout === 'string' ? result.stdout.trim() : result.stdout;
 };
 
+const commitShaPattern = /^[0-9a-f]{40}$/u;
+const evidenceBranchPattern = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/u;
+const branchValue = (value) => {
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim();
+  return normalized === 'HEAD' ? '' : normalized;
+};
+
+export const stage6Branch = ({ gitBranch, commitSha, environment = process.env }) => {
+  const candidates = [
+    branchValue(gitBranch),
+    ...(environment.CI === 'true'
+      ? [branchValue(environment.GITHUB_HEAD_REF), branchValue(environment.GITHUB_REF_NAME)]
+      : []),
+  ];
+  const resolved = candidates.find((value) => value.length > 0);
+  if (resolved !== undefined) {
+    if (
+      !evidenceBranchPattern.test(resolved) ||
+      resolved.includes('..') ||
+      resolved.includes('//') ||
+      resolved.includes('@{') ||
+      resolved.endsWith('/') ||
+      resolved.endsWith('.') ||
+      resolved.endsWith('.lock')
+    ) {
+      fail('Stage 6 branch reference has an invalid format');
+    }
+    return resolved;
+  }
+  if (!commitShaPattern.test(commitSha ?? '')) {
+    fail('Stage 6 detached candidate requires a valid commit SHA');
+  }
+  return `DETACHED-${commitSha.slice(0, 12)}`;
+};
+
 export const candidate = () => {
   const status = git(['status', '--porcelain=v1', '-z'], { encoding: 'buffer' });
   const changedFiles =
     status.length === 0 ? 0 : status.toString('utf8').split('\0').filter(Boolean).length;
+  const commitSha = git(['rev-parse', 'HEAD']);
   return {
-    commitSha: git(['rev-parse', 'HEAD']),
+    commitSha,
     treeSha: git(['rev-parse', 'HEAD^{tree}']),
-    branch: git(['branch', '--show-current']),
+    branch: stage6Branch({
+      gitBranch: git(['branch', '--show-current']),
+      commitSha,
+    }),
     workingTree: changedFiles === 0 ? 'CLEAN' : 'IMPLEMENTATION_SNAPSHOT',
     changedFiles,
   };
@@ -162,6 +202,58 @@ export const assertEvidenceEnvelope = (evidence) => {
 
 export const selfTestEvidence = () => {
   selfTestArtifactSanitizer();
+  const candidateSha = 'a'.repeat(40);
+  if (
+    stage6Branch({
+      gitBranch: 'codex/local-branch',
+      commitSha: candidateSha,
+      environment: { CI: 'false' },
+    }) !== 'codex/local-branch'
+  ) {
+    fail('Stage 6 local branch resolution self-test failed');
+  }
+  if (
+    stage6Branch({
+      gitBranch: '',
+      commitSha: candidateSha,
+      environment: {
+        CI: 'true',
+        GITHUB_HEAD_REF: 'codex/pull-request-branch',
+        GITHUB_REF_NAME: '5/merge',
+      },
+    }) !== 'codex/pull-request-branch'
+  ) {
+    fail('Stage 6 pull request branch resolution self-test failed');
+  }
+  if (
+    stage6Branch({
+      gitBranch: '',
+      commitSha: candidateSha,
+      environment: { CI: 'true', GITHUB_REF_NAME: 'main' },
+    }) !== 'main'
+  ) {
+    fail('Stage 6 CI ref fallback self-test failed');
+  }
+  if (
+    stage6Branch({
+      gitBranch: '',
+      commitSha: candidateSha,
+      environment: { CI: 'false' },
+    }) !== 'DETACHED-aaaaaaaaaaaa'
+  ) {
+    fail('Stage 6 detached branch resolution self-test failed');
+  }
+  let unsafeBranchRejected = false;
+  try {
+    stage6Branch({
+      gitBranch: '',
+      commitSha: candidateSha,
+      environment: { CI: 'true', GITHUB_HEAD_REF: 'codex/unsafe\nbranch' },
+    });
+  } catch {
+    unsafeBranchRejected = true;
+  }
+  if (!unsafeBranchRejected) fail('Stage 6 unsafe branch self-test failed');
   assertLoopbackUrl('http://127.0.0.1:3000/api/health');
   assertEvidenceEnvelope({
     schemaVersion: 1,
