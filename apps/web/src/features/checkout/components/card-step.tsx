@@ -43,15 +43,15 @@ export const CardStep = ({ adapter, expired = false, onTokenized }: CardStepProp
   const mountedRef = useRef(true);
   const captureTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
       if (captureTimerRef.current !== undefined) {
         globalThis.clearTimeout(captureTimerRef.current);
       }
-    },
-    [],
-  );
+    };
+  }, []);
 
   const hasCardData =
     card.number.length > 0 ||

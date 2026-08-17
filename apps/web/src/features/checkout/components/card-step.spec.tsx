@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
+import { StrictMode } from 'react';
 import {
   FakeCardTokenizationAdapter,
   SandboxCardTokenizationAdapter,
@@ -63,6 +64,26 @@ describe('CardStep', () => {
     expect(sessionStorage.length).toBe(0);
   });
 
+  it('completes tokenization after the StrictMode effect replay', async () => {
+    const onTokenized = jest.fn();
+    render(
+      <StrictMode>
+        <CardStep
+          adapter={new FakeCardTokenizationAdapter(() => 'tok_fake_synthetic123')}
+          onTokenized={onTokenized}
+        />
+      </StrictMode>,
+    );
+
+    await fillCard();
+    await userEvent.click(screen.getByRole('button', { name: 'Continuar' }));
+
+    await waitFor(() => expect(onTokenized).toHaveBeenCalledWith('tok_fake_synthetic123'));
+    expect(screen.getByRole('button', { name: 'Continuar' })).not.toHaveAttribute(
+      'aria-busy',
+      'true',
+    );
+  });
   it('fails closed for sandbox and removes the entered method', async () => {
     render(<CardStep adapter={new SandboxCardTokenizationAdapter()} onTokenized={jest.fn()} />);
     await fillCard();
