@@ -2,11 +2,16 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import { chromium, expect } from '@playwright/test';
+
+import {
+  serializeSanitizedEvidence,
+  writeSanitizedJsonAtomic,
+} from '../stage6/lib/artifact-sanitizer.mjs';
 
 const ROOT = process.cwd();
 const API_ORIGIN = 'http://127.0.0.1:3000';
@@ -159,8 +164,7 @@ const writeEvidence = async (results, { closeout = false } = {}) => {
     executedAt: new Date().toISOString(),
     results,
   };
-  await mkdir(path.dirname(EVIDENCE_PATH), { recursive: true });
-  await writeFile(EVIDENCE_PATH, `${JSON.stringify(runtimeEvidence, null, 2)}\n`, 'utf8');
+  await writeSanitizedJsonAtomic(EVIDENCE_PATH, 'stage-5-smoke-results.json', runtimeEvidence);
   if (!closeout) return;
 
   const ids = results.map(({ id }) => id);
@@ -175,10 +179,9 @@ const writeEvidence = async (results, { closeout = false } = {}) => {
     ...base,
     results: results.map((result) => ({ ...result, durationMs: undefined })),
   };
-  const serialized = `${JSON.stringify(trackedEvidence, null, 2)}\n`;
-  await mkdir(path.dirname(TRACKED_EVIDENCE_PATH), { recursive: true });
+  const serialized = serializeSanitizedEvidence('smoke-results.json', trackedEvidence);
   if (process.argv.includes('--promote')) {
-    await writeFile(TRACKED_EVIDENCE_PATH, serialized, 'utf8');
+    await writeSanitizedJsonAtomic(TRACKED_EVIDENCE_PATH, 'smoke-results.json', trackedEvidence);
     return;
   }
   let current;

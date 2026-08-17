@@ -43,15 +43,15 @@ export const CardStep = ({ adapter, expired = false, onTokenized }: CardStepProp
   const mountedRef = useRef(true);
   const captureTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
       if (captureTimerRef.current !== undefined) {
         globalThis.clearTimeout(captureTimerRef.current);
       }
-    },
-    [],
-  );
+    };
+  }, []);
 
   const hasCardData =
     card.number.length > 0 ||
@@ -140,7 +140,11 @@ export const CardStep = ({ adapter, expired = false, onTokenized }: CardStepProp
         </div>
       )}
 
-      <div className="form-grid payment-boundary" aria-label="Superficie segura de pago">
+      <div
+        className="form-grid payment-boundary"
+        role="group"
+        aria-label="Superficie segura de pago"
+      >
         <label className="field field-wide">
           <span>Número de tarjeta</span>
           <input

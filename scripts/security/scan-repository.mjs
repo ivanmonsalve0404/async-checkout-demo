@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
 const SKIPPED_DIRECTORIES = new Set([
   '.git',
@@ -59,7 +60,12 @@ const SECRET_PATTERNS = [
   {
     id: 'ASSIGNED_SECRET',
     expression:
-      /\b(?:events[_-]?key|integrity[_-]?key|password|passwd|private[_-]?key|secret)\b\s*[:=]\s*["']?([A-Za-z0-9+/_=.-]{16,})/giu,
+      /\b(?:access[_-]?token|api[_-]?key|aws[_-]?secret[_-]?access[_-]?key|client[_-]?secret|events[_-]?key|integrity[_-]?key|password|passwd|private[_-]?key|secret)\b\s*[:=]\s*["']?([A-Za-z0-9+/_=.-]{16,})/giu,
+    valueGroup: 1,
+  },
+  {
+    id: 'BEARER_TOKEN',
+    expression: /\bBearer\s+([A-Za-z0-9._~+/=-]{16,})/giu,
     valueGroup: 1,
   },
 ];
@@ -67,19 +73,22 @@ const SECRET_PATTERNS = [
 // A payment-card PAN cannot start with zero; excluding it avoids ISO/date ranges in minified code.
 const PAN_CANDIDATE = /(?<!\d)[1-9][ -]?(?:\d[ -]?){11,17}\d(?!\d)/gu;
 const HEX_DIGEST = /(?<![A-Fa-f0-9])[A-Fa-f0-9]{40,128}(?![A-Fa-f0-9])/gu;
+const EXACT_PLACEHOLDER_VALUES = new Set([
+  'change-me',
+  'changeme',
+  'dummy',
+  'example.invalid',
+  'fake-only',
+  'not-a-real',
+  'placeholder',
+  'replace-me',
+]);
+const SCOPED_PLACEHOLDER_VALUE =
+  /^(?:(?:prv|pub)_(?:test|prod)|(?:test|prod)_(?:integrity|events))_(?:change-me|changeme|dummy|fake-only|not-a-real|placeholder|replace-me)$/u;
 
 function isPlaceholder(value) {
   const normalized = value.toLowerCase();
-  return [
-    'change-me',
-    'changeme',
-    'dummy',
-    'example.invalid',
-    'fake-only',
-    'not-a-real',
-    'placeholder',
-    'replace-me',
-  ].some((marker) => normalized.includes(marker));
+  return EXACT_PLACEHOLDER_VALUES.has(normalized) || SCOPED_PLACEHOLDER_VALUE.test(normalized);
 }
 
 function passesLuhn(candidate) {
@@ -159,7 +168,7 @@ function isTextFile(filePath) {
   );
 }
 
-function collectTextFiles(directory) {
+export function collectTextFiles(directory) {
   const files = [];
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     if (entry.isDirectory() && SKIPPED_DIRECTORIES.has(entry.name)) {
@@ -227,18 +236,60 @@ function makeLuhnCandidate() {
 function selfTest() {
   const accessKey = ['AK', 'IA', 'ABCDEFGHIJKLMNOP'].join('');
   const assignedSecret = ['private', '_key', '='].join('') + 'sensitivevalue123456';
+  const apiKey = ['API', '_KEY', '='].join('') + 'sensitivevalue234567';
+  const accessToken = ['ACCESS', '_TOKEN', '='].join('') + 'sensitivevalue345678';
+  const clientSecret = ['CLIENT', '_SECRET', '='].join('') + 'sensitivevalue456789';
+  const awsSecret = ['AWS', '_SECRET_ACCESS_KEY', '='].join('') + 'sensitivevalue567890';
+  const bearer = ['Authorization: Bear', 'er ', 'sensitivevalue678901'].join('');
   const findings = scanText(
     'self-test',
-    [accessKey, assignedSecret, makeLuhnCandidate()].join('\n'),
+    [
+      accessKey,
+      assignedSecret,
+      apiKey,
+      accessToken,
+      clientSecret,
+      awsSecret,
+      bearer,
+      makeLuhnCandidate(),
+    ].join('\n'),
   );
   assert.deepEqual(findings.map((finding) => finding.rule).sort(), [
     'ASSIGNED_SECRET',
+    'ASSIGNED_SECRET',
+    'ASSIGNED_SECRET',
+    'ASSIGNED_SECRET',
+    'ASSIGNED_SECRET',
     'AWS_ACCESS_KEY',
+    'BEARER_TOKEN',
     'PAN_LUHN',
   ]);
   assert.equal(
-    scanText('placeholders', 'PRIVATE_KEY=replace-me\nBASE_URL=https://example.invalid').length,
+    scanText(
+      'placeholders',
+      [
+        'PRIVATE_KEY=replace-me',
+        'BASE_URL=https://example.invalid',
+        'PRIVATE_KEY=prv_test_not-a-real',
+        'EVENTS_KEY=test_events_fake-only',
+        'pub_test_replace-me',
+      ].join('\n'),
+    ).length,
     0,
+  );
+  const disguisedAssignedSecret = ['secret=', 'not-a-real', '-but-actual-secret-value'].join('');
+  const markerAtProviderSuffix = ['prv_test_', 'actualvalue', 'fake-only'].join('');
+  const markerAtProviderPrefix = ['prv_test_', 'fake-only', 'actualvalue'].join('');
+  const disguisedFindings = scanText(
+    'disguised-placeholders',
+    [disguisedAssignedSecret, markerAtProviderSuffix, markerAtProviderPrefix].join('\n'),
+  );
+  assert.ok(
+    disguisedFindings.some((finding) => finding.line === 1 && finding.rule === 'ASSIGNED_SECRET'),
+  );
+  assert.equal(
+    disguisedFindings.filter((finding) => finding.rule === 'PROVIDER_CREDENTIAL').length,
+    2,
   );
   process.stdout.write('secret-scan self-test: PASS\n');
   const luhnCandidate = makeLuhnCandidate();
@@ -257,7 +308,7 @@ function argumentValue(name) {
   return index === -1 ? undefined : process.argv[index + 1];
 }
 
-function main() {
+async function main() {
   if (process.argv.includes('--self-test')) {
     selfTest();
     return;
@@ -298,23 +349,31 @@ function main() {
     if (!resolvedEvidencePath.startsWith(rootPrefix)) {
       throw new Error('secret-scan evidence path escapes the repository');
     }
+    const { serializeSanitizedEvidence } = await import('../stage6/lib/artifact-sanitizer.mjs');
+    const serialized = serializeSanitizedEvidence(path.basename(resolvedEvidencePath), {
+      schemaVersion: 1,
+      status: 'PASS',
+      findings: 0,
+      filesScanned: files.length,
+      history: historyStatus,
+    });
+    const temporaryEvidence = `${resolvedEvidencePath}.${process.pid}.tmp`;
     fs.mkdirSync(path.dirname(resolvedEvidencePath), { recursive: true });
-    fs.writeFileSync(
-      resolvedEvidencePath,
-      JSON.stringify(
-        {
-          schemaVersion: 1,
-          status: 'PASS',
-          findings: 0,
-          filesScanned: files.length,
-          history: historyStatus,
-        },
-        null,
-        2,
-      ) + '\n',
-      'utf8',
-    );
+    try {
+      fs.writeFileSync(temporaryEvidence, serialized, 'utf8');
+      fs.renameSync(temporaryEvidence, resolvedEvidencePath);
+    } catch (error) {
+      fs.rmSync(temporaryEvidence, { force: true });
+      throw error;
+    }
   }
 }
 
-main();
+const executedDirectly =
+  process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (executedDirectly) {
+  main().catch(() => {
+    process.stderr.write('secret-scan: FAIL (evidence writer rejected output)\n');
+    process.exitCode = 1;
+  });
+}

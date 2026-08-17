@@ -187,6 +187,46 @@ if (process.argv.includes('--promote')) {
   mkdirSync(dirname(trackedPath), { recursive: true });
   writeFileSync(trackedPath, serialized, 'utf8');
   process.stdout.write('stage-5 evidence: PROMOTED\n');
+} else if (process.argv.includes('--historical')) {
+  const tracked = readJson('output/evidence/stage-5/verification-manifest.json');
+  if (
+    tracked.schemaVersion !== 1 ||
+    tracked.stage !== 5 ||
+    tracked.status !== 'LOCAL_FAKE_VERIFIED' ||
+    tracked.realProvider !== 'BLOCKED_ADR_09_AUTH_REQUIRED' ||
+    tracked.contracts?.openapiSha256 !== manifest.contracts.openapiSha256 ||
+    tracked.contracts?.generatedTypes !== 'MATCH'
+  ) {
+    fail('Stage 5 historical evidence envelope is invalid or its contract drifted');
+  }
+  for (const application of ['api', 'web']) {
+    const previous = tracked.tests?.[application];
+    const current = manifest.tests[application];
+    if (
+      !Number.isInteger(previous?.tests) ||
+      current.tests < previous.tests ||
+      current.passedTests !== current.tests ||
+      current.passedSuites !== current.suites
+    ) {
+      fail(`Stage 5 historical ${application} regression detected`);
+    }
+    for (const metric of ['statements', 'branches', 'functions', 'lines']) {
+      if (manifest.coverage[application][metric] < 85) {
+        fail(`Stage 5 historical ${application} coverage ${metric} regressed below 85`);
+      }
+    }
+  }
+  if (
+    manifest.tests.dynamodb.passed !== manifest.tests.dynamodb.tests ||
+    manifest.tests.smoke.passed !== manifest.tests.smoke.total ||
+    manifest.security.secrets.findings !== 0 ||
+    manifest.security.secrets.history !== 'PASS' ||
+    manifest.security.dependencies.vulnerabilities.high !== 0 ||
+    manifest.security.dependencies.vulnerabilities.critical !== 0
+  ) {
+    fail('Stage 5 historical evidence has a blocking regression');
+  }
+  process.stdout.write('stage-5 evidence: HISTORICAL PASS\n');
 } else {
   const tracked = readFileSync(trackedPath, 'utf8');
   if (tracked !== serialized) fail('Stage 5 verification evidence drift detected');

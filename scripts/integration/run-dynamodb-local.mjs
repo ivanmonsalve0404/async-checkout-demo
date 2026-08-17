@@ -1,9 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { writeSanitizedJsonAtomic } from '../stage6/lib/artifact-sanitizer.mjs';
 
 const IMAGE = 'amazon/dynamodb-local:2.6.1';
 const IMAGE_DIGEST = 'sha256:1856c05cc66a0e49dc1099e483ad2851477eeebe2135250ac11a1d1227db54b1';
@@ -151,9 +153,7 @@ const readJestCounts = () => {
   };
 };
 
-const writeEvidence = () => {
-  mkdirSync(dirname(evidencePath), { recursive: true });
-  const temporaryEvidence = `${evidencePath}.${process.pid}.tmp`;
+const writeEvidence = async () => {
   const passed = exitCode === 0 && cleanupStatus === 'PASSED';
   const evidence = {
     schemaVersion: 1,
@@ -178,8 +178,7 @@ const writeEvidence = () => {
     telemetryDisabled: true,
     dedicatedDockerNetwork: true,
   };
-  writeFileSync(temporaryEvidence, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
-  renameSync(temporaryEvidence, evidencePath);
+  await writeSanitizedJsonAtomic(evidencePath, 'stage-5-dynamodb-integration.json', evidence);
 };
 
 try {
@@ -285,7 +284,7 @@ try {
     process.stderr.write(`[integration] ${message}\n`);
   }
   if (existsSync(jestJsonPath)) rmSync(jestJsonPath, { force: true });
-  writeEvidence();
+  await writeEvidence();
 }
 
 process.exitCode = exitCode;

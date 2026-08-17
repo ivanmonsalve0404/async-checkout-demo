@@ -11,7 +11,7 @@
   "traces": 0,
   "node": "v24.19.0",
   "packageManager": "pnpm@11.19.0",
-  "smokeScriptSha256": "1981f13fc5387f73c44994a15949b4c9a49dd3a05cb2396d269397d74cf4009f",
+  "smokeScriptSha256": "33bd968805acec7106df618e97ec392828e6ebb472f7a628ae507762d986bef5",
   "exitCode": 0,
   "passed": 12,
   "total": 12,

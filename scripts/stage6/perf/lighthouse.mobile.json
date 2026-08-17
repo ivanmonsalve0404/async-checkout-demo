@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "tool": {
+    "name": "lighthouse",
+    "version": "13.4.1"
+  },
+  "runsPerApplicableVisit": 3,
+  "settings": {
+    "onlyCategories": ["performance", "accessibility", "best-practices"],
+    "formFactor": "mobile",
+    "screenEmulation": {
+      "mobile": true,
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1,
+      "disabled": false
+    },
+    "throttlingMethod": "simulate",
+    "locale": "es",
+    "maxWaitForLoad": 45000
+  },
+  "budgets": {
+    "lcpMsMaximumExclusive": 2500,
+    "clsMaximumExclusive": 0.1
+  },
+  "browserArguments": [
+    "--disable-gpu",
+    "--disable-background-networking",
+    "--no-first-run",
+    "--host-resolver-rules=MAP * 0.0.0.0, EXCLUDE localhost, EXCLUDE 127.0.0.1"
+  ]
+}

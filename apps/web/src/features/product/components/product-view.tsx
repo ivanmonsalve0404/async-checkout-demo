@@ -1,5 +1,5 @@
 import type { ProductResponse } from '../api/product-api';
-import { formatMoney } from '../../../shared/lib/format-money';
+import { formatMoney, formatMoneyForAssistiveTechnology } from '../../../shared/lib/format-money';
 
 export type ProductViewState =
   | Readonly<{ kind: 'loading' }>
@@ -90,11 +90,16 @@ export const ProductView = ({
           <p className="eyebrow">Producto seleccionado</p>
           <h1 id="product-title">{product.name}</h1>
           <p className="description">{product.description}</p>
-          <p
-            className="price"
-            aria-label={`Precio ${formatMoney(product.unitPrice.amountInCents, product.unitPrice.currency)}`}
-          >
-            {formatMoney(product.unitPrice.amountInCents, product.unitPrice.currency)}
+          <p className="price">
+            <span aria-hidden="true">
+              {formatMoney(product.unitPrice.amountInCents, product.unitPrice.currency)}
+            </span>
+            <span className="visually-hidden">
+              {`Precio ${formatMoneyForAssistiveTechnology(
+                product.unitPrice.amountInCents,
+                product.unitPrice.currency,
+              )}`}
+            </span>
           </p>
           <p
             className={isOutOfStock ? 'stock danger-text' : 'stock success-text'}

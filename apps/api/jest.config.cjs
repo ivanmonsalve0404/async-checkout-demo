@@ -1,3 +1,9 @@
+// eslint-disable-next-line @typescript-eslint/no-require-imports, no-undef -- Jest loads this configuration as CommonJS.
+const coveragePolicy = require('../../scripts/stage6/coverage-policy.json');
+const criticalThresholds = Object.fromEntries(
+  coveragePolicy.api.map((path) => [path, coveragePolicy.minimum]),
+);
+
 /** @type {import('jest').Config} */
 module.exports = {
   clearMocks: true,
@@ -17,7 +23,8 @@ module.exports = {
   coverageReporters: ['json-summary', 'text', 'lcov'],
   coveragePathIgnorePatterns: ['/node_modules/', '/dist/', 'src/interfaces/http/request.d.ts'],
   coverageThreshold: {
-    global: { branches: 85, functions: 85, lines: 85, statements: 85 },
+    global: coveragePolicy.minimum,
+    ...criticalThresholds,
   },
   moduleFileExtensions: ['ts', 'js', 'json'],
   preset: 'ts-jest',

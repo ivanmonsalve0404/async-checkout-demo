@@ -38,7 +38,7 @@ const T6 = '2026-08-15T12:03:00.000Z';
 const EXPIRES_AT = '2026-08-16T12:00:00.000Z';
 
 const enabled = process.env.RUN_DYNAMODB_LOCAL_INTEGRATION === '1';
-const describeLocal = enabled ? describe : describe.skip;
+const describeLocal = describe;
 
 const requireLocalEndpoint = (): string => {
   const value = process.env.DYNAMODB_LOCAL_ENDPOINT;

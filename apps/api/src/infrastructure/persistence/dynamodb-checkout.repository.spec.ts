@@ -1125,10 +1125,553 @@ describe('DynamoDbCheckoutRepository', () => {
   );
 });
 
-// NEXT
+describe('DynamoDbCheckoutRepository critical failure semantics', () => {
+  const customerInput = {
+    customerId: 'customer_demo_failure',
+    checkoutId,
+    fullName: 'Persona Sintética',
+    email: 'failure@example.test',
+    phone: '+570000000099',
+  };
+  const deliveryInput = {
+    checkoutId,
+    addressLine1: 'Calle sintética 99',
+    city: 'Bogotá',
+    region: 'Bogotá D.C.',
+  };
 
-// NEXT
+  it('writes relation-free checkouts and fails closed on malformed partitions or storage errors', async () => {
+    const {
+      customer: ignoredCustomer,
+      deliveryDetails: ignoredDelivery,
+      ...withoutRelations
+    } = checkout;
+    void ignoredCustomer;
+    void ignoredDelivery;
+    const relationFree = setup([{}, new Error('synthetic create failure')]);
+    await expect(relationFree.repository.create(withoutRelations)).resolves.toEqual({
+      ok: true,
+      value: withoutRelations,
+    });
+    await expect(relationFree.repository.create(checkout)).resolves.toEqual({
+      ok: false,
+      error: { code: 'REPOSITORY_UNAVAILABLE' },
+    });
 
-// NEXT
+    const undefinedItems = setup([{ Items: undefined }]);
+    await expect(undefinedItems.repository.findCheckout(checkoutId)).resolves.toEqual({
+      ok: true,
+      value: null,
+    });
 
-// NEXT
+    const malformedMeta = Object.assign(() => undefined, { SK: 'META' });
+    const invalidMeta = setup([{ Items: [malformedMeta] }]);
+    await expect(invalidMeta.repository.findCheckout(checkoutId)).resolves.toEqual({
+      ok: false,
+      error: { code: 'REPOSITORY_UNAVAILABLE' },
+    });
+
+    const [meta] = checkoutItems();
+    const malformedQuote = Object.assign(() => undefined, {
+      SK: 'QUOTE#' + checkout.quote.quoteId,
+    });
+    const invalidQuote = setup([{ Items: [meta, malformedQuote] }]);
+    await expect(invalidQuote.repository.findCheckout(checkoutId)).resolves.toEqual({
+      ok: false,
+      error: { code: 'REPOSITORY_UNAVAILABLE' },
+    });
+
+    const invalidCustomer = setup([
+      {
+        Items: checkoutItems().map((item) =>
+          item.SK === 'CUSTOMER' ? { ...item, email: 1 } : item,
+        ),
+      },
+    ]);
+    await expect(invalidCustomer.repository.findCheckout(checkoutId)).resolves.toEqual({
+      ok: false,
+      error: { code: 'REPOSITORY_UNAVAILABLE' },
+    });
+
+    const invalidDetails = setup([
+      {
+        Items: checkoutItems().map((item) =>
+          item.SK === 'DELIVERY_DETAILS' ? { ...item, region: 1 } : item,
+        ),
+      },
+    ]);
+    await expect(invalidDetails.repository.findCheckout(checkoutId)).resolves.toEqual({
+      ok: false,
+      error: { code: 'REPOSITORY_UNAVAILABLE' },
+    });
+
+    const minimal = setup([{ Items: checkoutItems(withoutRelations) }]);
+    await expect(minimal.repository.findCheckout(checkoutId)).resolves.toEqual({
+      ok: true,
+      value: withoutRelations,
+    });
+
+    const existingDelivery = checkout.deliveryDetails;
+    if (existingDelivery === undefined) throw new Error('Expected delivery fixture');
+    const withOptionalDelivery: Checkout = {
+      ...checkout,
+      deliveryDetails: {
+        ...existingDelivery,
+        addressLine2: 'Interior sintético',
+        postalCode: '110111',
+        deliveryInstructions: 'Portería sintética',
+      },
+    };
+    const optional = setup([{ Items: checkoutItems(withOptionalDelivery) }]);
+    await expect(optional.repository.findCheckout(checkoutId)).resolves.toEqual({
+      ok: true,
+      value: withOptionalDelivery,
+    });
+  });
+
+  it('rejects stale, hidden, missing, and active checkout mutations before side effects', async () => {
+    const missingCustomer = setup([{ Items: [] }]);
+    await expect(
+      missingCustomer.repository.replaceCustomer(
+        checkoutId,
+        checkout.capabilityHash,
+        checkout.version,
+        customerInput,
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'CHECKOUT_NOT_FOUND' } });
+
+    const unavailableCustomer = setup([new Error('synthetic read failure')]);
+    await expect(
+      unavailableCustomer.repository.replaceCustomer(
+        checkoutId,
+        checkout.capabilityHash,
+        checkout.version,
+        customerInput,
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'REPOSITORY_UNAVAILABLE' } });
+
+    const staleCustomer = setup([{ Items: checkoutItems() }]);
+    await expect(
+      staleCustomer.repository.replaceCustomer(
+        checkoutId,
+        checkout.capabilityHash,
+        checkout.version - 1,
+        customerInput,
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'VERSION_MISMATCH' } });
+
+    const active = { ...checkout, activeTransactionId: transactionId };
+    const activeCustomer = setup([{ Items: checkoutItems(active) }]);
+    await expect(
+      activeCustomer.repository.replaceCustomer(
+        checkoutId,
+        checkout.capabilityHash,
+        checkout.version,
+        customerInput,
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'PAYMENT_ALREADY_IN_PROGRESS' } });
+
+    const { deliveryDetails: ignoredDetails, ...customerWithoutDelivery } = checkout;
+    void ignoredDetails;
+    const customerDraft = setup([{ Items: checkoutItems(customerWithoutDelivery) }, {}]);
+    await expect(
+      customerDraft.repository.replaceCustomer(
+        checkoutId,
+        checkout.capabilityHash,
+        checkout.version,
+        customerInput,
+      ),
+    ).resolves.toMatchObject({ ok: true, value: { status: 'DRAFT' } });
+
+    const missingDelivery = setup([{ Items: [] }]);
+    await expect(
+      missingDelivery.repository.replaceDeliveryDetails(
+        checkoutId,
+        checkout.capabilityHash,
+        checkout.version,
+        deliveryInput,
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'CHECKOUT_NOT_FOUND' } });
+
+    const unavailableDelivery = setup([new Error('synthetic read failure')]);
+    await expect(
+      unavailableDelivery.repository.replaceDeliveryDetails(
+        checkoutId,
+        checkout.capabilityHash,
+        checkout.version,
+        deliveryInput,
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'REPOSITORY_UNAVAILABLE' } });
+
+    const staleDelivery = setup([{ Items: checkoutItems() }]);
+    await expect(
+      staleDelivery.repository.replaceDeliveryDetails(
+        checkoutId,
+        checkout.capabilityHash,
+        checkout.version - 1,
+        deliveryInput,
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'VERSION_MISMATCH' } });
+
+    const activeDelivery = setup([{ Items: checkoutItems(active) }]);
+    await expect(
+      activeDelivery.repository.replaceDeliveryDetails(
+        checkoutId,
+        checkout.capabilityHash,
+        checkout.version,
+        deliveryInput,
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'PAYMENT_ALREADY_IN_PROGRESS' } });
+
+    const { customer: ignoredCustomer, ...deliveryWithoutCustomer } = checkout;
+    void ignoredCustomer;
+    const deliveryDraft = setup([{ Items: checkoutItems(deliveryWithoutCustomer) }, {}]);
+    await expect(
+      deliveryDraft.repository.replaceDeliveryDetails(
+        checkoutId,
+        checkout.capabilityHash,
+        checkout.version,
+        deliveryInput,
+      ),
+    ).resolves.toMatchObject({ ok: true, value: { status: 'DRAFT' } });
+  });
+
+  it('classifies checkout CAS failures from a fresh consistent read', async () => {
+    const unavailable = setup([{ Items: checkoutItems() }, new Error('synthetic write failure')]);
+    await expect(
+      unavailable.repository.replaceCustomer(
+        checkoutId,
+        checkout.capabilityHash,
+        checkout.version,
+        customerInput,
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'REPOSITORY_UNAVAILABLE' } });
+
+    const disappeared = setup([{ Items: checkoutItems() }, transactionCanceled(0), { Items: [] }]);
+    await expect(
+      disappeared.repository.replaceCustomer(
+        checkoutId,
+        checkout.capabilityHash,
+        checkout.version,
+        customerInput,
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'CHECKOUT_NOT_FOUND' } });
+
+    const unchanged = setup([
+      { Items: checkoutItems() },
+      transactionCanceled(0),
+      { Items: checkoutItems() },
+    ]);
+    await expect(
+      unchanged.repository.replaceCustomer(
+        checkoutId,
+        checkout.capabilityHash,
+        checkout.version,
+        customerInput,
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'REPOSITORY_UNAVAILABLE' } });
+
+    const nowActive = setup([
+      { Items: checkoutItems() },
+      transactionCanceled(0),
+      { Items: checkoutItems({ ...checkout, activeTransactionId: transactionId }) },
+    ]);
+    await expect(
+      nowActive.repository.replaceCustomer(
+        checkoutId,
+        checkout.capabilityHash,
+        checkout.version,
+        customerInput,
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'PAYMENT_ALREADY_IN_PROGRESS' } });
+  });
+
+  it('prepares payment only after replay, capability, version, and stock checks', async () => {
+    const idempotencyUnavailable = setup([new Error('synthetic idempotency read')]);
+    await expect(
+      idempotencyUnavailable.repository.preparePayment(submittedPayment),
+    ).resolves.toEqual({
+      ok: false,
+      error: { code: 'REPOSITORY_UNAVAILABLE' },
+    });
+
+    const replay = setup([
+      { Item: idempotencyItem() },
+      { Items: checkoutItems() },
+      { Item: paymentItem() },
+    ]);
+    await expect(replay.repository.preparePayment(submittedPayment)).resolves.toMatchObject({
+      ok: true,
+      value: { kind: 'REPLAY' },
+    });
+
+    const missing = setup([{ Item: undefined }, { Items: [] }]);
+    await expect(missing.repository.preparePayment(submittedPayment)).resolves.toEqual({
+      ok: false,
+      error: { code: 'CHECKOUT_NOT_FOUND' },
+    });
+
+    const hidden = setup([{ Item: undefined }, { Items: checkoutItems() }]);
+    await expect(
+      hidden.repository.preparePayment({
+        ...submittedPayment,
+        capabilityHash: 'different_capability_hash_000000000000000',
+      }),
+    ).resolves.toEqual({ ok: false, error: { code: 'CHECKOUT_NOT_FOUND' } });
+
+    const stale = setup([{ Item: undefined }, { Items: checkoutItems() }]);
+    await expect(
+      stale.repository.preparePayment({
+        ...submittedPayment,
+        expectedVersion: checkout.version - 1,
+      }),
+    ).resolves.toEqual({ ok: false, error: { code: 'VERSION_MISMATCH' } });
+
+    const active = setup([
+      { Item: undefined },
+      { Items: checkoutItems({ ...checkout, activeTransactionId: transactionId }) },
+    ]);
+    await expect(active.repository.preparePayment(submittedPayment)).resolves.toEqual({
+      ok: false,
+      error: { code: 'PAYMENT_ALREADY_IN_PROGRESS' },
+    });
+
+    const unavailableWrite = setup([
+      { Item: undefined },
+      { Items: checkoutItems() },
+      new Error('synthetic write failure'),
+    ]);
+    await expect(unavailableWrite.repository.preparePayment(submittedPayment)).resolves.toEqual({
+      ok: false,
+      error: { code: 'REPOSITORY_UNAVAILABLE' },
+    });
+
+    const failedReplayRead = setup([
+      { Item: undefined },
+      { Items: checkoutItems() },
+      transactionCanceled(2),
+      new Error('synthetic replay failure'),
+    ]);
+    await expect(failedReplayRead.repository.preparePayment(submittedPayment)).resolves.toEqual({
+      ok: false,
+      error: { code: 'REPOSITORY_UNAVAILABLE' },
+    });
+
+    const wonByReplay = setup([
+      { Item: undefined },
+      { Items: checkoutItems() },
+      transactionCanceled(2),
+      { Item: idempotencyItem() },
+      { Items: checkoutItems() },
+      { Item: paymentItem() },
+    ]);
+    await expect(wonByReplay.repository.preparePayment(submittedPayment)).resolves.toMatchObject({
+      ok: true,
+      value: { kind: 'REPLAY' },
+    });
+
+    const checkoutCondition = setup([
+      { Item: undefined },
+      { Items: checkoutItems() },
+      transactionCanceled(1),
+      { Item: undefined },
+      { Items: checkoutItems() },
+    ]);
+    await expect(checkoutCondition.repository.preparePayment(submittedPayment)).resolves.toEqual({
+      ok: false,
+      error: { code: 'REPOSITORY_UNAVAILABLE' },
+    });
+
+    const unknownCancellation = setup([
+      { Item: undefined },
+      { Items: checkoutItems() },
+      transactionCanceled(2),
+      { Item: undefined },
+    ]);
+    await expect(unknownCancellation.repository.preparePayment(submittedPayment)).resolves.toEqual({
+      ok: false,
+      error: { code: 'REPOSITORY_UNAVAILABLE' },
+    });
+  });
+
+  it('keeps dispatch, provider acknowledgement, and unknown marking fail closed', async () => {
+    const missingDispatch = setup([{ Item: undefined }]);
+    await expect(
+      missingDispatch.repository.claimDispatch(transactionId, now, later),
+    ).resolves.toEqual({ ok: false, error: { code: 'CHECKOUT_NOT_FOUND' } });
+
+    const { nextCheckAt: ignoredNextCheck, ...terminalBase } = transaction;
+    void ignoredNextCheck;
+    const terminal: Transaction = {
+      ...terminalBase,
+      paymentStatus: 'APPROVED',
+      reservationStatus: 'CONSUMED',
+      effectsApplied: true,
+    };
+    const terminalDispatch = setup([
+      { Item: lockItem('TRANSACTION', transactionId) },
+      { Item: paymentItem(terminal) },
+    ]);
+    await expect(
+      terminalDispatch.repository.claimDispatch(transactionId, now, later),
+    ).resolves.toMatchObject({ ok: true, value: { kind: 'NOT_LEADER' } });
+
+    const malformedDispatch = setup([
+      { Item: lockItem('TRANSACTION', transactionId) },
+      { Item: paymentItem() },
+      { Attributes: {} },
+    ]);
+    await expect(
+      malformedDispatch.repository.claimDispatch(transactionId, now, later),
+    ).resolves.toEqual({ ok: false, error: { code: 'REPOSITORY_UNAVAILABLE' } });
+
+    const unavailableDispatch = setup([
+      { Item: lockItem('TRANSACTION', transactionId) },
+      { Item: paymentItem() },
+      new Error('synthetic update failure'),
+    ]);
+    await expect(
+      unavailableDispatch.repository.claimDispatch(transactionId, now, later),
+    ).resolves.toEqual({ ok: false, error: { code: 'REPOSITORY_UNAVAILABLE' } });
+
+    const lostDispatch = setup([
+      { Item: lockItem('TRANSACTION', transactionId) },
+      { Item: paymentItem() },
+      conditionalFailure,
+      { Item: undefined },
+    ]);
+    await expect(lostDispatch.repository.claimDispatch(transactionId, now, later)).resolves.toEqual(
+      {
+        ok: false,
+        error: { code: 'CHECKOUT_NOT_FOUND' },
+      },
+    );
+
+    const missingAcknowledge = setup([{ Item: undefined }]);
+    await expect(
+      missingAcknowledge.repository.acknowledgeProvider(
+        transactionId,
+        'provider_synthetic_001',
+        'PENDING',
+        now,
+        reconciliationCheck(),
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'CHECKOUT_NOT_FOUND' } });
+
+    const mismatchedProvider = setup([
+      { Item: lockItem('TRANSACTION', transactionId) },
+      { Item: paymentItem({ providerId: 'provider_other' }) },
+    ]);
+    await expect(
+      mismatchedProvider.repository.acknowledgeProvider(
+        transactionId,
+        'provider_synthetic_001',
+        'PENDING',
+        now,
+        reconciliationCheck(),
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'FINAL_STATE_CONFLICT' } });
+
+    const sameTerminal = setup([
+      { Item: lockItem('TRANSACTION', transactionId) },
+      { Item: paymentItem({ ...terminal, providerId: 'provider_synthetic_001' }) },
+    ]);
+    await expect(
+      sameTerminal.repository.acknowledgeProvider(
+        transactionId,
+        'provider_synthetic_001',
+        'APPROVED',
+        now,
+        reconciliationCheck(),
+      ),
+    ).resolves.toMatchObject({ ok: true, value: { paymentStatus: 'APPROVED' } });
+
+    const terminalWithoutProvider = setup([
+      { Item: lockItem('TRANSACTION', transactionId) },
+      { Item: paymentItem(terminal) },
+    ]);
+    await expect(
+      terminalWithoutProvider.repository.acknowledgeProvider(
+        transactionId,
+        'provider_synthetic_001',
+        'APPROVED',
+        now,
+        reconciliationCheck(),
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'FINAL_STATE_CONFLICT' } });
+
+    const unavailableAcknowledge = setup([
+      { Item: lockItem('TRANSACTION', transactionId) },
+      { Item: paymentItem() },
+      new Error('synthetic transaction failure'),
+    ]);
+    await expect(
+      unavailableAcknowledge.repository.acknowledgeProvider(
+        transactionId,
+        'provider_synthetic_001',
+        'PENDING',
+        now,
+        reconciliationCheck(),
+      ),
+    ).resolves.toEqual({ ok: false, error: { code: 'REPOSITORY_UNAVAILABLE' } });
+
+    const latestTerminal = setup([
+      { Item: lockItem('TRANSACTION', transactionId) },
+      { Item: paymentItem() },
+      transactionCanceled(0),
+      { Item: lockItem('TRANSACTION', transactionId) },
+      { Item: paymentItem({ ...terminal, providerId: 'provider_synthetic_001' }) },
+    ]);
+    await expect(
+      latestTerminal.repository.acknowledgeProvider(
+        transactionId,
+        'provider_synthetic_001',
+        'APPROVED',
+        now,
+        reconciliationCheck(),
+      ),
+    ).resolves.toMatchObject({ ok: true, value: { paymentStatus: 'APPROVED' } });
+
+    const missingUnknown = setup([{ Item: undefined }]);
+    await expect(
+      missingUnknown.repository.markUnknown(transactionId, now, reconciliationCheck()),
+    ).resolves.toEqual({ ok: false, error: { code: 'CHECKOUT_NOT_FOUND' } });
+
+    const terminalUnknown = setup([
+      { Item: lockItem('TRANSACTION', transactionId) },
+      { Item: paymentItem(terminal) },
+    ]);
+    await expect(
+      terminalUnknown.repository.markUnknown(transactionId, now, reconciliationCheck()),
+    ).resolves.toMatchObject({ ok: true, value: { paymentStatus: 'APPROVED' } });
+
+    const malformedUnknown = setup([
+      { Item: lockItem('TRANSACTION', transactionId) },
+      { Item: paymentItem() },
+      { Attributes: {} },
+    ]);
+    await expect(
+      malformedUnknown.repository.markUnknown(transactionId, now, reconciliationCheck()),
+    ).resolves.toEqual({ ok: false, error: { code: 'REPOSITORY_UNAVAILABLE' } });
+
+    const unavailableUnknown = setup([
+      { Item: lockItem('TRANSACTION', transactionId) },
+      { Item: paymentItem() },
+      new Error('synthetic update failure'),
+    ]);
+    await expect(
+      unavailableUnknown.repository.markUnknown(transactionId, now, reconciliationCheck()),
+    ).resolves.toEqual({ ok: false, error: { code: 'REPOSITORY_UNAVAILABLE' } });
+
+    const settledUnknown = setup([
+      { Item: lockItem('TRANSACTION', transactionId) },
+      { Item: paymentItem() },
+      conditionalFailure,
+      { Item: lockItem('TRANSACTION', transactionId) },
+      { Item: paymentItem(terminal) },
+    ]);
+    await expect(
+      settledUnknown.repository.markUnknown(transactionId, now, reconciliationCheck()),
+    ).resolves.toMatchObject({ ok: true, value: { paymentStatus: 'APPROVED' } });
+  });
+});

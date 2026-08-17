@@ -108,8 +108,9 @@ describe('acceptance, review, and transaction steps', () => {
       />,
     );
     expect(screen.getByText('Tarifa base')).toBeVisible();
-    expect(screen.getByRole('button', { name: /Pagar/ })).toBeEnabled();
-    await userEvent.click(screen.getByRole('button', { name: /Pagar/ }));
+    expect(screen.getAllByText(/pesos colombianos/i)).toHaveLength(4);
+    expect(screen.getByRole('button', { name: /Pagar 30 pesos colombianos/i })).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', { name: /Pagar 30 pesos colombianos/i }));
     expect(onSubmit).toHaveBeenCalledTimes(1);
 
     rerender(

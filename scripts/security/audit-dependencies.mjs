@@ -1,25 +1,55 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import process from 'node:process';
+
+import {
+  selfTestArtifactSanitizer,
+  writeSanitizedJsonAtomic,
+} from '../stage6/lib/artifact-sanitizer.mjs';
 
 const root = process.cwd();
 const evidencePath = resolve(root, 'output/evidence/runtime/stage-5-dependencies.json');
 const pnpmEntry = process.env.npm_execpath;
-const executable = pnpmEntry
-  ? process.execPath
-  : process.platform === 'win32'
-    ? 'pnpm.cmd'
-    : 'pnpm';
-const args = pnpmEntry
-  ? [pnpmEntry, 'audit', '--prod', '--audit-level', 'high', '--json']
-  : ['audit', '--prod', '--audit-level', 'high', '--json'];
-const audit = spawnSync(executable, args, {
+
+const pnpmCommand = (arguments_) => {
+  const entry = pnpmEntry ?? (process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm');
+  if (/\.(?:c?js|mjs)$/iu.test(entry)) {
+    return { executable: process.execPath, arguments: [entry, ...arguments_], shell: false };
+  }
+  if (process.platform === 'win32' && /\.cmd$/iu.test(entry)) {
+    return {
+      executable: process.env.ComSpec ?? 'cmd.exe',
+      arguments: ['/d', '/s', '/c', entry, ...arguments_],
+      shell: false,
+    };
+  }
+  return { executable: entry, arguments: arguments_, shell: false };
+};
+
+const probe = pnpmCommand(['--version']);
+const probeResult = spawnSync(probe.executable, probe.arguments, {
+  cwd: root,
+  encoding: 'utf8',
+  shell: probe.shell,
+  windowsHide: true,
+});
+if (probeResult.status !== 0 || probeResult.stdout.trim() !== '11.19.0') {
+  throw new Error('the pinned pnpm executable could not be invoked reproducibly');
+}
+if (process.argv.includes('--self-test')) {
+  selfTestArtifactSanitizer();
+  process.stdout.write('dependency-audit pnpm and sanitizer probe: PASS\n');
+  process.exit(0);
+}
+
+const command = pnpmCommand(['audit', '--prod', '--audit-level', 'high', '--json']);
+const audit = spawnSync(command.executable, command.arguments, {
   cwd: root,
   encoding: 'utf8',
   maxBuffer: 16 * 1024 * 1024,
-  shell: !pnpmEntry && process.platform === 'win32',
+  shell: command.shell,
+  windowsHide: true,
 });
 
 let parsed;
@@ -52,8 +82,7 @@ const evidence = {
     : undefined,
   vulnerabilities,
 };
-mkdirSync(dirname(evidencePath), { recursive: true });
-writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n', 'utf8');
+await writeSanitizedJsonAtomic(evidencePath, 'stage-5-dependencies.json', evidence);
 process.stdout.write(
   `dependency-audit: PASS (${vulnerabilities.high} high; ${vulnerabilities.critical} critical)\n`,
 );
