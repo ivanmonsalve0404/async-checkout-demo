@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ivanmonsalve0404/async-checkout-demo/schemas/stage7/release-successor-retry-selection.schema.json",
+  "title": "Stage 7 durable post-success retry source selection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "status",
+    "sourceRunId",
+    "postSuccessRunId",
+    "currentPostSuccessRunAttempt",
+    "artifactListRequests",
+    "artifactInventoryCount",
+    "artifactInventory",
+    "artifactInventorySha256",
+    "selectedAttempt",
+    "selectedSourceArtifact",
+    "selectedPreservationArtifact",
+    "containsSensitiveData",
+    "selectionSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 7 },
+    "kind": { "const": "RELEASE_SUCCESSOR_RETRY_SOURCE_SELECTION" },
+    "status": { "enum": ["CAPTURE_CURRENT", "REUSE_DURABLE_SOURCE"] },
+    "sourceRunId": { "$ref": "#/$defs/runId" },
+    "postSuccessRunId": { "$ref": "#/$defs/runId" },
+    "currentPostSuccessRunAttempt": { "$ref": "#/$defs/attempt" },
+    "artifactListRequests": { "type": "integer", "minimum": 1, "maximum": 1000 },
+    "artifactInventoryCount": { "type": "integer", "minimum": 0 },
+    "artifactInventory": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "artifactInventorySha256": { "$ref": "#/$defs/sha256" },
+    "selectedAttempt": {
+      "oneOf": [{ "$ref": "#/$defs/attempt" }, { "type": "null" }]
+    },
+    "selectedSourceArtifact": {
+      "oneOf": [{ "$ref": "#/$defs/artifact" }, { "type": "null" }]
+    },
+    "selectedPreservationArtifact": {
+      "oneOf": [{ "$ref": "#/$defs/artifact" }, { "type": "null" }]
+    },
+    "containsSensitiveData": { "const": false },
+    "selectionSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "CAPTURE_CURRENT" } } },
+      "then": {
+        "properties": {
+          "selectedAttempt": { "type": "null" },
+          "selectedSourceArtifact": { "type": "null" },
+          "selectedPreservationArtifact": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "REUSE_DURABLE_SOURCE" } } },
+      "then": {
+        "properties": {
+          "selectedAttempt": { "$ref": "#/$defs/attempt" },
+          "selectedSourceArtifact": { "$ref": "#/$defs/artifact" },
+          "selectedPreservationArtifact": { "$ref": "#/$defs/artifact" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runId": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+    "attempt": { "type": "integer", "minimum": 1, "maximum": 999 },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logicalName", "attempt", "name", "id", "digest", "expired", "workflowRunId"],
+      "properties": {
+        "logicalName": { "enum": ["source", "preservation", "cleanup"] },
+        "attempt": { "$ref": "#/$defs/attempt" },
+        "name": { "type": "string", "minLength": 1 },
+        "id": { "type": "integer", "minimum": 1 },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "expired": { "const": false },
+        "workflowRunId": { "$ref": "#/$defs/runId" }
+      }
+    }
+  }
+}

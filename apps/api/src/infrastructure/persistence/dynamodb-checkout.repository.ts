@@ -58,6 +58,8 @@ type StoredPayment = Transaction &
     schemaVersion: 1;
     GSI1PK?: 'RECON#DUE';
     GSI1SK?: string;
+    GSI2PK?: 'PAYMENT#PENDING';
+    GSI2SK?: string;
     leaseUntil?: string;
   }>;
 type StoredReservation = Readonly<{
@@ -276,6 +278,11 @@ const isReconcileCandidate = (value: unknown): value is ReconcileCandidate =>
   typeof value.paymentStatus === 'string' &&
   paymentStatuses.has(value.paymentStatus as PaymentStatus);
 
+type OldestPendingProjection = Pick<StoredPayment, 'acceptedAt' | 'paymentStatus'>;
+
+const isOldestPendingProjection = (value: unknown): value is OldestPendingProjection =>
+  isRecord(value) && value.paymentStatus === 'PENDING' && typeof value.acceptedAt === 'string';
+
 const isIdempotencyItem = (value: unknown): value is StoredIdempotency =>
   isRecord(value) &&
   isRecord(value.submission) &&
@@ -399,6 +406,8 @@ const transactionFromItem = (item: StoredPayment): Transaction => {
     schemaVersion,
     GSI1PK,
     GSI1SK,
+    GSI2PK,
+    GSI2SK,
     leaseUntil,
     ...transaction
   } = item;
@@ -409,6 +418,8 @@ const transactionFromItem = (item: StoredPayment): Transaction => {
   void schemaVersion;
   void GSI1PK;
   void GSI1SK;
+  void GSI2PK;
+  void GSI2SK;
   void leaseUntil;
   return transaction;
 };
@@ -768,6 +779,8 @@ export class DynamoDbCheckoutRepository implements CheckoutRepository {
         (input.transaction.nextCheckAt ?? input.transaction.acceptedAt) +
         '#' +
         input.transaction.transactionId,
+      GSI2PK: 'PAYMENT#PENDING',
+      GSI2SK: input.transaction.acceptedAt + '#' + input.transaction.transactionId,
       itemType: 'PAYMENT',
       idempotencyKeyHash: input.keyHash,
       schemaVersion: 1,
@@ -1234,6 +1247,33 @@ export class DynamoDbCheckoutRepository implements CheckoutRepository {
     }
   }
 
+  public async findOldestPendingAcceptedAt(): Promise<
+    Result<string | null, CheckoutRepositoryError>
+  > {
+    try {
+      const response = await this.client.send(
+        new QueryCommand({
+          TableName: this.checkoutTableName,
+          IndexName: 'GSI2-PendingAge',
+          KeyConditionExpression: 'GSI2PK = :pending',
+          ExpressionAttributeValues: { ':pending': 'PAYMENT#PENDING' },
+          ProjectionExpression: 'acceptedAt, paymentStatus',
+          ScanIndexForward: true,
+          Limit: 1,
+          ConsistentRead: false,
+        }),
+      );
+      const items = response.Items ?? [];
+      if (items.length === 0) return ok(null);
+      const oldest = items[0];
+      return isOldestPendingProjection(oldest) && Number.isFinite(Date.parse(oldest.acceptedAt))
+        ? ok(oldest.acceptedAt)
+        : err({ code: 'REPOSITORY_UNAVAILABLE' });
+    } catch {
+      return err({ code: 'REPOSITORY_UNAVAILABLE' });
+    }
+  }
+
   public async claimDue(
     now: string,
     leaseUntil: string,
@@ -1641,7 +1681,7 @@ export class DynamoDbCheckoutRepository implements CheckoutRepository {
           'SET #paymentStatus = :paymentStatus, #providerStatus = :providerStatus, #dispatchPhase = :dispatchPhase, #reservationStatus = :reservationStatus, #integrityStatus = :integrityStatus, #effectsApplied = :true, #updatedAt = :updatedAt' +
           (finalized.deliveryId === undefined ? '' : ', #deliveryId = :deliveryId') +
           setRecovery +
-          ' REMOVE #nextCheckAt, #leaseUntil, GSI1PK, GSI1SK' +
+          ' REMOVE #nextCheckAt, #leaseUntil, GSI1PK, GSI1SK, GSI2PK, GSI2SK' +
           removeRecovery,
         ExpressionAttributeNames: {
           ...(requireProviderProof ? { '#providerId': 'providerId' } : {}),
@@ -1769,7 +1809,7 @@ export class DynamoDbCheckoutRepository implements CheckoutRepository {
                 },
                 ConditionExpression: '#paymentStatus = :pending',
                 UpdateExpression:
-                  'SET #paymentStatus = :approved, #providerStatus = :providerStatus, #dispatchPhase = :acknowledged, #integrityStatus = :integrityStatus, #recoveryCode = :recoveryCode, #updatedAt = :updatedAt REMOVE #nextCheckAt, #leaseUntil, GSI1PK, GSI1SK',
+                  'SET #paymentStatus = :approved, #providerStatus = :providerStatus, #dispatchPhase = :acknowledged, #integrityStatus = :integrityStatus, #recoveryCode = :recoveryCode, #updatedAt = :updatedAt REMOVE #nextCheckAt, #leaseUntil, GSI1PK, GSI1SK, GSI2PK, GSI2SK',
                 ExpressionAttributeNames: {
                   '#dispatchPhase': 'dispatchPhase',
                   '#integrityStatus': 'integrityStatus',

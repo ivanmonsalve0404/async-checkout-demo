@@ -27,6 +27,27 @@ const readyPaymentProvider: PaymentProvider = {
 };
 
 describe('HTTP controller mappings', () => {
+  it('exposes dependency-free liveness separately from readiness', () => {
+    const isReady = jest.fn();
+    const repository = { isReady } as unknown as CatalogRepository;
+    const response = new HealthController(repository, readyPaymentProvider).getLiveness();
+    expect(response.status).toBe('alive');
+    expect(Number.isNaN(Date.parse(response.checkedAt))).toBe(false);
+    expect(isReady).not.toHaveBeenCalled();
+  });
+
+  it('keeps the legacy health route as the readiness contract', async () => {
+    const isReady = jest.fn().mockResolvedValue(true);
+    const repository = {
+      isReady,
+    } as unknown as CatalogRepository;
+    const controller = new HealthController(repository, readyPaymentProvider);
+
+    await expect(controller.getHealth(requestContext)).resolves.toMatchObject({ status: 'ok' });
+    await expect(controller.getReadiness(requestContext)).resolves.toMatchObject({ status: 'ok' });
+    expect(isReady).toHaveBeenCalledTimes(2);
+  });
+
   it('maps repository failure to a safe 500 problem', async () => {
     const repository: CatalogRepository = {
       findById: jest.fn().mockResolvedValue(err({ code: 'REPOSITORY_UNAVAILABLE' })),

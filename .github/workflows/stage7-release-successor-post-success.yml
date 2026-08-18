@@ -1,0 +1,736 @@
+name: Stage 7 Release Successor Post-Success
+
+on:
+  workflow_run:
+    workflows:
+      - Stage 7 Release
+      - Stage 7 Release Successor Publication Recovery
+    branches:
+      - master
+    types:
+      - completed
+
+concurrency:
+  group: stage7-assessment-release
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  AWS_EC2_METADATA_DISABLED: 'true'
+  NODE_VERSION: 24.19.0
+  STAGE7_POST_ROOT: output/evidence/runtime/stage-7-successor-post-success
+
+jobs:
+  post-success:
+    name: Verify, preserve, then clean the exact normal or recovered release
+    if: >-
+      ${{ github.event.workflow_run.status == 'completed' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'master' &&
+          github.event.workflow_run.run_attempt == 1 }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: assessment-release-successor-post-success
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the exact successful release SHA
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Resolve and bind the exact normal or recovered release source
+        id: trigger-source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+          EVENT_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          EVENT_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p .stage7/post-success/api .stage7/post-success/archives .stage7/post-success/artifacts "${STAGE7_POST_ROOT}"
+          case "${EVENT_WORKFLOW_NAME}" in
+            'Stage 7 Release')
+              printf 'mode=NORMAL\n' >> "${GITHUB_OUTPUT}"
+              printf 'source_run_id=%s\n' "${EVENT_RUN_ID}" >> "${GITHUB_OUTPUT}"
+              printf 'source_run_attempt=%s\n' "${EVENT_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
+              printf 'source_head_sha=%s\n' "${EVENT_HEAD_SHA}" >> "${GITHUB_OUTPUT}"
+              ;;
+            'Stage 7 Release Successor Publication Recovery')
+              test "${EVENT_RUN_ATTEMPT}" = '1'
+              gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${EVENT_RUN_ID}" > .stage7/post-success/api/recovery-run.json
+              recovery_workflow_id="$(node -e "const v=require('./.stage7/post-success/api/recovery-run.json'); if(!Number.isSafeInteger(v.workflow_id)) process.exit(1); process.stdout.write(String(v.workflow_id))")"
+              gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${recovery_workflow_id}" > .stage7/post-success/api/recovery-workflow.json
+              gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${EVENT_RUN_ID}/jobs?filter=all&per_page=100" > .stage7/post-success/api/recovery-jobs.json
+              gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${EVENT_RUN_ID}/artifacts?per_page=100" > .stage7/post-success/api/recovery-artifacts.json
+              RECOVERY_RUN_ID="${EVENT_RUN_ID}" node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const runId = process.env.RECOVERY_RUN_ID;
+          const value = JSON.parse(fs.readFileSync('.stage7/post-success/api/recovery-artifacts.json', 'utf8'));
+          if (!Array.isArray(value) || value.length !== 1) process.exit(1);
+          const artifacts = value.flatMap((page) => page?.artifacts ?? []);
+          if (value[0]?.total_count !== 2 || artifacts.length !== 2) process.exit(1);
+          const select = (kind) => {
+            const expression = new RegExp(`^stage7-release-successor-publication-recovery-${kind}-s([1-9][0-9]{0,19})-r${runId}-a1$`);
+            const matches = artifacts.filter((artifact) => expression.test(artifact?.name ?? ''));
+            const match = expression.exec(matches[0]?.name ?? '');
+            if (matches.length !== 1 || !Number.isSafeInteger(matches[0].id) || matches[0].expired !== false || String(matches[0].workflow_run?.id) !== runId || match === null) process.exit(1);
+            return { id: String(matches[0].id), sourceRunId: match[1] };
+          };
+          const plan = select('plan');
+          const result = select('result');
+          if (plan.sourceRunId !== result.sourceRunId) process.exit(1);
+          fs.writeFileSync('.stage7/post-success/recovery-artifact-selection.json', `${JSON.stringify({ planArtifactId: plan.id, resultArtifactId: result.id, sourceRunId: plan.sourceRunId })}\n`, { flag: 'wx', mode: 0o600 });
+          NODE
+              plan_artifact_id="$(node -e "const v=require('./.stage7/post-success/recovery-artifact-selection.json'); process.stdout.write(v.planArtifactId)")"
+              result_artifact_id="$(node -e "const v=require('./.stage7/post-success/recovery-artifact-selection.json'); process.stdout.write(v.resultArtifactId)")"
+              gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${plan_artifact_id}/zip" > .stage7/post-success/recovery-plan.zip
+              gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${result_artifact_id}/zip" > .stage7/post-success/recovery-result.zip
+              source_run_id="$(node scripts/stage7/release-successor-publication-recovery-cli.mjs source-id \
+                --recovery-run-id "${EVENT_RUN_ID}" \
+                --artifacts .stage7/post-success/api/recovery-artifacts.json \
+                --plan-archive .stage7/post-success/recovery-plan.zip \
+                --result-archive .stage7/post-success/recovery-result.zip)"
+              [[ "${source_run_id}" =~ ^[1-9][0-9]{0,19}$ ]]
+              test "${source_run_id}" = "$(node -e "const v=require('./.stage7/post-success/recovery-artifact-selection.json'); process.stdout.write(v.sourceRunId)")"
+              gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${source_run_id}" > .stage7/post-success/api/source-run.json
+              source_workflow_id="$(node -e "const v=require('./.stage7/post-success/api/source-run.json'); if(!Number.isSafeInteger(v.workflow_id)) process.exit(1); process.stdout.write(String(v.workflow_id))")"
+              gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${source_workflow_id}" > .stage7/post-success/api/source-workflow.json
+              gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${source_run_id}/jobs?filter=all&per_page=100" > .stage7/post-success/api/source-jobs.json
+              gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${source_run_id}/artifacts?per_page=100" > .stage7/post-success/api/source-artifacts.json
+              node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          for (const [filename, field] of [
+            ['.stage7/post-success/api/recovery-jobs.json', 'jobs'],
+            ['.stage7/post-success/api/recovery-artifacts.json', 'artifacts'],
+            ['.stage7/post-success/api/source-jobs.json', 'jobs'],
+            ['.stage7/post-success/api/source-artifacts.json', 'artifacts'],
+          ]) {
+            const pages = JSON.parse(fs.readFileSync(filename, 'utf8'));
+            if (!Array.isArray(pages) || pages.length !== 1 || !Array.isArray(pages[0]?.[field]) || pages[0].total_count !== pages[0][field].length) process.exit(1);
+          }
+          NODE
+              observed_at="$(node -e "process.stdout.write(new Date().toISOString())")"
+              node scripts/stage7/release-successor-publication-recovery-cli.mjs intake \
+                --recovery-run .stage7/post-success/api/recovery-run.json \
+                --recovery-workflow .stage7/post-success/api/recovery-workflow.json \
+                --recovery-artifacts .stage7/post-success/api/recovery-artifacts.json \
+                --recovery-plan-archive .stage7/post-success/recovery-plan.zip \
+                --result-archive .stage7/post-success/recovery-result.zip \
+                --source-run .stage7/post-success/api/source-run.json \
+                --source-workflow .stage7/post-success/api/source-workflow.json \
+                --source-jobs .stage7/post-success/api/source-jobs.json \
+                --source-artifacts .stage7/post-success/api/source-artifacts.json \
+                --observed-at "${observed_at}" \
+                --output .stage7/post-success/recovery-intake.json
+              node scripts/stage7/release-successor-cli.mjs manifest-recovered-release \
+                --intake .stage7/post-success/recovery-intake.json \
+                --plan-archive .stage7/post-success/recovery-plan.zip \
+                --result-archive .stage7/post-success/recovery-result.zip \
+                > .stage7/post-success/source-manifest.tsv
+              test "$(wc -l < .stage7/post-success/source-manifest.tsv)" = '27'
+              while IFS=$'\t' read -r artifact_name artifact_id artifact_digest; do
+                [[ "${artifact_name}" =~ ^[a-z0-9][a-z0-9-]{0,99}$ ]]
+                [[ "${artifact_id}" =~ ^[1-9][0-9]{0,19}$ ]]
+                [[ "${artifact_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+                gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > ".stage7/post-success/archives/${artifact_name}.zip"
+                test -s ".stage7/post-success/archives/${artifact_name}.zip"
+              done < .stage7/post-success/source-manifest.tsv
+              RECOVERY_HEAD_SHA="${EVENT_HEAD_SHA}" node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const context = {
+            repository: process.env.GITHUB_REPOSITORY,
+            runId: process.env.GITHUB_RUN_ID,
+            runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+            workflowName: process.env.GITHUB_WORKFLOW,
+            workflowPath: '.github/workflows/stage7-release-successor-post-success.yml',
+            eventName: process.env.GITHUB_EVENT_NAME,
+            headSha: process.env.RECOVERY_HEAD_SHA,
+            protectedEnvironment: 'assessment-release-successor-post-success',
+            githubActions: process.env.GITHUB_ACTIONS,
+          };
+          fs.writeFileSync('.stage7/post-success/recovery-closeout-context.json', `${JSON.stringify(context)}\n`, { flag: 'wx', mode: 0o600 });
+          NODE
+              authorized_at="$(node -e "process.stdout.write(new Date().toISOString())")"
+              node scripts/stage7/release-successor-cli.mjs authorize-recovered-release \
+                --intake .stage7/post-success/recovery-intake.json \
+                --plan-archive .stage7/post-success/recovery-plan.zip \
+                --result-archive .stage7/post-success/recovery-result.zip \
+                --recovery-head-sha "${EVENT_HEAD_SHA}" \
+                --source-jobs .stage7/post-success/api/source-jobs.json \
+                --recovery-jobs .stage7/post-success/api/recovery-jobs.json \
+                --event "${GITHUB_EVENT_PATH}" \
+                --context .stage7/post-success/recovery-closeout-context.json \
+                --authorized-at "${authorized_at}" \
+                --output .stage7/post-success/recovery-closeout-authority.json
+              node scripts/stage7/release-successor-cli.mjs extract-recovered-release \
+                --intake .stage7/post-success/recovery-intake.json \
+                --source-archives .stage7/post-success/archives \
+                --plan-archive .stage7/post-success/recovery-plan.zip \
+                --result-archive .stage7/post-success/recovery-result.zip \
+                --output-directory .stage7/post-success/artifacts
+              source_head_sha="$(node -e "const v=require('./.stage7/post-success/recovery-intake.json'); process.stdout.write(v.source.candidateSha)")"
+              printf 'mode=RECOVERY\n' >> "${GITHUB_OUTPUT}"
+              printf 'source_run_id=%s\n' "${source_run_id}" >> "${GITHUB_OUTPUT}"
+              printf 'source_run_attempt=1\n' >> "${GITHUB_OUTPUT}"
+              printf 'source_head_sha=%s\n' "${source_head_sha}" >> "${GITHUB_OUTPUT}"
+              printf 'recovery_run_id=%s\n' "${EVENT_RUN_ID}" >> "${GITHUB_OUTPUT}"
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
+
+      - name: Select an earlier durable source before any AWS access
+        id: retry-source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ steps.trigger-source.outputs.source_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p .stage7/post-success/api "${STAGE7_POST_ROOT}"
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+            > .stage7/post-success/api/post-artifact-pages.json
+          node scripts/stage7/release-successor-cli.mjs select-retry-source \
+            --source-run-id "${SOURCE_RUN_ID}" \
+            --post-run-id "${GITHUB_RUN_ID}" \
+            --post-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --artifact-pages .stage7/post-success/api/post-artifact-pages.json \
+            --output "${STAGE7_POST_ROOT}/release-successor-retry-selection.json"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const selection = JSON.parse(fs.readFileSync('output/evidence/runtime/stage-7-successor-post-success/release-successor-retry-selection.json', 'utf8'));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `mode=${selection.status}\n`);
+          if (selection.status === 'REUSE_DURABLE_SOURCE') {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `source_artifact_id=${selection.selectedSourceArtifact.id}\n`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `preservation_artifact_id=${selection.selectedPreservationArtifact.id}\n`);
+          }
+          NODE
+
+      - name: Redownload and validate the earlier durable source and preservation receipt
+        if: ${{ steps.retry-source.outputs.mode == 'REUSE_DURABLE_SOURCE' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_ARTIFACT_ID: ${{ steps.retry-source.outputs.source_artifact_id }}
+          PRESERVATION_ARTIFACT_ID: ${{ steps.retry-source.outputs.preservation_artifact_id }}
+          POST_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_ARTIFACT_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "${PRESERVATION_ARTIFACT_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}" \
+            > .stage7/post-success/api/prior-source-artifact.json
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}/zip" \
+            > .stage7/post-success/prior-source.zip
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${PRESERVATION_ARTIFACT_ID}" \
+            > .stage7/post-success/api/prior-preservation-artifact.json
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${PRESERVATION_ARTIFACT_ID}/zip" \
+            > .stage7/post-success/prior-preservation.zip
+          node scripts/stage7/release-successor-cli.mjs reuse-retry-source \
+            --selection "${STAGE7_POST_ROOT}/release-successor-retry-selection.json" \
+            --source-artifact-response .stage7/post-success/api/prior-source-artifact.json \
+            --source-archive .stage7/post-success/prior-source.zip \
+            --preservation-artifact-response .stage7/post-success/api/prior-preservation-artifact.json \
+            --preservation-archive .stage7/post-success/prior-preservation.zip \
+            --post-head-sha "${POST_HEAD_SHA}" \
+            --output-directory "${STAGE7_POST_ROOT}/source" \
+            --preservation-output "${STAGE7_POST_ROOT}/release-successor-preservation-receipt.json"
+
+      - name: Requery the exact release run, workflow, artifacts and raw ZIP bytes
+        id: release-observation
+        if: ${{ steps.trigger-source.outputs.mode == 'NORMAL' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ steps.trigger-source.outputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ steps.trigger-source.outputs.source_run_attempt }}
+          SOURCE_HEAD_SHA: ${{ steps.trigger-source.outputs.source_head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p .stage7/post-success/api .stage7/post-success/archives .stage7/post-success/artifacts "${STAGE7_POST_ROOT}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" > .stage7/post-success/api/release-run.json
+          workflow_id="$(node -e "const v=require('./.stage7/post-success/api/release-run.json'); if(!Number.isSafeInteger(v.workflow_id)) process.exit(1); process.stdout.write(String(v.workflow_id))")"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow_id}" > .stage7/post-success/api/release-workflow.json
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?per_page=100" > .stage7/post-success/api/release-artifacts.json
+          mapfile -t required_artifacts < <(
+            node --input-type=module -e \
+              "import { RELEASE_SUCCESSOR_REQUIRED_ARTIFACTS } from './scripts/stage7/release-successor-handoff.mjs'; process.stdout.write(RELEASE_SUCCESSOR_REQUIRED_ARTIFACTS.join('\\n') + '\\n')"
+          )
+          for artifact_name in "${required_artifacts[@]}"; do
+            artifact_id="$(ARTIFACT_NAME="${artifact_name}" node -e "const v=require('./.stage7/post-success/api/release-artifacts.json'); const a=v.flatMap(p=>p.artifacts??[]); const m=a.filter(x=>x.name===process.env.ARTIFACT_NAME); if(v.length!==1||v[0].total_count!==a.length||m.length!==1||!Number.isSafeInteger(m[0].id)||m[0].expired!==false) process.exit(1); process.stdout.write(String(m[0].id))")"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > ".stage7/post-success/archives/${artifact_name}.zip"
+            test -s ".stage7/post-success/archives/${artifact_name}.zip"
+          done
+          observed_at="$(node -e "const v=require('./.stage7/post-success/api/release-run.json'); process.stdout.write(v.updated_at)")"
+          node scripts/stage7/release-successor-cli.mjs observe-release \
+            --event "${GITHUB_EVENT_PATH}" \
+            --run-response .stage7/post-success/api/release-run.json \
+            --workflow-response .stage7/post-success/api/release-workflow.json \
+            --artifacts-response .stage7/post-success/api/release-artifacts.json \
+            --archives .stage7/post-success/archives \
+            --observed-at "${observed_at}" \
+            --output "${STAGE7_POST_ROOT}/release-successor-run-observation.json"
+          printf 'source_run_id=%s\n' "${SOURCE_RUN_ID}" >> "${GITHUB_OUTPUT}"
+          printf 'source_run_attempt=%s\n' "${SOURCE_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
+          printf 'source_head_sha=%s\n' "${SOURCE_HEAD_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Extract each hash-verified release artifact without merged paths
+        if: ${{ steps.trigger-source.outputs.mode == 'NORMAL' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          node scripts/stage7/release-successor-cli.mjs extract-release \
+            --observation "${STAGE7_POST_ROOT}/release-successor-run-observation.json" \
+            --archives .stage7/post-success/archives \
+            --output-directory .stage7/post-success/artifacts
+
+      - name: Materialize the exact approved source-run config
+        id: identity
+        env:
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          umask 077
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > .stage7/post-success/source-config.json
+          chmod 600 .stage7/post-success/source-config.json
+          node scripts/stage7/cli.mjs config --config .stage7/post-success/source-config.json > /dev/null
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const config = JSON.parse(fs.readFileSync('.stage7/post-success/source-config.json', 'utf8'));
+          const freeze = JSON.parse(fs.readFileSync('.stage7/post-success/artifacts/stage7-candidate-manifest/candidate-manifest.json', 'utf8'));
+          const protectedRun = JSON.parse(fs.readFileSync('.stage7/post-success/artifacts/stage7-rollback-resilience/stage7-rollback-resilience-protected-run.json', 'utf8'));
+          const lifecycle = protectedRun.runtimeAttestation?.journalLifecycle;
+          const values = {
+            candidate_sha: freeze.candidateSha,
+            release_id: freeze.releaseId,
+            release_tag: freeze.releaseTag,
+            aws_region: config.aws?.region,
+            aws_account_id: config.aws?.accountId,
+            aws_cli_version: freeze.toolchain?.awsCli,
+            lifecycle_sha256: lifecycle?.lifecycleSha256,
+            lifecycle_role_sha256: lifecycle?.cleanupRoleSha256,
+          };
+          for (const [name, value] of Object.entries(values)) {
+            if (typeof value !== 'string' || !/^[A-Za-z0-9._-]+$/.test(value)) process.exit(1);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
+          }
+          NODE
+
+      - name: Materialize the composite recovery authorities and exact observation
+        if: ${{ steps.trigger-source.outputs.mode == 'RECOVERY' }}
+        env:
+          STAGE7_CONFIG: .stage7/post-success/source-config.json
+          STAGE7_CANDIDATE_SHA: ${{ steps.identity.outputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ steps.identity.outputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ steps.identity.outputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/stage7/control.mjs verify \
+            --scope full \
+            --evidence .stage7/post-success/artifacts \
+            --resilience-app .stage7/post-success/artifacts/stage7-candidate/iac \
+            --publication-recovery-intake .stage7/post-success/recovery-intake.json \
+            --publication-recovery-closeout-authority .stage7/post-success/recovery-closeout-authority.json \
+            --publication-recovery-plan .stage7/post-success/recovery-plan.zip \
+            --publication-recovery-result .stage7/post-success/recovery-result.zip
+          mkdir .stage7/post-success/artifacts/stage7-release-authorities
+          mkdir .stage7/post-success/artifacts/stage7-release-reports
+          for basename in evidence-index-checkpoint.json gate-evaluation.json handoff-payload.json job-results.json operations-runbook.json scorecard.json; do
+            cp ".stage7/evidence/stage7-release-authorities/${basename}" ".stage7/post-success/artifacts/stage7-release-authorities/${basename}"
+          done
+          for basename in closeout.json etapa-7-release-despliegue.md provenance-ledger.json release-manifest.json; do
+            cp "output/evidence/runtime/stage-7/${basename}" ".stage7/post-success/artifacts/stage7-release-reports/${basename}"
+          done
+          observed_at="$(node -e "const v=require('./.stage7/post-success/recovery-closeout-authority.json'); process.stdout.write(v.authorizedAtUtc)")"
+          node scripts/stage7/release-successor-cli.mjs observe-recovered-release \
+            --intake .stage7/post-success/recovery-intake.json \
+            --closeout-authority .stage7/post-success/recovery-closeout-authority.json \
+            --source-artifacts-response .stage7/post-success/api/source-artifacts.json \
+            --source-archives .stage7/post-success/archives \
+            --plan-archive .stage7/post-success/recovery-plan.zip \
+            --result-archive .stage7/post-success/recovery-result.zip \
+            --reports-directory .stage7/post-success/artifacts/stage7-release-reports \
+            --authorities-directory .stage7/post-success/artifacts/stage7-release-authorities \
+            --observed-at "${observed_at}" \
+            --output "${STAGE7_POST_ROOT}/release-successor-run-observation.json"
+
+      - name: Reconstruct the complete rollback-validation context from original bytes
+        env:
+          JOURNAL_ROLE_ARN: ${{ vars.STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .stage7/post-success/rollback-context .stage7/post-success/recomputed
+          node scripts/stage7/rollback-resilience-cli.mjs prepare \
+            --config .stage7/post-success/source-config.json \
+            --freeze .stage7/post-success/artifacts/stage7-candidate-manifest/candidate-manifest.json \
+            --previous .stage7/post-success/artifacts/stage7-previous-release/previous-release-manifest.json \
+            --candidate .stage7/post-success/artifacts/stage7-recovery-probe/versioned-rollback-candidate.json \
+            --rollback .stage7/post-success/artifacts/stage7-rollback/rollback.json \
+            --aws-auth .stage7/post-success/artifacts/stage7-aws-auth/aws-auth.json \
+            --approval .stage7/post-success/artifacts/stage7-approval/approval.json \
+            --plan .stage7/post-success/artifacts/stage7-infra-diff/infra-diff.json \
+            --deployment .stage7/post-success/artifacts/stage7-web/web.json \
+            --observability .stage7/post-success/artifacts/stage7-observability/observability.json \
+            --activation .stage7/post-success/artifacts/stage7-activation/activation.json \
+            --external-authorization .stage7/post-success/artifacts/stage7-external-authorization/external-authorization.json \
+            --smoke-input .stage7/post-success/artifacts/stage7-smoke/smoke-input-preflight.json \
+            --smoke .stage7/post-success/artifacts/stage7-smoke/smoke.json \
+            --edge .stage7/post-success/artifacts/stage7-edge-security/edge-security.json \
+            --quality .stage7/post-success/artifacts/stage7-quality/quality.json \
+            --sandbox .stage7/post-success/artifacts/stage7-sandbox/sandbox-smoke.json \
+            --rollback-smoke-input .stage7/post-success/artifacts/stage7-rollback/rollback-smoke-input-preflight.json \
+            --pending-producer .stage7/post-success/artifacts/stage7-rollback/rollback-pending-producer.json \
+            --rollback-smoke .stage7/post-success/artifacts/stage7-rollback/versioned-rollback-smoke.json \
+            --repromotion-smoke .stage7/post-success/artifacts/stage7-rollback/versioned-repromotion-smoke.json \
+            --journal-cleanup-role "${JOURNAL_ROLE_ARN}" \
+            --assembly .stage7/post-success/artifacts/stage7-candidate/iac \
+            --max-polls 30 \
+            --inputs-output .stage7/post-success/rollback-context/inputs.json \
+            --rb06-output .stage7/post-success/rollback-context/rb-e7-06.json \
+            --rb08-output .stage7/post-success/rollback-context/rb-e7-08.json \
+            --binding-output .stage7/post-success/recomputed/stage7-rollback-resilience-source-binding.json
+
+      - name: Validate every authority and commit the pre-marker evidence set
+        id: commitment
+        shell: bash
+        run: |
+          set -euo pipefail
+          common=(
+            --observation "${STAGE7_POST_ROOT}/release-successor-run-observation.json"
+            --release-metadata .stage7/post-success/artifacts/stage7-release-metadata/release-metadata.json
+            --stage6-closeout .stage7/post-success/artifacts/stage7-release-metadata/stage6-closeout.json
+            --config .stage7/post-success/source-config.json
+            --freeze .stage7/post-success/artifacts/stage7-candidate-manifest/candidate-manifest.json
+            --previous-manifest .stage7/post-success/artifacts/stage7-previous-release/previous-release-manifest.json
+            --previous-source .stage7/post-success/artifacts/stage7-previous-release/previous-source-provenance.json
+            --previous-target .stage7/post-success/artifacts/stage7-previous-release/previous-target-compatibility.json
+            --previous-final-disable .stage7/post-success/artifacts/stage7-previous-release/previous-final-disable-provenance.json
+            --previous-api .stage7/post-success/artifacts/stage7-previous-release/previous-api-contract-evidence.json
+            --previous-pending .stage7/post-success/artifacts/stage7-previous-release/previous-pending-evidence.json
+            --previous-smoke .stage7/post-success/artifacts/stage7-previous-release/previous-smoke-evidence.json
+            --previous-index .stage7/post-success/artifacts/stage7-previous-release/previous-release-projection-index.json
+            --candidate-record .stage7/post-success/artifacts/stage7-recovery-probe/versioned-rollback-candidate.json
+            --emergency-recovery .stage7/post-success/artifacts/stage7-recovery-probe/emergency-recovery.json
+            --emergency-recovery-no-action-outcome .stage7/post-success/artifacts/stage7-recovery-probe/emergency-recovery-no-action-outcome.json
+            --plan .stage7/post-success/artifacts/stage7-infra-diff/infra-diff.json
+            --diff .stage7/post-success/artifacts/stage7-infra-diff/infra-diff.txt
+            --github-approval .stage7/post-success/artifacts/stage7-approval/github-environment-approval.json
+            --approval .stage7/post-success/artifacts/stage7-approval/approval.json
+            --activation .stage7/post-success/artifacts/stage7-activation/activation.json
+            --drift .stage7/post-success/artifacts/stage7-rollback/drift.json
+            --rollback .stage7/post-success/artifacts/stage7-rollback/rollback.json
+            --rb-binding .stage7/post-success/artifacts/stage7-rollback-resilience/stage7-rollback-resilience-source-binding.json
+            --rb-run .stage7/post-success/artifacts/stage7-rollback-resilience/stage7-rollback-resilience-protected-run.json
+            --rb-completion .stage7/post-success/artifacts/stage7-rollback-resilience/stage7-rollback-resilience-complete.json
+            --release-manifest .stage7/post-success/artifacts/stage7-release-reports/release-manifest.json
+            --ledger .stage7/post-success/artifacts/stage7-release-reports/provenance-ledger.json
+            --closeout .stage7/post-success/artifacts/stage7-release-reports/closeout.json
+            --release-handoff .stage7/post-success/artifacts/stage7-release-authorities/handoff-payload.json
+            --publication .stage7/post-success/artifacts/stage7-publication/publication.json
+            --publication-plan .stage7/post-success/artifacts/stage7-publication/publication-plan.json
+            --publication-target-proof .stage7/post-success/artifacts/stage7-publication/publication-target-proof.json
+            --publication-operation .stage7/post-success/artifacts/stage7-publication/publication-operation.json
+            --publication-proof .stage7/post-success/artifacts/stage7-publication/publication-proof.json
+            --api-deployment .stage7/post-success/artifacts/stage7-api/api.json
+            --pending-producer .stage7/post-success/artifacts/stage7-rollback/rollback-pending-producer.json
+            --postdeploy-smoke .stage7/post-success/artifacts/stage7-smoke/smoke.json
+            --repromotion-smoke .stage7/post-success/artifacts/stage7-rollback/versioned-repromotion-smoke.json
+            --fence .stage7/post-success/artifacts/stage7-release-successor-fence/release-successor-completion-fence.json
+            --reconciliation-rollback-check .stage7/post-success/artifacts/stage7-release-reconciliation/rollback-check-reconciliation.json
+            --reconciliation-rollback-resilience .stage7/post-success/artifacts/stage7-release-reconciliation/rollback-resilience-reconciliation.json
+            --pre-fence-gate .stage7/post-success/artifacts/stage7-release-reconciliation/stage7-release-pre-fence-gate.json
+            --aws-auth .stage7/post-success/artifacts/stage7-aws-auth/aws-auth.json
+            --journal-role-effective-permissions .stage7/post-success/artifacts/stage7-aws-auth/stage7-release-journal-role-effective-permissions.json
+            --recovery-role-effective-permissions .stage7/post-success/artifacts/stage7-aws-auth/stage7-release-reconciliation-recovery-role-effective-permissions.json
+            --rb-inputs .stage7/post-success/rollback-context/inputs.json
+            --rb06 .stage7/post-success/rollback-context/rb-e7-06.json
+            --rb08 .stage7/post-success/rollback-context/rb-e7-08.json
+          )
+          printf '%s\0' "${common[@]}" > .stage7/post-success/source-arguments.nul
+          node scripts/stage7/release-successor-cli.mjs commit "${common[@]}" --output "${STAGE7_POST_ROOT}/release-successor-evidence-set.json"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const commitment = JSON.parse(fs.readFileSync('output/evidence/runtime/stage-7-successor-post-success/release-successor-evidence-set.json', 'utf8'));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `release_evidence_set_sha256=${commitment.releaseEvidenceSetSha256}\n`);
+          NODE
+
+      - name: Build the exact candidate-scoped session policy
+        id: session-policy
+        env:
+          CANDIDATE_SHA: ${{ steps.identity.outputs.candidate_sha }}
+          SOURCE_RUN_ID: ${{ steps.trigger-source.outputs.source_run_id }}
+          AWS_REGION_EXACT: ${{ steps.identity.outputs.aws_region }}
+          AWS_ACCOUNT_EXACT: ${{ steps.identity.outputs.aws_account_id }}
+          JOURNAL_ROLE_ARN: ${{ vars.STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const { CANDIDATE_SHA: candidate, SOURCE_RUN_ID: run, AWS_REGION_EXACT: region, AWS_ACCOUNT_EXACT: account, JOURNAL_ROLE_ARN: journalRole } = process.env;
+          if (!/^[0-9a-f]{40}$/.test(candidate) || !/^[1-9][0-9]{0,19}$/.test(run) || !/^[a-z0-9-]+$/.test(region) || !/^[0-9]{12}$/.test(account) || !new RegExp(`^arn:aws:iam::${account}:role/[A-Za-z0-9+=,.@_/-]{1,512}$`).test(journalRole)) process.exit(1);
+          const arn = (name) => `arn:aws:ssm:${region}:${account}:parameter${name}`;
+          const finalization = `/checkout/stage7/release-finalization/${candidate}/${run}`;
+          const fence = `/checkout/stage7/release-fence/${candidate}/${run}`;
+          const rb06 = `/checkout/stage7/rollback/${candidate}/RB-E7-06`;
+          const rb08 = `/checkout/stage7/rollback/${candidate}/RB-E7-08`;
+          const reconciliation = `/checkout/stage7/rollback/${candidate}/release-reconciliation/${run}`;
+          const effective = JSON.parse(fs.readFileSync('.stage7/post-success/artifacts/stage7-aws-auth/stage7-release-journal-role-effective-permissions.json', 'utf8'));
+          const policyArns = [...new Set([effective.permissionsBoundary?.policyArn, ...(effective.attachedPolicies ?? []).map(({policyArn}) => policyArn)])];
+          if (policyArns.some((policyArn) => !new RegExp(`^arn:aws:iam::${account}:policy/[A-Za-z0-9+=,.@_/-]{1,512}$`).test(policyArn))) process.exit(1);
+          const policy = {Version:'2012-10-17',Statement:[
+            {Sid:'ImmutableFinalizationWrite',Effect:'Allow',Action:'ssm:PutParameter',Resource:arn(finalization),Condition:{StringEquals:{'ssm:Overwrite':'false'}}},
+            {Sid:'ExactFinalizationRead',Effect:'Allow',Action:'ssm:GetParameter',Resource:arn(finalization)},
+            {Sid:'ExactCompletionFenceRead',Effect:'Allow',Action:'ssm:GetParameter',Resource:arn(fence)},
+            {Sid:'ExactJournalList',Effect:'Allow',Action:'ssm:GetParametersByPath',Resource:[arn(rb06),arn(`${rb06}/*`),arn(rb08),arn(`${rb08}/*`),arn(reconciliation),arn(`${reconciliation}/*`)]},
+            {Sid:'ExactJournalDelete',Effect:'Allow',Action:'ssm:DeleteParameter',Resource:[arn(`${rb06}/*`),arn(`${rb08}/*`),arn(`${reconciliation}/owner`),arn(`${reconciliation}/intent/*`),arn(`${reconciliation}/runtime-proofs/*`),arn(`${reconciliation}/rollback-check/terminal`),arn(`${reconciliation}/rollback-resilience/terminal`)]},
+            {Sid:'ExactJournalRoleAudit',Effect:'Allow',Action:['iam:GetRole','iam:GetRolePolicy','iam:ListAttachedRolePolicies','iam:ListRolePolicies'],Resource:journalRole},
+            {Sid:'ExactJournalPolicyAudit',Effect:'Allow',Action:['iam:GetPolicy','iam:GetPolicyVersion'],Resource:policyArns},
+          ]};
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `policy=${JSON.stringify(policy)}\n`);
+          NODE
+
+      - name: Assume only the dedicated release-journal cleanup role
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ steps.identity.outputs.aws_account_id }}
+          aws-region: ${{ steps.identity.outputs.aws_region }}
+          inline-session-policy: ${{ steps.session-policy.outputs.policy }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-release-journal-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ vars.STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN }}
+          unset-current-credentials: true
+
+      - name: Verify exact caller, pinned AWS CLI and immutable role profile before SSM
+        env:
+          JOURNAL_ROLE_ARN: ${{ vars.STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN }}
+          PERMISSIONS_BOUNDARY_ARN: ${{ vars.STAGE7_RELEASE_JOURNAL_CLEANUP_PERMISSIONS_BOUNDARY_ARN }}
+          AWS_REGION_EXACT: ${{ steps.identity.outputs.aws_region }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          expected_session="e7-release-journal-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          aws --version > .stage7/post-success/aws-version.txt 2>&1
+          aws sts get-caller-identity --output json --no-cli-pager > .stage7/post-success/caller-identity.json
+          node scripts/stage7/release-successor-cli.mjs capture-journal-role-authority \
+            --journal-role-arn "${JOURNAL_ROLE_ARN}" \
+            --permissions-boundary-arn "${PERMISSIONS_BOUNDARY_ARN}" \
+            --aws-region "${AWS_REGION_EXACT}" \
+            --output .stage7/post-success/live-journal-role-effective-permissions.json \
+            --get-role-output .stage7/post-success/role-audit.json
+          test -s .stage7/post-success/aws-version.txt
+          test -s .stage7/post-success/caller-identity.json
+          test -s .stage7/post-success/role-audit.json
+          test -s .stage7/post-success/live-journal-role-effective-permissions.json
+          printf '%s' "${expected_session}" > .stage7/post-success/session-name.txt
+
+      - name: Seal same-candidate recovery with an immutable no-overwrite marker
+        env:
+          JOURNAL_ROLE_ARN: ${{ vars.STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN }}
+          ROLLBACK_ROLE_ARN: ${{ vars.STAGE7_AWS_ROLLBACK_ROLE_ARN }}
+          EPHEMERAL_CLEANUP_ROLE_ARN: ${{ vars.STAGE7_AWS_CLEANUP_ROLE_ARN }}
+          LIFECYCLE_ROLE_SHA256: ${{ steps.identity.outputs.lifecycle_role_sha256 }}
+          PERMISSIONS_BOUNDARY_ARN: ${{ vars.STAGE7_RELEASE_JOURNAL_CLEANUP_PERMISSIONS_BOUNDARY_ARN }}
+          AWS_CLI_VERSION_EXACT: ${{ steps.identity.outputs.aws_cli_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/stage7/release-successor-cli.mjs finalize \
+            --commitment "${STAGE7_POST_ROOT}/release-successor-evidence-set.json" \
+            --journal-role "${JOURNAL_ROLE_ARN}" \
+            --rollback-role "${ROLLBACK_ROLE_ARN}" \
+            --ephemeral-cleanup-role "${EPHEMERAL_CLEANUP_ROLE_ARN}" \
+            --lifecycle-role-sha256 "${LIFECYCLE_ROLE_SHA256}" \
+            --caller-identity .stage7/post-success/caller-identity.json \
+            --aws-version .stage7/post-success/aws-version.txt \
+            --role-audit .stage7/post-success/role-audit.json \
+            --aws-auth .stage7/post-success/artifacts/stage7-aws-auth/aws-auth.json \
+            --frozen-effective-permissions .stage7/post-success/artifacts/stage7-aws-auth/stage7-release-journal-role-effective-permissions.json \
+            --live-effective-permissions .stage7/post-success/live-journal-role-effective-permissions.json \
+            --permissions-boundary "${PERMISSIONS_BOUNDARY_ARN}" \
+            --session-name "e7-release-journal-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --fence-output "${STAGE7_POST_ROOT}/release-successor-completion-fence.json" \
+            --marker-output "${STAGE7_POST_ROOT}/release-successor-finalization-marker.json" \
+            --provenance-output "${STAGE7_POST_ROOT}/release-successor-final-disable-provenance.json"
+
+      - name: Capture and validate every journal value before source publication
+        if: ${{ steps.retry-source.outputs.mode == 'CAPTURE_CURRENT' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/stage7/release-successor-cli.mjs capture-journal-snapshot \
+            --reconciliation-rollback-check .stage7/post-success/artifacts/stage7-release-reconciliation/rollback-check-reconciliation.json \
+            --reconciliation-rollback-resilience .stage7/post-success/artifacts/stage7-release-reconciliation/rollback-resilience-reconciliation.json \
+            --pre-fence-gate .stage7/post-success/artifacts/stage7-release-reconciliation/stage7-release-pre-fence-gate.json \
+            --protected-run .stage7/post-success/artifacts/stage7-rollback-resilience/stage7-rollback-resilience-protected-run.json \
+            --output "${STAGE7_POST_ROOT}/release-reconciliation-journal-snapshot.json"
+
+      - name: Build only the target-independent release N source bundle
+        if: ${{ steps.retry-source.outputs.mode == 'CAPTURE_CURRENT' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' -t common < .stage7/post-success/source-arguments.nul
+          node scripts/stage7/release-successor-cli.mjs build-source "${common[@]}" \
+            --marker "${STAGE7_POST_ROOT}/release-successor-finalization-marker.json" \
+            --finalization "${STAGE7_POST_ROOT}/release-successor-final-disable-provenance.json" \
+            --journal-snapshot "${STAGE7_POST_ROOT}/release-reconciliation-journal-snapshot.json" \
+            --output-directory "${STAGE7_POST_ROOT}/source"
+          node scripts/stage7/release-successor-cli.mjs validate-source "${STAGE7_POST_ROOT}/source"
+          if find "${STAGE7_POST_ROOT}/source" -type f -name 'previous-release-*.json' -print -quit | grep -q .; then
+            exit 1
+          fi
+
+      - name: Scan the target-independent source before publication
+        id: source-scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' -t source_files < <(find "${STAGE7_POST_ROOT}/source" -type f -print0)
+          test "${#source_files[@]}" -gt 0
+          node scripts/stage7/control.mjs scan --scope full --pre-upload "${source_files[@]}"
+
+      - name: Upload the unique immutable successor source before any deletion
+        id: source-upload
+        if: ${{ steps.retry-source.outputs.mode == 'CAPTURE_CURRENT' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-release-successor-source-r${{ steps.trigger-source.outputs.source_run_id }}-a${{ github.run_attempt }}
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7-successor-post-success/source/
+          retention-days: 90
+
+      - name: Requery and redownload the uploaded source by exact artifact ID
+        if: ${{ steps.retry-source.outputs.mode == 'CAPTURE_CURRENT' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_ARTIFACT_ID: ${{ steps.source-upload.outputs.artifact-id }}
+          POST_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_ARTIFACT_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}" > .stage7/post-success/api/source-artifact.json
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}/zip" > .stage7/post-success/source-upload.zip
+          preserved_at="$(node -e "process.stdout.write(new Date().toISOString())")"
+          node scripts/stage7/release-successor-cli.mjs preserve \
+            --source-directory "${STAGE7_POST_ROOT}/source" \
+            --artifact-response .stage7/post-success/api/source-artifact.json \
+            --artifact-archive .stage7/post-success/source-upload.zip \
+            --post-run-id "${GITHUB_RUN_ID}" \
+            --post-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --post-head-sha "${POST_HEAD_SHA}" \
+            --preserved-at "${preserved_at}" \
+            --output "${STAGE7_POST_ROOT}/release-successor-preservation-receipt.json"
+
+      - name: Scan the durable-handoff receipt before publication
+        id: preservation-scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/stage7/control.mjs scan --scope full --pre-upload \
+            "${STAGE7_POST_ROOT}/release-successor-preservation-receipt.json"
+
+      - name: Preserve the durable-handoff receipt before journal cleanup
+        if: ${{ steps.retry-source.outputs.mode == 'CAPTURE_CURRENT' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-release-successor-preservation-r${{ steps.trigger-source.outputs.source_run_id }}-a${{ github.run_attempt }}
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7-successor-post-success/release-successor-preservation-receipt.json
+          retention-days: 90
+
+      - name: Reverify caller and role immediately before any journal deletion
+        env:
+          JOURNAL_ROLE_ARN: ${{ vars.STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN }}
+          PERMISSIONS_BOUNDARY_ARN: ${{ vars.STAGE7_RELEASE_JOURNAL_CLEANUP_PERMISSIONS_BOUNDARY_ARN }}
+          AWS_REGION_EXACT: ${{ steps.identity.outputs.aws_region }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          aws --version > .stage7/post-success/cleanup-aws-version.txt 2>&1
+          aws sts get-caller-identity --output json --no-cli-pager > .stage7/post-success/cleanup-caller-identity.json
+          node scripts/stage7/release-successor-cli.mjs capture-journal-role-authority \
+            --journal-role-arn "${JOURNAL_ROLE_ARN}" \
+            --permissions-boundary-arn "${PERMISSIONS_BOUNDARY_ARN}" \
+            --aws-region "${AWS_REGION_EXACT}" \
+            --output .stage7/post-success/cleanup-live-journal-role-effective-permissions.json \
+            --get-role-output .stage7/post-success/cleanup-role-audit.json
+          test -s .stage7/post-success/cleanup-role-audit.json
+          test -s .stage7/post-success/cleanup-live-journal-role-effective-permissions.json
+
+      - name: Delete only paginated RB-E7-06, RB-E7-08 and reconciliation journal parameters
+        id: journal-cleanup
+        env:
+          JOURNAL_ROLE_ARN: ${{ vars.STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN }}
+          ROLLBACK_ROLE_ARN: ${{ vars.STAGE7_AWS_ROLLBACK_ROLE_ARN }}
+          EPHEMERAL_CLEANUP_ROLE_ARN: ${{ vars.STAGE7_AWS_CLEANUP_ROLE_ARN }}
+          PERMISSIONS_BOUNDARY_ARN: ${{ vars.STAGE7_RELEASE_JOURNAL_CLEANUP_PERMISSIONS_BOUNDARY_ARN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/stage7/release-successor-cli.mjs cleanup-journal \
+            --source-directory "${STAGE7_POST_ROOT}/source" \
+            --preservation "${STAGE7_POST_ROOT}/release-successor-preservation-receipt.json" \
+            --journal-role "${JOURNAL_ROLE_ARN}" \
+            --rollback-role "${ROLLBACK_ROLE_ARN}" \
+            --ephemeral-cleanup-role "${EPHEMERAL_CLEANUP_ROLE_ARN}" \
+            --caller-identity .stage7/post-success/cleanup-caller-identity.json \
+            --aws-version .stage7/post-success/cleanup-aws-version.txt \
+            --role-audit .stage7/post-success/cleanup-role-audit.json \
+            --aws-auth .stage7/post-success/artifacts/stage7-aws-auth/aws-auth.json \
+            --frozen-effective-permissions .stage7/post-success/artifacts/stage7-aws-auth/stage7-release-journal-role-effective-permissions.json \
+            --live-effective-permissions .stage7/post-success/cleanup-live-journal-role-effective-permissions.json \
+            --permissions-boundary "${PERMISSIONS_BOUNDARY_ARN}" \
+            --session-name "e7-release-journal-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --post-run-id "${GITHUB_RUN_ID}" \
+            --post-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --output "${STAGE7_POST_ROOT}/release-successor-journal-cleanup-receipt.json"
+
+      - name: Scan the cleanup receipt even after a partial deletion failure
+        id: cleanup-receipt-scan
+        if: ${{ always() && hashFiles('output/evidence/runtime/stage-7-successor-post-success/release-successor-journal-cleanup-receipt.json') != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/stage7/control.mjs scan --scope full --pre-upload \
+            "${STAGE7_POST_ROOT}/release-successor-journal-cleanup-receipt.json"
+
+      - name: Upload the separate post-cleanup receipt without overwrite
+        if: ${{ always() && steps.cleanup-receipt-scan.outcome == 'success' && hashFiles('output/evidence/runtime/stage-7-successor-post-success/release-successor-journal-cleanup-receipt.json') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-release-successor-cleanup-receipt-r${{ steps.trigger-source.outputs.source_run_id }}-a${{ github.run_attempt }}
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7-successor-post-success/release-successor-journal-cleanup-receipt.json
+          retention-days: 90

@@ -1,4 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import request from 'supertest';
 import { createApplication } from '../../../bootstrap';
 
@@ -25,16 +28,20 @@ describe('API contract walking skeleton', () => {
     write.mockRestore();
   });
 
-  it('serves health without exposing configuration', async () => {
+  it.each([
+    ['/api/health/live', 'alive'],
+    ['/api/health/ready', 'ok'],
+    ['/api/health', 'ok'],
+  ])('serves %s without exposing configuration', async (path, status) => {
     const response = await request(application.getHttpServer())
-      .get('/api/health')
+      .get(path)
       .set('x-correlation-id', 'correlation-health-01')
       .expect(200);
     expect(response.headers['cache-control']).toBe('no-store');
     expect(response.headers['x-correlation-id']).toMatch(/^[0-9a-f-]{36}$/);
     expect(response.headers['x-correlation-id']).not.toBe('correlation-health-01');
     expect(Object.keys(response.body).sort()).toEqual(['checkedAt', 'status']);
-    expect(response.body).toMatchObject({ status: 'ok' });
+    expect(response.body).toMatchObject({ status });
   });
 
   it('crosses controller, use case, port, adapter and presenter', async () => {
@@ -72,10 +79,23 @@ describe('API contract walking skeleton', () => {
     },
   );
 
-  it('serves only sanitized local documentation', async () => {
+  it('serves the frozen sanitized OpenAPI contract publicly', async () => {
+    const contract = readFileSync(
+      resolve(__dirname, '../../../../../..', 'output/architecture/openapi.yaml'),
+      'utf8',
+    );
     const response = await request(application.getHttpServer()).get('/api/docs').expect(200);
-    expect(response.headers['content-type']).toContain('text/html');
-    expect(response.text).toContain('packages/contracts/openapi.yaml');
-    expect(response.text).not.toMatch(/token|credential|secret/i);
+    expect(response.headers).toMatchObject({
+      'cache-control': 'public, max-age=300',
+      'content-disposition': 'inline; filename="openapi.yaml"',
+      'content-type': 'application/yaml; charset=utf-8',
+      'x-content-type-options': 'nosniff',
+    });
+    expect(createHash('sha256').update(response.text).digest('hex')).toBe(
+      createHash('sha256').update(contract).digest('hex'),
+    );
+    expect(response.text).toContain('openapi: 3.1.2');
+    expect(response.text).not.toMatch(/(?:sk|prv|pub)_(?:live|prod)_[A-Za-z0-9_-]+/);
+    expect(response.text).not.toContain('https://production.wompi.co');
   });
 });

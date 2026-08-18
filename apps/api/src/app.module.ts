@@ -23,9 +23,14 @@ import { GetProductStock } from './application/use-cases/get-product-stock';
 import { ListProducts } from './application/use-cases/list-products';
 import {
   APP_CONFIG,
-  loadAppConfig,
+  loadRuntimeAppConfig,
   type AppConfig,
 } from './infrastructure/configuration/app-config';
+import {
+  loadRuntimeSecrets,
+  RUNTIME_SECRETS,
+  type RuntimeSecrets,
+} from './infrastructure/configuration/runtime-secrets';
 import { FakeMerchantContractAdapter } from './infrastructure/payment/fake-merchant-contract.adapter';
 import { SafeLogger } from './infrastructure/logging/safe-logger';
 import { SafeLoggerObservability } from './infrastructure/observability/observability.adapter';
@@ -36,6 +41,12 @@ import {
 import { FakeReconciliationRunner } from './infrastructure/payment/fake-reconciliation-runner';
 import { SandboxMerchantContractAdapter } from './infrastructure/payment/sandbox-merchant-contract.adapter';
 import { SandboxPaymentProvider } from './infrastructure/payment/sandbox-payment-provider';
+import {
+  createSandboxTransport,
+  loadSandboxRuntimeConfiguration,
+  SANDBOX_RUNTIME_CONFIGURATION,
+  type SandboxRuntimeConfiguration,
+} from './infrastructure/payment/sandbox-runtime';
 import {
   ScriptedPaymentProvider,
   type FakePaymentScenario,
@@ -64,11 +75,31 @@ import { RequestLoggingMiddleware } from './interfaces/http/middleware/request-l
 const createPaymentProvider = (
   config: AppConfig,
   observability: ObservabilityPort,
+  secrets: RuntimeSecrets,
+  sandboxConfiguration: SandboxRuntimeConfiguration | undefined,
 ): PaymentProvider => {
+  const sandboxTransport = createSandboxTransport(config, secrets);
   const provider =
     config.paymentAdapter === 'sandbox'
-      ? // ADR-09 remains blocked: no host, private key, or transport is guessed at runtime.
-        new SandboxPaymentProvider({ enabled: false })
+      ? config.paymentsEnabled &&
+        secrets.sandbox !== undefined &&
+        sandboxTransport !== undefined &&
+        sandboxConfiguration !== undefined
+        ? (() => {
+            const { publicKey, privateKey, integritySecret } = secrets.sandbox;
+            return new SandboxPaymentProvider({
+              enabled: true,
+              publicKey,
+              privateKey,
+              integritySecret,
+              ...(config.sandboxAuthorizedUntilUtc === undefined
+                ? {}
+                : { authorizedUntilUtc: config.sandboxAuthorizedUntilUtc }),
+              transport: sandboxTransport,
+              providerAcceptances: sandboxConfiguration.providerAcceptances,
+            });
+          })()
+        : new SandboxPaymentProvider({ enabled: false })
       : config.fakePaymentScenario.startsWith('FAKE-E5-')
         ? new E5ScriptedPaymentProvider(config.fakePaymentScenario as E5PaymentScenario)
         : new ScriptedPaymentProvider(config.fakePaymentScenario as FakePaymentScenario);
@@ -80,9 +111,12 @@ const createPaymentProvider = (
   return provider;
 };
 
-const createMerchantContractAdapter = (config: AppConfig): MerchantContractPort =>
+const createMerchantContractAdapter = (
+  config: AppConfig,
+  sandboxConfiguration: SandboxRuntimeConfiguration | undefined,
+): MerchantContractPort =>
   config.paymentAdapter === 'sandbox'
-    ? new SandboxMerchantContractAdapter()
+    ? new SandboxMerchantContractAdapter(sandboxConfiguration?.contracts)
     : new FakeMerchantContractAdapter(config.publicAssetOrigin);
 export const selectReconciliationBackoffPolicy = (
   config: Pick<AppConfig, 'appEnvironment' | 'paymentAdapter'>,
@@ -104,7 +138,20 @@ export const selectReconciliationBackoffPolicy = (
     DeliveriesController,
   ],
   providers: [
-    { provide: APP_CONFIG, useFactory: (): AppConfig => loadAppConfig(process.env) },
+    {
+      provide: APP_CONFIG,
+      useFactory: (): Promise<AppConfig> => loadRuntimeAppConfig(process.env),
+    },
+    {
+      provide: RUNTIME_SECRETS,
+      inject: [APP_CONFIG],
+      useFactory: loadRuntimeSecrets,
+    },
+    {
+      provide: SANDBOX_RUNTIME_CONFIGURATION,
+      inject: [APP_CONFIG, RUNTIME_SECRETS],
+      useFactory: loadSandboxRuntimeConfiguration,
+    },
     {
       provide: DYNAMODB_DOCUMENT_CLIENT,
       inject: [APP_CONFIG],
@@ -112,9 +159,12 @@ export const selectReconciliationBackoffPolicy = (
     },
     {
       provide: RUNTIME_SECURITY,
-      inject: [APP_CONFIG],
-      useFactory: (config: AppConfig): RuntimeSecurity =>
-        new SystemRuntimeSecurity(undefined, config.runtimeSecurityRootKey),
+      inject: [APP_CONFIG, RUNTIME_SECRETS],
+      useFactory: (config: AppConfig, secrets: RuntimeSecrets): RuntimeSecurity =>
+        new SystemRuntimeSecurity(
+          undefined,
+          secrets.runtimeSecurityRootKey ?? config.runtimeSecurityRootKey,
+        ),
     },
     {
       provide: CATALOG_REPOSITORY,
@@ -144,12 +194,12 @@ export const selectReconciliationBackoffPolicy = (
     },
     {
       provide: PAYMENT_PROVIDER,
-      inject: [APP_CONFIG, OBSERVABILITY],
+      inject: [APP_CONFIG, OBSERVABILITY, RUNTIME_SECRETS, SANDBOX_RUNTIME_CONFIGURATION],
       useFactory: createPaymentProvider,
     },
     {
       provide: MERCHANT_CONTRACT_PORT,
-      inject: [APP_CONFIG],
+      inject: [APP_CONFIG, SANDBOX_RUNTIME_CONFIGURATION],
       useFactory: createMerchantContractAdapter,
     },
     {

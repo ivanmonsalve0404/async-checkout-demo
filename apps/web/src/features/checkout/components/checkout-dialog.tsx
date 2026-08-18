@@ -123,7 +123,11 @@ export const CheckoutDialog = ({
     () =>
       configurationQuery.data === undefined
         ? undefined
-        : selectTokenizationAdapter(configurationQuery.data.captureVariant),
+        : selectTokenizationAdapter(
+            configurationQuery.data.captureVariant,
+            configurationQuery.data.sandboxPublicKey,
+            configurationQuery.data.expiresAt,
+          ),
     [configurationQuery.data],
   );
 

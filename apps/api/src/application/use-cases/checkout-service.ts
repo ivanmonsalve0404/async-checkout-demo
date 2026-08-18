@@ -234,7 +234,17 @@ export class CheckoutService {
     const contracts = this.currentMerchantContracts();
     if (!contracts.ok) return contracts;
     const [terms, personalData] = contracts.value;
-    const expiresAt = new Date(this.runtime.now().getTime() + 15 * 60 * 1000);
+    const now = this.runtime.now();
+    const providerExpiry = Date.parse(configuration.value.authorizedUntilUtc ?? '');
+    const expiresAt = new Date(
+      Math.min(
+        now.getTime() + 15 * 60 * 1000,
+        Number.isFinite(providerExpiry) ? providerExpiry : Number.POSITIVE_INFINITY,
+      ),
+    );
+    if (expiresAt.getTime() <= now.getTime()) {
+      return err({ code: 'PROVIDER_AUTH_OR_CONFIG_INVALID' });
+    }
     return ok({
       captureVariant: configuration.value.captureVariant,
       sandboxPublicKey: configuration.value.publicKey,
@@ -438,6 +448,17 @@ export class CheckoutService {
 
   public async reconcileDue(): Promise<Result<number, CheckoutApplicationError>> {
     const claimedAt = this.runtime.now();
+    const oldestPending = await this.repository.findOldestPendingAcceptedAt();
+    if (!oldestPending.ok) return err({ code: 'INTERNAL_ERROR' });
+    const acceptedAt = oldestPending.value === null ? null : Date.parse(oldestPending.value);
+    if (acceptedAt !== null && !Number.isFinite(acceptedAt)) {
+      return err({ code: 'INTERNAL_ERROR' });
+    }
+    this.observability.observe(
+      'oldest_pending_age_seconds',
+      acceptedAt === null ? 0 : Math.max(0, Math.floor((claimedAt.getTime() - acceptedAt) / 1000)),
+    );
+
     const due = await this.repository.claimDue(
       claimedAt.toISOString(),
       new Date(claimedAt.getTime() + RECONCILIATION_LEASE_MS).toISOString(),

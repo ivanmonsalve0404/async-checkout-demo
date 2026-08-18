@@ -91,18 +91,18 @@ function inspectContract(source) {
   const references = collectReferences(source);
   const nonLocalReferences = references.filter((reference) => !reference.startsWith('#/'));
 
-  if (paths.length !== 14 || new Set(paths).size !== 14) fail('Expected exactly 14 unique paths');
-  if (operations.length !== 14) fail('Expected exactly 14 operations');
-  if (operationBlocks.length !== 14) fail('Could not isolate all 14 operation blocks');
-  if (operationIds.length !== 14 || new Set(operationIds).size !== 14)
+  if (paths.length !== 15 || new Set(paths).size !== 15) fail('Expected exactly 15 unique paths');
+  if (operations.length !== 15) fail('Expected exactly 15 operations');
+  if (operationBlocks.length !== 15) fail('Could not isolate all 15 operation blocks');
+  if (operationIds.length !== 15 || new Set(operationIds).size !== 15)
     fail('operationId must exist and be unique on all operations');
-  if (apiIds.length !== 14 || new Set(apiIds).size !== 14)
+  if (apiIds.length !== 15 || new Set(apiIds).size !== 15)
     fail('x-api-id must exist and be unique on all operations');
   if (
     apiIds.toSorted().join(',') !==
-    Array.from({ length: 14 }, (_, index) => `API-${String(index + 1).padStart(2, '0')}`).join(',')
+    Array.from({ length: 15 }, (_, index) => `API-${String(index + 1).padStart(2, '0')}`).join(',')
   ) {
-    fail('x-api-id must be the canonical API-01..API-14 set');
+    fail('x-api-id must be the canonical API-01..API-15 set');
   }
   if (references.length === 0) fail('The contract unexpectedly contains no references');
   if (nonLocalReferences.length > 0)

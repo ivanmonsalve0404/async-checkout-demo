@@ -1,0 +1,395 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checkout.example.invalid/schemas/stage8-state.schema.json",
+  "title": "Derived Stage 8 state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "state",
+    "blockers",
+    "acceptanceId",
+    "release",
+    "urls",
+    "gates",
+    "scorecard",
+    "quality",
+    "assessmentSha256",
+    "evidenceAuthoritySha256",
+    "evidenceInventorySha256",
+    "artifactBindingsSha256",
+    "artifactInventorySha256",
+    "handoffSha256",
+    "finalizationAuthoritySha256",
+    "catalogSha256",
+    "decision",
+    "containsSensitiveData",
+    "snapshotSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 8 },
+    "kind": { "const": "STAGE8_ACCEPTANCE_STATE" },
+    "state": {
+      "enum": ["NOT_READY", "IN_PROGRESS", "READY_FOR_FINALIZATION", "ACCEPTED", "REJECTED"]
+    },
+    "blockers": { "type": "array", "items": { "$ref": "#/$defs/blocker" } },
+    "acceptanceId": {
+      "oneOf": [
+        { "type": "string", "pattern": "^acc-[a-z0-9][a-z0-9._-]{7,95}$" },
+        { "type": "null" }
+      ]
+    },
+    "release": { "oneOf": [{ "$ref": "#/$defs/release" }, { "type": "null" }] },
+    "urls": { "oneOf": [{ "$ref": "#/$defs/urls" }, { "type": "null" }] },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["GATE-E8-01", "GATE-E8-02", "GATE-E8-03"],
+      "properties": {
+        "GATE-E8-01": { "enum": ["NOT_EVALUATED", "PASS", "FAIL"] },
+        "GATE-E8-02": { "$ref": "#/$defs/gateStatus" },
+        "GATE-E8-03": { "$ref": "#/$defs/gateStatus" }
+      }
+    },
+    "scorecard": { "oneOf": [{ "$ref": "#/$defs/scorecard" }, { "type": "null" }] },
+    "quality": { "oneOf": [{ "$ref": "#/$defs/quality" }, { "type": "null" }] },
+    "assessmentSha256": {
+      "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+    },
+    "evidenceAuthoritySha256": {
+      "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+    },
+    "evidenceInventorySha256": {
+      "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+    },
+    "artifactBindingsSha256": {
+      "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+    },
+    "artifactInventorySha256": {
+      "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+    },
+    "handoffSha256": {
+      "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+    },
+    "finalizationAuthoritySha256": {
+      "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+    },
+    "catalogSha256": { "$ref": "#/$defs/sha256" },
+    "decision": {
+      "enum": ["PENDING", "ACCEPTED", "REJECTED", "RETURN_TO_STAGE", "REVIEW_REQUIRED"]
+    },
+    "containsSensitiveData": { "const": false },
+    "snapshotSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "state": { "const": "NOT_READY" } }, "required": ["state"] },
+      "then": {
+        "properties": {
+          "blockers": {
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "allOf": [
+                { "$ref": "#/$defs/blocker" },
+                { "properties": { "id": { "const": "BLK-E8-01" } } }
+              ]
+            }
+          },
+          "acceptanceId": { "type": "null" },
+          "release": { "type": "null" },
+          "urls": { "type": "null" },
+          "gates": {
+            "properties": {
+              "GATE-E8-01": { "const": "NOT_EVALUATED" },
+              "GATE-E8-02": { "const": "NOT_EVALUATED" },
+              "GATE-E8-03": { "const": "NOT_EVALUATED" }
+            }
+          },
+          "scorecard": { "type": "null" },
+          "quality": { "type": "null" },
+          "assessmentSha256": { "type": "null" },
+          "evidenceAuthoritySha256": { "type": "null" },
+          "evidenceInventorySha256": { "type": "null" },
+          "artifactBindingsSha256": { "type": "null" },
+          "artifactInventorySha256": { "type": "null" },
+          "handoffSha256": { "type": "null" },
+          "finalizationAuthoritySha256": { "type": "null" },
+          "decision": { "const": "PENDING" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "state": { "const": "ACCEPTED" } }, "required": ["state"] },
+      "then": {
+        "properties": {
+          "blockers": { "maxItems": 0 },
+          "decision": { "const": "ACCEPTED" },
+          "gates": {
+            "properties": {
+              "GATE-E8-01": { "const": "PASS" },
+              "GATE-E8-02": { "const": "PASS" },
+              "GATE-E8-03": { "const": "PASS" }
+            }
+          },
+          "scorecard": { "$ref": "#/$defs/acceptedScorecard" },
+          "quality": { "$ref": "#/$defs/acceptedQuality" },
+          "evidenceAuthoritySha256": { "$ref": "#/$defs/sha256" },
+          "evidenceInventorySha256": { "$ref": "#/$defs/sha256" },
+          "artifactBindingsSha256": { "$ref": "#/$defs/sha256" },
+          "artifactInventorySha256": { "$ref": "#/$defs/sha256" },
+          "handoffSha256": { "$ref": "#/$defs/sha256" },
+          "finalizationAuthoritySha256": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "state": { "const": "READY_FOR_FINALIZATION" } },
+        "required": ["state"]
+      },
+      "then": {
+        "properties": {
+          "blockers": { "maxItems": 0 },
+          "decision": { "const": "REVIEW_REQUIRED" },
+          "gates": {
+            "properties": {
+              "GATE-E8-01": { "const": "PASS" },
+              "GATE-E8-02": { "const": "PASS" },
+              "GATE-E8-03": { "const": "BLOCKED_EXTERNAL" }
+            }
+          },
+          "evidenceAuthoritySha256": { "$ref": "#/$defs/sha256" },
+          "evidenceInventorySha256": { "$ref": "#/$defs/sha256" },
+          "artifactBindingsSha256": { "$ref": "#/$defs/sha256" },
+          "artifactInventorySha256": { "type": "null" },
+          "handoffSha256": { "type": "null" },
+          "finalizationAuthoritySha256": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": { "enum": ["NOT_READY", "IN_PROGRESS", "REJECTED"] }
+        },
+        "required": ["state"]
+      },
+      "then": {
+        "properties": {
+          "evidenceAuthoritySha256": { "type": "null" },
+          "evidenceInventorySha256": { "type": "null" },
+          "artifactBindingsSha256": { "type": "null" },
+          "artifactInventorySha256": { "type": "null" },
+          "handoffSha256": { "type": "null" },
+          "finalizationAuthoritySha256": { "type": "null" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "documentationCommit": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "authority"],
+          "properties": {
+            "mode": { "const": "SAME_COMMIT" },
+            "authority": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "authority"],
+          "properties": {
+            "mode": { "const": "DOCUMENTATION_ONLY_APPROVED" },
+            "authority": { "$ref": "#/$defs/documentationAuthority" }
+          }
+        }
+      ]
+    },
+    "documentationAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "fromSha",
+        "toSha",
+        "changedPaths",
+        "ownerAlias",
+        "approvedByAlias",
+        "approvedAtUtc",
+        "reason",
+        "sourceHashes",
+        "containsSensitiveData",
+        "authoritySha256",
+        "authorityRawSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 8 },
+        "kind": { "const": "STAGE8_DOCUMENTATION_COMMIT_AUTHORITY" },
+        "status": { "const": "APPROVED" },
+        "fromSha": { "$ref": "#/$defs/sha" },
+        "toSha": { "$ref": "#/$defs/sha" },
+        "changedPaths": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?:README\\.md|docs/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\\.md)$"
+          }
+        },
+        "ownerAlias": { "$ref": "#/$defs/alias" },
+        "approvedByAlias": { "$ref": "#/$defs/alias" },
+        "approvedAtUtc": { "$ref": "#/$defs/utc" },
+        "reason": { "type": "string", "minLength": 12, "maxLength": 500 },
+        "sourceHashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "commitMetadataRawSha256",
+            "changedPathsRawSha256",
+            "approvalRawSha256",
+            "updatedManifestRawSha256"
+          ],
+          "properties": {
+            "commitMetadataRawSha256": { "$ref": "#/$defs/sha256" },
+            "changedPathsRawSha256": { "$ref": "#/$defs/sha256" },
+            "approvalRawSha256": { "$ref": "#/$defs/sha256" },
+            "updatedManifestRawSha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "containsSensitiveData": { "const": false },
+        "authoritySha256": { "$ref": "#/$defs/sha256" },
+        "authorityRawSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "alias": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$"
+    },
+    "utc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{3})?Z$"
+    },
+    "httpsUrl": { "type": "string", "pattern": "^https://[^\\s]+$" },
+    "gateStatus": { "enum": ["NOT_EVALUATED", "PASS", "FAIL", "BLOCKED_EXTERNAL"] },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "reason"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["releaseId", "runtimeSha", "submissionSha", "tag", "documentationCommit"],
+      "properties": {
+        "releaseId": {
+          "type": "string",
+          "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$"
+        },
+        "runtimeSha": { "$ref": "#/$defs/sha" },
+        "submissionSha": { "$ref": "#/$defs/sha" },
+        "documentationCommit": { "$ref": "#/$defs/documentationCommit" },
+        "tag": {
+          "type": "string",
+          "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-rc\\.[1-9][0-9]*)?$"
+        }
+      }
+    },
+    "urls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["application", "api", "docs", "health", "repository"],
+      "properties": {
+        "application": { "$ref": "#/$defs/httpsUrl" },
+        "api": { "$ref": "#/$defs/httpsUrl" },
+        "docs": { "$ref": "#/$defs/httpsUrl" },
+        "health": { "$ref": "#/$defs/httpsUrl" },
+        "repository": { "$ref": "#/$defs/httpsUrl" }
+      }
+    },
+    "scorecard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseVerifiedPoints",
+        "baseTotalPoints",
+        "bonusVerifiedPoints",
+        "bonusTotalPoints",
+        "highConfidenceBaseRubrics",
+        "signed"
+      ],
+      "properties": {
+        "baseVerifiedPoints": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "baseTotalPoints": { "const": 100 },
+        "bonusVerifiedPoints": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "bonusTotalPoints": { "const": 50 },
+        "highConfidenceBaseRubrics": { "type": "integer", "minimum": 0, "maximum": 6 },
+        "signed": { "type": "boolean" }
+      }
+    },
+    "acceptedScorecard": {
+      "allOf": [
+        { "$ref": "#/$defs/scorecard" },
+        {
+          "properties": {
+            "baseVerifiedPoints": { "const": 100 },
+            "highConfidenceBaseRubrics": { "const": 6 },
+            "signed": { "const": true }
+          }
+        }
+      ]
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "openP0",
+        "openP1",
+        "openP2",
+        "acceptedP2",
+        "disqualifiers",
+        "openCriticalRisks"
+      ],
+      "properties": {
+        "openP0": { "type": "integer", "minimum": 0 },
+        "openP1": { "type": "integer", "minimum": 0 },
+        "openP2": { "type": "integer", "minimum": 0 },
+        "acceptedP2": { "type": "integer", "minimum": 0 },
+        "disqualifiers": { "type": "integer", "minimum": 0 },
+        "openCriticalRisks": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "acceptedQuality": {
+      "allOf": [
+        { "$ref": "#/$defs/quality" },
+        {
+          "properties": {
+            "openP0": { "const": 0 },
+            "openP1": { "const": 0 },
+            "disqualifiers": { "const": 0 },
+            "openCriticalRisks": { "const": 0 }
+          }
+        }
+      ]
+    }
+  }
+}

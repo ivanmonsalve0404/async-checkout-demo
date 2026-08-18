@@ -1,6 +1,7 @@
 import { HttpException, type ArgumentsHost } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
 import type { AppConfig } from '../../../infrastructure/configuration/app-config';
+import type { RuntimeSecrets } from '../../../infrastructure/configuration/runtime-secrets';
 import { SafeLogger } from '../../../infrastructure/logging/safe-logger';
 import { ProblemFilter } from '../filters/problem.filter';
 import { createProblem, ProblemException } from '../problems/problem';
@@ -33,6 +34,12 @@ const response = (): TestResponse => {
   return candidate as unknown as TestResponse;
 };
 
+const noGuardSecrets: RuntimeSecrets = {
+  prereleaseOriginToken: undefined,
+  runtimeSecurityRootKey: undefined,
+  sandbox: undefined,
+};
+
 const originRequest = (
   method: string,
   headers: Readonly<Record<string, string | undefined>> = {},
@@ -58,9 +65,12 @@ describe('HTTP security and observability middleware', () => {
       },
     ],
   ])('accepts permitted origin case %#', (method, headers) => {
-    const middleware = new OriginValidationMiddleware({
-      allowedOrigin: 'https://shop.example.invalid',
-    } as AppConfig);
+    const middleware = new OriginValidationMiddleware(
+      {
+        allowedOrigin: 'https://shop.example.invalid',
+      } as AppConfig,
+      noGuardSecrets,
+    );
     const next = jest.fn() as NextFunction;
     middleware.use(originRequest(method, headers), response(), next);
     expect(next).toHaveBeenCalledTimes(1);
@@ -72,9 +82,12 @@ describe('HTTP security and observability middleware', () => {
     ['PUT', '/api/v1/checkouts/checkout-001/delivery-details'],
     ['POST', '/api/v1/checkouts/checkout-001/transactions'],
   ])('rejects form-urlencoded on %s %s before a use case runs', (method, originalUrl) => {
-    const middleware = new OriginValidationMiddleware({
-      allowedOrigin: 'https://shop.example.invalid',
-    } as AppConfig);
+    const middleware = new OriginValidationMiddleware(
+      {
+        allowedOrigin: 'https://shop.example.invalid',
+      } as AppConfig,
+      noGuardSecrets,
+    );
     const invoke = () =>
       middleware.use(
         originRequest(
@@ -105,12 +118,59 @@ describe('HTTP security and observability middleware', () => {
     ['GET', { origin: 'https://evil.example.invalid' }],
     ['DELETE', { origin: 'https://shop.example.invalid', 'sec-fetch-site': 'cross-site' }],
   ])('rejects forbidden origin case %#', (method, headers) => {
-    const middleware = new OriginValidationMiddleware({
-      allowedOrigin: 'https://shop.example.invalid',
-    } as AppConfig);
+    const middleware = new OriginValidationMiddleware(
+      {
+        allowedOrigin: 'https://shop.example.invalid',
+      } as AppConfig,
+      noGuardSecrets,
+    );
     expect(() => middleware.use(originRequest(method, headers), response(), jest.fn())).toThrow(
       ProblemException,
     );
+  });
+
+  it.each([
+    { headers: {}, label: 'missing' },
+    { headers: { 'x-stage7-origin-verify': 'wrong-token' }, label: 'altered' },
+  ])('rejects $label prerelease origin proof before routing', ({ headers }) => {
+    const middleware = new OriginValidationMiddleware(
+      {
+        allowedOrigin: 'https://shop.example.invalid',
+        prereleaseAccessMode: 'cloudfront_signed_cookie',
+      } as AppConfig,
+      {
+        ...noGuardSecrets,
+        prereleaseOriginToken: Buffer.alloc(32, 17).toString('base64url'),
+      },
+    );
+    expect(() => middleware.use(originRequest('GET', headers), response(), jest.fn())).toThrow(
+      ProblemException,
+    );
+  });
+
+  it('accepts CloudFront origin proof only when the prerelease guard is active and exact', () => {
+    const token = Buffer.alloc(32, 17).toString('base64url');
+    const guarded = new OriginValidationMiddleware(
+      {
+        allowedOrigin: 'https://shop.example.invalid',
+        prereleaseAccessMode: 'cloudfront_signed_cookie',
+      } as AppConfig,
+      { ...noGuardSecrets, prereleaseOriginToken: token },
+    );
+    const next = jest.fn();
+    guarded.use(originRequest('GET', { 'x-stage7-origin-verify': token }), response(), next);
+    expect(next).toHaveBeenCalledTimes(1);
+
+    const fullRelease = new OriginValidationMiddleware(
+      {
+        allowedOrigin: 'https://shop.example.invalid',
+        prereleaseAccessMode: 'origin_gate',
+      } as AppConfig,
+      { ...noGuardSecrets, prereleaseOriginToken: token },
+    );
+    expect(() => fullRelease.use(originRequest('GET'), response(), next)).toThrow(ProblemException);
+    fullRelease.use(originRequest('GET', { 'x-stage7-origin-verify': token }), response(), next);
+    expect(next).toHaveBeenCalledTimes(2);
   });
 
   it('always replaces client-supplied correlation IDs with a server-generated value', () => {

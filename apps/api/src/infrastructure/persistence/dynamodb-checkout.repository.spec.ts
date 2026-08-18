@@ -180,6 +180,12 @@ const paymentItem = (
           GSI1SK: value.nextCheckAt + '#' + value.transactionId,
         }
       : {}),
+    ...(value.paymentStatus === 'PENDING'
+      ? {
+          GSI2PK: 'PAYMENT#PENDING',
+          GSI2SK: value.acceptedAt + '#' + value.transactionId,
+        }
+      : {}),
     PK: 'CHECKOUT#' + value.checkoutId,
     SK: 'PAYMENT#' + value.transactionId,
     itemType: 'PAYMENT',
@@ -462,6 +468,8 @@ describe('DynamoDbCheckoutRepository', () => {
       dispatchPhase: 'NOT_SENT',
       GSI1PK: 'RECON#DUE',
       GSI1SK: now + '#' + transactionId,
+      GSI2PK: 'PAYMENT#PENDING',
+      GSI2SK: now + '#' + transactionId,
     });
     expect(Object.keys(pendingPayment?.acceptanceEvidence ?? {})).toEqual([
       'termsVersion',
@@ -761,6 +769,41 @@ describe('DynamoDbCheckoutRepository', () => {
     });
   });
 
+  it('reads the globally oldest pending acceptance from its dedicated sparse index', async () => {
+    const { repository, send } = setup([
+      { Items: [{ acceptedAt: now, paymentStatus: 'PENDING' }] },
+      { Items: [] },
+      { Items: [{ acceptedAt: 1, paymentStatus: 'PENDING' }] },
+      new Error('synthetic query failure'),
+    ]);
+
+    await expect(repository.findOldestPendingAcceptedAt()).resolves.toEqual({
+      ok: true,
+      value: now,
+    });
+    const query = send.mock.calls[0]?.[0] as unknown as QueryCommand;
+    expect(query.input).toMatchObject({
+      IndexName: 'GSI2-PendingAge',
+      KeyConditionExpression: 'GSI2PK = :pending',
+      ExpressionAttributeValues: { ':pending': 'PAYMENT#PENDING' },
+      ScanIndexForward: true,
+      Limit: 1,
+      ConsistentRead: false,
+    });
+    await expect(repository.findOldestPendingAcceptedAt()).resolves.toEqual({
+      ok: true,
+      value: null,
+    });
+    await expect(repository.findOldestPendingAcceptedAt()).resolves.toEqual({
+      ok: false,
+      error: { code: 'REPOSITORY_UNAVAILABLE' },
+    });
+    await expect(repository.findOldestPendingAcceptedAt()).resolves.toEqual({
+      ok: false,
+      error: { code: 'REPOSITORY_UNAVAILABLE' },
+    });
+  });
+
   it('finalizes APPROVED in one cross-table transaction without stale inventory snapshots', async () => {
     const { nextCheckAt: ignoredNext, ...pendingBase } = acknowledgedApproved;
     void ignoredNext;
@@ -800,6 +843,7 @@ describe('DynamoDbCheckoutRepository', () => {
       ':expectedProviderId': 'provider_synthetic_001',
       ':expectedProviderStatus': 'APPROVED',
     });
+    expect(paymentUpdate?.UpdateExpression).toContain('GSI2PK, GSI2SK');
     const inventory = command.input.TransactItems?.[2]?.Update;
     expect(inventory?.TableName).toBe('catalog-local');
     expect(inventory?.ConditionExpression).toBe('#reserved >= :one AND #onHand >= :one');
@@ -897,6 +941,9 @@ describe('DynamoDbCheckoutRepository', () => {
     expect(transactions[1]?.input.TransactItems).toHaveLength(3);
     expect(transactions[1]?.input.TransactItems?.some((item) => item.Put !== undefined)).toBe(
       false,
+    );
+    expect(transactions[1]?.input.TransactItems?.[0]?.Update?.UpdateExpression).toContain(
+      'GSI2PK, GSI2SK',
     );
   });
 

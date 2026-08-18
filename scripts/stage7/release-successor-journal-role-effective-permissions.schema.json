@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ivanmonsalve0404/async-checkout-demo/schemas/stage7/release-successor-journal-role-effective-permissions.schema.json",
+  "title": "Stage 7 dedicated release-journal role effective permissions",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "status",
+    "repository",
+    "awsRegion",
+    "role",
+    "permissionProfile",
+    "inlinePolicies",
+    "attachedPolicies",
+    "permissionsBoundary",
+    "sourceBindings",
+    "containsSensitiveData",
+    "effectivePolicyProjectionSha256",
+    "effectivePermissionsSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 7 },
+    "kind": { "const": "STAGE7_RELEASE_JOURNAL_ROLE_EFFECTIVE_PERMISSIONS" },
+    "status": { "const": "PASS" },
+    "repository": { "const": "ivanmonsalve0404/async-checkout-demo" },
+    "awsRegion": { "type": "string", "pattern": "^[a-z]{2}(?:-gov)?-[a-z]+-[1-9][0-9]*$" },
+    "role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "arn",
+        "path",
+        "name",
+        "id",
+        "createdAtUtc",
+        "maxSessionDuration",
+        "trustPolicy",
+        "trustPolicySha256"
+      ],
+      "properties": {
+        "arn": { "$ref": "#/$defs/roleArn" },
+        "path": { "type": "string", "pattern": "^/.*/$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "id": { "type": "string", "minLength": 16 },
+        "createdAtUtc": { "type": "string", "format": "date-time" },
+        "maxSessionDuration": { "const": 3600 },
+        "trustPolicy": { "type": "object" },
+        "trustPolicySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "permissionProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "profileKey",
+        "capability",
+        "allowedActions",
+        "resourceRules",
+        "profileSha256"
+      ],
+      "properties": {
+        "contractVersion": { "const": "stage7-iam-effective-permissions/2" },
+        "profileKey": { "const": "journalCleanupRoleArn" },
+        "capability": { "const": "RELEASE_SUCCESSOR_FINALIZATION_AND_JOURNAL_CLEANUP_ONLY" },
+        "allowedActions": {
+          "type": "array",
+          "minItems": 11,
+          "maxItems": 11,
+          "uniqueItems": true,
+          "prefixItems": [
+            { "const": "iam:getpolicy" },
+            { "const": "iam:getpolicyversion" },
+            { "const": "iam:getrole" },
+            { "const": "iam:getrolepolicy" },
+            { "const": "iam:listattachedrolepolicies" },
+            { "const": "iam:listrolepolicies" },
+            { "const": "ssm:deleteparameter" },
+            { "const": "ssm:getparameter" },
+            { "const": "ssm:getparametersbypath" },
+            { "const": "ssm:putparameter" },
+            { "const": "sts:getcalleridentity" }
+          ],
+          "items": false
+        },
+        "resourceRules": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "iamRoleReads",
+            "iamPolicyReads",
+            "finalizationReadWrite",
+            "fenceReadWrite",
+            "journalReadWriteListDelete",
+            "putCondition",
+            "callerIdentity"
+          ],
+          "properties": {
+            "iamRoleReads": { "const": "EXACT_SELF_ROLE_ARN" },
+            "iamPolicyReads": { "const": "EXACT_ATTACHED_AND_BOUNDARY_POLICY_ARNS" },
+            "finalizationReadWrite": { "const": "EXACT_STAGE7_RELEASE_FINALIZATION_ROOT" },
+            "fenceReadWrite": { "const": "EXACT_STAGE7_RELEASE_FENCE_ROOT" },
+            "journalReadWriteListDelete": { "const": "EXACT_STAGE7_ROLLBACK_ROOT" },
+            "putCondition": { "const": "StringEquals:ssm:Overwrite=false" },
+            "callerIdentity": { "const": "GLOBAL_STS_GET_CALLER_IDENTITY_ONLY" }
+          }
+        },
+        "profileSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "inlinePolicies": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/inlinePolicy" }
+    },
+    "attachedPolicies": {
+      "type": "array",
+      "maxItems": 0,
+      "items": { "$ref": "#/$defs/managedPolicy" }
+    },
+    "permissionsBoundary": { "$ref": "#/$defs/managedPolicy" },
+    "sourceBindings": {
+      "type": "array",
+      "minItems": 5,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/sourceBinding" }
+    },
+    "containsSensitiveData": { "const": false },
+    "effectivePolicyProjectionSha256": { "$ref": "#/$defs/sha256" },
+    "effectivePermissionsSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "roleArn": {
+      "type": "string",
+      "pattern": "^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$"
+    },
+    "policyArn": {
+      "type": "string",
+      "pattern": "^arn:aws:iam::[0-9]{12}:policy/[A-Za-z0-9+=,.@_/-]{1,512}$"
+    },
+    "inlinePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policyName", "policyDocument", "policyDocumentSha256"],
+      "properties": {
+        "policyName": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "policyDocument": { "type": "object" },
+        "policyDocumentSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "managedPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policyArn", "defaultVersionId", "policyDocument", "policyDocumentSha256"],
+      "properties": {
+        "policyArn": { "$ref": "#/$defs/policyArn" },
+        "defaultVersionId": { "type": "string", "pattern": "^v[1-9][0-9]{0,3}$" },
+        "policyDocument": { "type": "object" },
+        "policyDocumentSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "sourceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "target", "rawSha256", "canonicalSha256", "bytes"],
+      "properties": {
+        "operation": {
+          "enum": [
+            "GET_ROLE",
+            "LIST_ROLE_POLICIES",
+            "GET_ROLE_POLICY",
+            "LIST_ATTACHED_ROLE_POLICIES",
+            "GET_POLICY",
+            "GET_POLICY_VERSION",
+            "GET_BOUNDARY_POLICY",
+            "GET_BOUNDARY_POLICY_VERSION"
+          ]
+        },
+        "target": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 2, "maximum": 4194304 }
+      }
+    }
+  }
+}

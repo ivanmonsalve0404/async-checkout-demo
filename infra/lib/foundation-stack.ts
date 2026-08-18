@@ -14,20 +14,20 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import type { Construct } from 'constructs';
 
-import type { FoundationConfig } from './config';
+import type { PreviewConfig } from './config';
 
 export interface FoundationStackProps extends StackProps {
-  readonly configuration: FoundationConfig;
+  readonly configuration: PreviewConfig;
 }
 
 const RECONCILE_INDEX = 'GSI1-Reconcile';
+const PENDING_AGE_INDEX = 'GSI2-PendingAge';
 
+/** Preview remains a deliberately non-deploying, fake-only synthesis target. */
 export class FoundationStack extends Stack {
   public constructor(scope: Construct, id: string, props: FoundationStackProps) {
     super(scope, id, props);
-
     const config = props.configuration;
-    const removalPolicy = RemovalPolicy.DESTROY;
     const resourcePrefix = config.projectName + '-' + config.environment;
 
     Tags.of(this).add('Project', config.projectName);
@@ -41,56 +41,47 @@ export class FoundationStack extends Stack {
       sortKey: { name: 'SK', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
-      pointInTimeRecoverySpecification: {
-        pointInTimeRecoveryEnabled: false,
-      },
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: false },
       deletionProtection: false,
-      removalPolicy,
+      removalPolicy: RemovalPolicy.DESTROY,
     });
     this.limitOnDemandThroughput(catalogTable, 50, 25);
-
     const checkoutTable = new dynamodb.Table(this, 'CheckoutTable', {
       partitionKey: { name: 'PK', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'SK', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
-      pointInTimeRecoverySpecification: {
-        pointInTimeRecoveryEnabled: false,
-      },
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: false },
       timeToLiveAttribute: 'purgeAt',
       deletionProtection: false,
-      removalPolicy,
+      removalPolicy: RemovalPolicy.DESTROY,
     });
     checkoutTable.addGlobalSecondaryIndex({
       indexName: RECONCILE_INDEX,
-      partitionKey: {
-        name: 'GSI1PK',
-        type: dynamodb.AttributeType.STRING,
-      },
-      sortKey: {
-        name: 'GSI1SK',
-        type: dynamodb.AttributeType.STRING,
-      },
+      partitionKey: { name: 'GSI1PK', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'GSI1SK', type: dynamodb.AttributeType.STRING },
       projectionType: dynamodb.ProjectionType.INCLUDE,
       nonKeyAttributes: ['checkoutId', 'transactionId', 'dispatchPhase', 'paymentStatus'],
     });
+    checkoutTable.addGlobalSecondaryIndex({
+      indexName: PENDING_AGE_INDEX,
+      partitionKey: { name: 'GSI2PK', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'GSI2SK', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.INCLUDE,
+      nonKeyAttributes: ['acceptedAt', 'paymentStatus'],
+    });
     this.limitOnDemandThroughput(checkoutTable, 50, 50);
 
-    const apiLogGroup = this.createLogGroup(
-      'ApiLogGroup',
-      '/' + resourcePrefix + '/lambda/api',
-      removalPolicy,
-    );
+    const apiLogGroup = this.createLogGroup('ApiLogGroup', '/' + resourcePrefix + '/lambda/api');
     const workerLogGroup = this.createLogGroup(
       'WorkerLogGroup',
       '/' + resourcePrefix + '/lambda/worker',
-      removalPolicy,
     );
-
     const apiRole = this.createLambdaRole('ApiRole', apiLogGroup);
     const workerRole = this.createLambdaRole('WorkerRole', workerLogGroup);
-
-    const checkoutIndexArn = checkoutTable.tableArn + '/index/' + RECONCILE_INDEX;
+    const indexArns = [RECONCILE_INDEX, PENDING_AGE_INDEX].map(
+      (index) => checkoutTable.tableArn + '/index/' + index,
+    );
     this.addPolicy(
       apiRole,
       'ApiCatalogReads',
@@ -101,7 +92,7 @@ export class FoundationStack extends Stack {
       apiRole,
       'ApiCheckoutReads',
       ['dynamodb:GetItem', 'dynamodb:Query'],
-      [checkoutTable.tableArn, checkoutIndexArn],
+      [checkoutTable.tableArn, ...indexArns],
     );
     this.addPolicy(
       apiRole,
@@ -114,7 +105,7 @@ export class FoundationStack extends Stack {
       workerRole,
       'WorkerCheckoutReads',
       ['dynamodb:GetItem', 'dynamodb:Query'],
-      [checkoutTable.tableArn, checkoutIndexArn],
+      [checkoutTable.tableArn, ...indexArns],
     );
     this.addPolicy(
       workerRole,
@@ -123,27 +114,24 @@ export class FoundationStack extends Stack {
       [catalogTable.tableArn, checkoutTable.tableArn],
     );
 
-    const placeholderCode = lambda.Code.fromAsset(
-      path.join(__dirname, '..', 'assets', 'synth-placeholder'),
-    );
-    const safeEnvironment = {
-      APP_ENV: config.environment,
+    const code = lambda.Code.fromAsset(path.join(__dirname, '..', 'assets', 'synth-placeholder'));
+    const environment = {
+      APP_ENV: 'preview',
       AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1',
       CATALOG_TABLE_NAME: catalogTable.tableName,
       CHECKOUT_TABLE_NAME: checkoutTable.tableName,
       FOUNDATION_SYNTH_ONLY: 'true',
       LOG_LEVEL: 'info',
       MAX_BODY_BYTES: '16384',
-      PAYMENT_ADAPTER: config.paymentAdapter,
-      PAYMENTS_ENABLED: String(config.paymentsEnabled),
-      TOKENIZATION_MODE: config.tokenizationMode,
+      PAYMENT_ADAPTER: 'fake',
+      PAYMENTS_ENABLED: 'false',
+      TOKENIZATION_MODE: 'disabled',
     };
-
     const apiFunction = new lambda.Function(this, 'ApiFunction', {
       architecture: lambda.Architecture.ARM_64,
-      code: placeholderCode,
-      description: 'Fake-only stage 4 API synthesis placeholder',
-      environment: safeEnvironment,
+      code,
+      description: 'Fake-only preview synthesis placeholder',
+      environment,
       handler: 'index.apiHandler',
       logGroup: apiLogGroup,
       loggingFormat: lambda.LoggingFormat.JSON,
@@ -153,16 +141,11 @@ export class FoundationStack extends Stack {
       runtime: lambda.Runtime.NODEJS_24_X,
       timeout: Duration.seconds(10),
     });
-
     const workerFunction = new lambda.Function(this, 'WorkerFunction', {
       architecture: lambda.Architecture.ARM_64,
-      code: placeholderCode,
-      description: 'Fake-only stage 4 reconciliation synthesis placeholder',
-      environment: {
-        ...safeEnvironment,
-        RECONCILE_BATCH_SIZE: '10',
-        RECONCILE_LEASE_SECONDS: '45',
-      },
+      code,
+      description: 'Fake-only preview reconciliation placeholder',
+      environment: { ...environment, RECONCILE_BATCH_SIZE: '10', RECONCILE_LEASE_SECONDS: '45' },
       handler: 'index.workerHandler',
       logGroup: workerLogGroup,
       loggingFormat: lambda.LoggingFormat.JSON,
@@ -170,13 +153,12 @@ export class FoundationStack extends Stack {
       reservedConcurrentExecutions: 1,
       role: workerRole,
       runtime: lambda.Runtime.NODEJS_24_X,
-      timeout: Duration.seconds(50),
+      timeout: Duration.seconds(30),
     });
     const workerAlias = new lambda.Alias(this, 'WorkerAlias', {
-      aliasName: config.environment,
+      aliasName: 'preview',
       version: workerFunction.currentVersion,
     });
-
     const httpApi = new apigwv2.HttpApi(this, 'HttpApi', {
       apiName: resourcePrefix + '-api',
       createDefaultStage: true,
@@ -187,13 +169,9 @@ export class FoundationStack extends Stack {
       methods: [apigwv2.HttpMethod.ANY],
       path: '/{proxy+}',
     });
-
-    const defaultStage = httpApi.defaultStage;
-    if (!defaultStage) {
-      throw new Error('HTTP API default stage must exist');
-    }
-    const cfnStage = defaultStage.node.defaultChild as apigwv2.CfnStage;
-    cfnStage.defaultRouteSettings = {
+    const stage = httpApi.defaultStage;
+    if (stage === undefined) throw new Error('HTTP API default stage must exist');
+    (stage.node.defaultChild as apigwv2.CfnStage).defaultRouteSettings = {
       detailedMetricsEnabled: false,
       throttlingBurstLimit: 10,
       throttlingRateLimit: 5,
@@ -201,7 +179,7 @@ export class FoundationStack extends Stack {
 
     const schedulerRole = new iam.Role(this, 'SchedulerRole', {
       assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com'),
-      description: 'Invokes only the fake-only reconciliation worker alias',
+      description: 'Invokes only the fake preview worker alias',
     });
     this.addPolicy(
       schedulerRole,
@@ -209,88 +187,40 @@ export class FoundationStack extends Stack {
       ['lambda:InvokeFunction'],
       [workerAlias.functionArn],
     );
-
     new scheduler.CfnSchedule(this, 'ReconcileSchedule', {
-      description: 'Stage 4 fake reconciliation schedule; disabled until an authorized deploy',
+      description: 'Preview schedule remains disabled and must not be deployed',
       flexibleTimeWindow: { mode: 'OFF' },
       name: resourcePrefix + '-reconcile',
       scheduleExpression: 'rate(1 minute)',
       state: 'DISABLED',
       target: {
         arn: workerAlias.functionArn,
-        input: JSON.stringify({
-          action: 'reconcile',
-          mode: 'fake',
-        }),
-        retryPolicy: {
-          maximumEventAgeInSeconds: 300,
-          maximumRetryAttempts: 2,
-        },
+        input: JSON.stringify({ action: 'reconcile', mode: 'fake' }),
+        retryPolicy: { maximumEventAgeInSeconds: 300, maximumRetryAttempts: 2 },
         roleArn: schedulerRole.roleArn,
       },
     });
 
-    const webBucket = new s3.Bucket(this, 'WebBucket', {
+    const bucket = new s3.Bucket(this, 'WebBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
       encryption: s3.BucketEncryption.S3_MANAGED,
       objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
-      removalPolicy,
+      removalPolicy: RemovalPolicy.DESTROY,
       versioned: true,
     });
-
-    const securityHeadersBehavior = {
-      contentSecurityPolicy: {
-        contentSecurityPolicy:
-          "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; form-action 'self'",
-        override: true,
-      },
-      contentTypeOptions: { override: true },
-      frameOptions: {
-        frameOption: cloudfront.HeadersFrameOption.DENY,
-        override: true,
-      },
-      referrerPolicy: {
-        referrerPolicy: cloudfront.HeadersReferrerPolicy.SAME_ORIGIN,
-        override: true,
-      },
-      strictTransportSecurity: {
-        accessControlMaxAge: Duration.days(365),
-        includeSubdomains: true,
-        override: true,
-        preload: true,
-      },
-      xssProtection: {
-        modeBlock: true,
-        override: true,
-        protection: true,
-      },
-    };
-    const securityHeaders = new cloudfront.ResponseHeadersPolicy(this, 'SecurityHeaders', {
-      securityHeadersBehavior,
-    });
-    const documentHeaders = new cloudfront.ResponseHeadersPolicy(this, 'DocumentHeaders', {
-      customHeadersBehavior: {
-        customHeaders: [
-          {
-            header: 'Cache-Control',
-            override: true,
-            value: 'no-store',
-          },
-        ],
-      },
-      securityHeadersBehavior,
-    });
-
+    const security = this.createHeadersPolicy('SecurityHeaders');
+    const documents = this.createHeadersPolicy('DocumentHeaders', 'no-store');
+    const apiHeaders = this.createHeadersPolicy('ApiHeaders');
+    const webOrigin = origins.S3BucketOrigin.withOriginAccessControl(bucket);
     const apiDomain = httpApi.httpApiId + '.execute-api.' + this.region + '.' + Aws.URL_SUFFIX;
-    const webOrigin = origins.S3BucketOrigin.withOriginAccessControl(webBucket);
     const distribution = new cloudfront.Distribution(this, 'WebDistribution', {
       comment: resourcePrefix + ' fake-only SPA',
       defaultBehavior: {
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
         compress: true,
         origin: webOrigin,
-        responseHeadersPolicy: documentHeaders,
+        responseHeadersPolicy: documents,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       },
       defaultRootObject: 'index.html',
@@ -302,7 +232,7 @@ export class FoundationStack extends Stack {
           cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
           compress: true,
           origin: webOrigin,
-          responseHeadersPolicy: securityHeaders,
+          responseHeadersPolicy: security,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         },
         'api/*': {
@@ -314,27 +244,60 @@ export class FoundationStack extends Stack {
             protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
           }),
           originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-          responseHeadersPolicy: documentHeaders,
+          responseHeadersPolicy: apiHeaders,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         },
       },
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
     });
-
     new CfnOutput(this, 'ApplicationUrl', {
       description: 'Symbolic HTTPS entry point after an authorized deployment',
       value: 'https://' + distribution.distributionDomainName,
     });
   }
 
-  private createLogGroup(
-    id: string,
-    logGroupName: string,
-    removalPolicy: RemovalPolicy,
-  ): logs.LogGroup {
+  private createHeadersPolicy(id: string, cacheControl?: string): cloudfront.ResponseHeadersPolicy {
+    const customHeaders = [
+      {
+        header: 'Permissions-Policy',
+        override: true,
+        value: 'camera=(), geolocation=(), microphone=(), payment=()',
+      },
+    ];
+    if (cacheControl !== undefined) {
+      customHeaders.push({ header: 'Cache-Control', override: true, value: cacheControl });
+    }
+    return new cloudfront.ResponseHeadersPolicy(this, id, {
+      customHeadersBehavior: { customHeaders },
+      securityHeadersBehavior: {
+        contentSecurityPolicy: {
+          contentSecurityPolicy:
+            "default-src 'self'; connect-src 'self'; base-uri 'self'; frame-ancestors 'none'; " +
+            "object-src 'none'; form-action 'self'; img-src 'self' data:; font-src 'self'; " +
+            "script-src 'self'; style-src 'self'",
+          override: true,
+        },
+        contentTypeOptions: { override: true },
+        frameOptions: { frameOption: cloudfront.HeadersFrameOption.DENY, override: true },
+        referrerPolicy: {
+          referrerPolicy: cloudfront.HeadersReferrerPolicy.SAME_ORIGIN,
+          override: true,
+        },
+        strictTransportSecurity: {
+          accessControlMaxAge: Duration.days(365),
+          includeSubdomains: false,
+          override: true,
+          preload: false,
+        },
+        xssProtection: { modeBlock: true, override: true, protection: true },
+      },
+    });
+  }
+
+  private createLogGroup(id: string, name: string): logs.LogGroup {
     return new logs.LogGroup(this, id, {
-      logGroupName,
-      removalPolicy,
+      logGroupName: name,
+      removalPolicy: RemovalPolicy.DESTROY,
       retention: logs.RetentionDays.ONE_WEEK,
     });
   }
@@ -354,12 +317,7 @@ export class FoundationStack extends Stack {
 
   private addPolicy(role: iam.Role, sid: string, actions: string[], resources: string[]): void {
     role.addToPolicy(
-      new iam.PolicyStatement({
-        actions,
-        effect: iam.Effect.ALLOW,
-        resources,
-        sid,
-      }),
+      new iam.PolicyStatement({ actions, effect: iam.Effect.ALLOW, resources, sid }),
     );
   }
 

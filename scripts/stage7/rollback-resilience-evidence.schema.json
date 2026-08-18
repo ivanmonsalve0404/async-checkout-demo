@@ -1,0 +1,950 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checkout.example.invalid/schemas/stage7/rollback-resilience-evidence.schema.json",
+  "title": "Stage 7 rollback resilience evidence",
+  "oneOf": [
+    { "$ref": "#/$defs/rb06" },
+    { "$ref": "#/$defs/rb08" },
+    { "$ref": "#/$defs/extension" },
+    { "$ref": "#/$defs/protectedRun" }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sha40": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "utc": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "candidateSha",
+        "releaseId",
+        "configSha256",
+        "freezeManifestSha256",
+        "previousReleaseManifestSha256",
+        "candidateRecordSha256",
+        "approvalSha256",
+        "awsAuthEvidenceSha256",
+        "iamEffectivePermissionsBindingSha256",
+        "approvedPlanSha256",
+        "deploymentEvidenceSha256",
+        "observabilityEvidenceSha256",
+        "activationEvidenceSha256",
+        "externalAuthorizationEvidenceSha256",
+        "authorizationBudgetSha256",
+        "journalCleanupRoleSha256",
+        "reconciliationRecoveryRoleAuthoritySha256",
+        "baseRehearsalSha256",
+        "executionSha256",
+        "containsSensitiveData",
+        "bindingSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "ROLLBACK_RESILIENCE_BINDING" },
+        "candidateSha": { "$ref": "#/$defs/sha40" },
+        "releaseId": {
+          "type": "string",
+          "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$"
+        },
+        "configSha256": { "$ref": "#/$defs/sha256" },
+        "freezeManifestSha256": { "$ref": "#/$defs/sha256" },
+        "previousReleaseManifestSha256": { "$ref": "#/$defs/sha256" },
+        "candidateRecordSha256": { "$ref": "#/$defs/sha256" },
+        "approvalSha256": { "$ref": "#/$defs/sha256" },
+        "awsAuthEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "iamEffectivePermissionsBindingSha256": { "$ref": "#/$defs/sha256" },
+        "approvedPlanSha256": { "$ref": "#/$defs/sha256" },
+        "deploymentEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "observabilityEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "activationEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "externalAuthorizationEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "authorizationBudgetSha256": { "$ref": "#/$defs/sha256" },
+        "journalCleanupRoleSha256": { "$ref": "#/$defs/sha256" },
+        "reconciliationRecoveryRoleAuthoritySha256": { "$ref": "#/$defs/sha256" },
+        "baseRehearsalSha256": { "$ref": "#/$defs/sha256" },
+        "executionSha256": { "$ref": "#/$defs/sha256" },
+        "containsSensitiveData": { "const": false },
+        "bindingSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "transcriptEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "scenarioId",
+        "service",
+        "operation",
+        "inputSha256",
+        "requestIdSha256",
+        "observedAtUtc",
+        "responseSha256"
+      ],
+      "properties": {
+        "sequence": { "type": "integer", "minimum": 1 },
+        "scenarioId": { "enum": ["RB-E7-06", "RB-E7-08"] },
+        "service": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "operation": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "inputSha256": { "$ref": "#/$defs/sha256" },
+        "requestIdSha256": { "$ref": "#/$defs/sha256" },
+        "observedAtUtc": { "$ref": "#/$defs/utc" },
+        "responseSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "pending": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "trackedBefore",
+        "stillPending",
+        "reconciled",
+        "orphaned",
+        "duplicateEffects",
+        "lostFacts",
+        "snapshotSha256",
+        "baselineEvidenceSha256",
+        "correlationEvidenceSha256",
+        "dataFactsSha256",
+        "dataRollbackPerformed"
+      ],
+      "properties": {
+        "status": { "const": "PASS" },
+        "trackedBefore": { "type": "integer", "minimum": 1 },
+        "stillPending": { "type": "integer", "minimum": 1 },
+        "reconciled": { "const": 0 },
+        "orphaned": { "const": 0 },
+        "duplicateEffects": { "const": 0 },
+        "lostFacts": { "const": 0 },
+        "snapshotSha256": { "$ref": "#/$defs/sha256" },
+        "baselineEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "correlationEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "dataFactsSha256": { "$ref": "#/$defs/sha256" },
+        "dataRollbackPerformed": { "const": false }
+      }
+    },
+    "originProtection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "candidateReleaseId",
+        "previousReleaseId",
+        "headerNameSha256",
+        "candidateSecretReferenceSha256",
+        "previousSecretReferenceSha256",
+        "candidateSecretVersionIdSha256",
+        "previousSecretVersionIdSha256",
+        "candidateContractSha256",
+        "previousContractSha256",
+        "candidateDirectApiStatus",
+        "previousDirectApiStatus",
+        "candidateViaCloudFrontStatus",
+        "previousViaCloudFrontStatus",
+        "externalRequests",
+        "authorizationUsageId",
+        "evidenceSha256"
+      ],
+      "properties": {
+        "status": { "const": "PASS" },
+        "candidateReleaseId": { "type": "string" },
+        "previousReleaseId": { "type": "string" },
+        "headerNameSha256": { "$ref": "#/$defs/sha256" },
+        "candidateSecretReferenceSha256": { "$ref": "#/$defs/sha256" },
+        "previousSecretReferenceSha256": { "$ref": "#/$defs/sha256" },
+        "candidateSecretVersionIdSha256": { "$ref": "#/$defs/sha256" },
+        "previousSecretVersionIdSha256": { "$ref": "#/$defs/sha256" },
+        "candidateContractSha256": { "$ref": "#/$defs/sha256" },
+        "previousContractSha256": { "$ref": "#/$defs/sha256" },
+        "candidateDirectApiStatus": { "const": 403 },
+        "previousDirectApiStatus": { "const": 403 },
+        "candidateViaCloudFrontStatus": { "const": 200 },
+        "previousViaCloudFrontStatus": { "const": 200 },
+        "externalRequests": { "const": 1 },
+        "authorizationUsageId": { "const": "ROLLBACK_RESILIENCE" },
+        "evidenceSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "smoke": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "releaseId",
+        "total",
+        "passed",
+        "failed",
+        "dataMutations",
+        "externalRequests",
+        "authorizationUsageId",
+        "evidenceSha256"
+      ],
+      "properties": {
+        "status": { "const": "PASS" },
+        "releaseId": { "type": "string" },
+        "total": { "const": 3 },
+        "passed": { "const": 3 },
+        "failed": { "const": 0 },
+        "dataMutations": { "const": 0 },
+        "externalRequests": { "const": 3 },
+        "authorizationUsageId": { "const": "ROLLBACK_RESILIENCE" },
+        "evidenceSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "authorizationUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "usageId",
+        "bundleSha256",
+        "candidateSha",
+        "releaseId",
+        "configSha256",
+        "ownedOriginSha256",
+        "sandboxHostSha256",
+        "requestCounts"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "usageId": { "const": "ROLLBACK_RESILIENCE" },
+        "bundleSha256": { "$ref": "#/$defs/sha256" },
+        "candidateSha": { "$ref": "#/$defs/sha40" },
+        "releaseId": {
+          "type": "string",
+          "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$"
+        },
+        "configSha256": { "$ref": "#/$defs/sha256" },
+        "ownedOriginSha256": { "$ref": "#/$defs/sha256" },
+        "sandboxHostSha256": { "$ref": "#/$defs/sha256" },
+        "requestCounts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["AUTH-E7-EXT-01", "AUTH-E7-EXT-02", "AUTH-E7-EXT-03"],
+          "properties": {
+            "AUTH-E7-EXT-01": { "const": 11 },
+            "AUTH-E7-EXT-02": { "const": 0 },
+            "AUTH-E7-EXT-03": { "const": 0 }
+          }
+        }
+      }
+    },
+    "alarmObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "stateUpdatedAtUtc",
+        "stateReasonSha256",
+        "stateReasonDataSha256",
+        "responseSha256"
+      ],
+      "properties": {
+        "state": { "enum": ["OK", "ALARM"] },
+        "stateUpdatedAtUtc": { "$ref": "#/$defs/utc" },
+        "stateReasonSha256": { "$ref": "#/$defs/sha256" },
+        "stateReasonDataSha256": { "$ref": "#/$defs/sha256" },
+        "responseSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "stimulus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "namespace",
+        "metricName",
+        "dimensionsSha256",
+        "timestampUtc",
+        "value",
+        "unit",
+        "emitted"
+      ],
+      "properties": {
+        "namespace": { "const": "Checkout/Stage7Rehearsal" },
+        "metricName": { "const": "RollbackRehearsalFailure" },
+        "dimensionsSha256": { "$ref": "#/$defs/sha256" },
+        "timestampUtc": { "$ref": "#/$defs/utc" },
+        "value": { "enum": [0, 1] },
+        "unit": { "const": "Count" },
+        "emitted": { "const": true }
+      }
+    },
+    "aliasTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "functionName",
+        "aliasName",
+        "fromVersion",
+        "toVersion",
+        "finalRevisionIdSha256",
+        "changed"
+      ],
+      "properties": {
+        "functionName": { "type": "string", "minLength": 1 },
+        "aliasName": { "type": "string", "minLength": 1 },
+        "fromVersion": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+        "toVersion": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+        "finalRevisionIdSha256": { "$ref": "#/$defs/sha256" },
+        "changed": { "const": true }
+      }
+    },
+    "webTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "sourceVersionId",
+        "activeVersionId",
+        "contentSha256",
+        "bytes",
+        "changed"
+      ],
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "sourceVersionId": { "type": "string", "minLength": 3 },
+        "activeVersionId": { "type": "string", "minLength": 3 },
+        "contentSha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 1 },
+        "changed": { "const": true }
+      }
+    },
+    "invalidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["distributionId", "idSha256", "callerReferenceSha256", "paths", "status"],
+      "properties": {
+        "distributionId": { "type": "string", "minLength": 8 },
+        "idSha256": { "$ref": "#/$defs/sha256" },
+        "callerReferenceSha256": { "$ref": "#/$defs/sha256" },
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^/" }
+        },
+        "status": { "const": "Completed" }
+      }
+    },
+    "rb06": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "scenarioId",
+        "gateEffect",
+        "executionMode",
+        "binding",
+        "scenarioInputSha256",
+        "startedAtUtc",
+        "completedAtUtc",
+        "stack",
+        "failure",
+        "recovery",
+        "pendingIntegrity",
+        "originProtection",
+        "smoke",
+        "dataPolicy",
+        "dataRollbackPerformed",
+        "stacksDeleted",
+        "mutationCount",
+        "transcript",
+        "containsSensitiveData",
+        "checkpointSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "RB_E7_06_CLOUDFORMATION_FAILURE_RECOVERY" },
+        "status": { "enum": ["BLOCKED_REAL_AWS_REQUIRED", "AWS_VERIFIED"] },
+        "scenarioId": { "const": "RB-E7-06" },
+        "gateEffect": { "enum": ["KEEP_GATE_BLOCKED", "ELIGIBLE_FOR_REHEARSAL_ADAPTER"] },
+        "executionMode": { "enum": ["LOCAL_SIMULATION", "AWS_REAL"] },
+        "binding": { "$ref": "#/$defs/binding" },
+        "scenarioInputSha256": { "$ref": "#/$defs/sha256" },
+        "startedAtUtc": { "$ref": "#/$defs/utc" },
+        "completedAtUtc": { "$ref": "#/$defs/utc" },
+        "stack": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "stackName",
+            "stackIdSha256",
+            "changeSetIdSha256",
+            "liveTemplateSha256",
+            "failureTemplateSha256",
+            "initialStatus",
+            "failureStatus",
+            "finalStatus"
+          ],
+          "properties": {
+            "stackName": { "type": "string" },
+            "stackIdSha256": { "$ref": "#/$defs/sha256" },
+            "changeSetIdSha256": { "$ref": "#/$defs/sha256" },
+            "liveTemplateSha256": { "$ref": "#/$defs/sha256" },
+            "failureTemplateSha256": { "$ref": "#/$defs/sha256" },
+            "initialStatus": { "const": "UPDATE_COMPLETE" },
+            "failureStatus": { "const": "UPDATE_ROLLBACK_IN_PROGRESS" },
+            "finalStatus": { "const": "UPDATE_ROLLBACK_COMPLETE" }
+          }
+        },
+        "failure": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mutationAttempted",
+            "failureObserved",
+            "failureLogicalResourceId",
+            "failureResourceType",
+            "failureEventSha256",
+            "clientRequestTokenSha256"
+          ],
+          "properties": {
+            "mutationAttempted": { "const": true },
+            "failureObserved": { "const": true },
+            "failureLogicalResourceId": { "const": "Stage7RollbackFailureCanary" },
+            "failureResourceType": { "const": "AWS::CloudFormation::WaitCondition" },
+            "failureEventSha256": { "$ref": "#/$defs/sha256" },
+            "clientRequestTokenSha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "recovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mechanism",
+            "continueUpdateRollbackInvoked",
+            "rollbackEventChainSha256",
+            "resumeSafe",
+            "resumptions",
+            "pollCount",
+            "retryDecision"
+          ],
+          "properties": {
+            "mechanism": { "const": "CLOUDFORMATION_AUTOMATIC_ROLLBACK" },
+            "continueUpdateRollbackInvoked": { "const": false },
+            "rollbackEventChainSha256": { "$ref": "#/$defs/sha256" },
+            "resumeSafe": { "const": true },
+            "resumptions": { "type": "integer", "minimum": 0 },
+            "pollCount": { "type": "integer", "minimum": 1 },
+            "retryDecision": { "const": "NOOP_AFTER_VERIFIED_RECOVERY" }
+          }
+        },
+        "pendingIntegrity": { "$ref": "#/$defs/pending" },
+        "originProtection": { "$ref": "#/$defs/originProtection" },
+        "smoke": { "$ref": "#/$defs/smoke" },
+        "dataPolicy": { "const": "NO_ROLLBACK_FORWARD_ONLY" },
+        "dataRollbackPerformed": { "const": false },
+        "stacksDeleted": { "const": 0 },
+        "mutationCount": { "const": 2 },
+        "transcript": {
+          "type": "array",
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/transcriptEntry" }
+        },
+        "containsSensitiveData": { "const": false },
+        "checkpointSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "rb08": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "scenarioId",
+        "gateEffect",
+        "executionMode",
+        "binding",
+        "scenarioInputSha256",
+        "startedAtUtc",
+        "activatedAtUtc",
+        "completedAtUtc",
+        "originProtection",
+        "alarm",
+        "decision",
+        "rollback",
+        "repromotion",
+        "pendingIntegrity",
+        "smoke",
+        "dataPolicy",
+        "dataRollbackPerformed",
+        "stacksDeleted",
+        "mutationCount",
+        "resumptions",
+        "transcript",
+        "containsSensitiveData",
+        "checkpointSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "RB_E7_08_ALARM_NO_GO_RECOVERY" },
+        "status": { "enum": ["BLOCKED_REAL_AWS_REQUIRED", "AWS_VERIFIED"] },
+        "scenarioId": { "const": "RB-E7-08" },
+        "gateEffect": { "enum": ["KEEP_GATE_BLOCKED", "ELIGIBLE_FOR_REHEARSAL_ADAPTER"] },
+        "executionMode": { "enum": ["LOCAL_SIMULATION", "AWS_REAL"] },
+        "binding": { "$ref": "#/$defs/binding" },
+        "scenarioInputSha256": { "$ref": "#/$defs/sha256" },
+        "startedAtUtc": { "$ref": "#/$defs/utc" },
+        "activatedAtUtc": { "$ref": "#/$defs/utc" },
+        "completedAtUtc": { "$ref": "#/$defs/utc" },
+        "originProtection": { "$ref": "#/$defs/originProtection" },
+        "alarm": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "observabilityStackName",
+            "observabilityTemplateSha256",
+            "alarmArnSha256",
+            "alarmNameSha256",
+            "baseline",
+            "breached",
+            "recovered",
+            "transition",
+            "stimulus",
+            "recoveryStimulus",
+            "alarmPolls",
+            "recoveryPolls"
+          ],
+          "properties": {
+            "observabilityStackName": { "type": "string" },
+            "observabilityTemplateSha256": { "$ref": "#/$defs/sha256" },
+            "alarmArnSha256": { "$ref": "#/$defs/sha256" },
+            "alarmNameSha256": { "$ref": "#/$defs/sha256" },
+            "baseline": { "$ref": "#/$defs/alarmObservation" },
+            "breached": { "$ref": "#/$defs/alarmObservation" },
+            "recovered": { "$ref": "#/$defs/alarmObservation" },
+            "transition": { "const": "OK_TO_ALARM_TO_OK" },
+            "stimulus": { "$ref": "#/$defs/stimulus" },
+            "recoveryStimulus": { "$ref": "#/$defs/stimulus" },
+            "alarmPolls": { "type": "integer", "minimum": 1 },
+            "recoveryPolls": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "decision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["value", "derivedFrom", "manualOverrideAccepted", "decisionAtUtc"],
+          "properties": {
+            "value": { "const": "NO_GO_ROLLBACK" },
+            "derivedFrom": { "const": "REAL_METRIC_ALARM_STATE" },
+            "manualOverrideAccepted": { "const": false },
+            "decisionAtUtc": { "$ref": "#/$defs/utc" }
+          }
+        },
+        "rollback": { "$ref": "#/$defs/releaseTransition" },
+        "repromotion": { "$ref": "#/$defs/repromotionTransition" },
+        "pendingIntegrity": { "$ref": "#/$defs/pending" },
+        "smoke": { "$ref": "#/$defs/smoke" },
+        "dataPolicy": { "const": "NO_ROLLBACK_FORWARD_ONLY" },
+        "dataRollbackPerformed": { "const": false },
+        "stacksDeleted": { "const": 0 },
+        "mutationCount": { "const": 12 },
+        "resumptions": { "type": "integer", "minimum": 0 },
+        "transcript": {
+          "type": "array",
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/transcriptEntry" }
+        },
+        "containsSensitiveData": { "const": false },
+        "checkpointSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "releaseTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fromReleaseId",
+        "toReleaseId",
+        "api",
+        "worker",
+        "web",
+        "invalidation",
+        "versionedAssetsOnly",
+        "stacksDeleted"
+      ],
+      "properties": {
+        "fromReleaseId": { "type": "string" },
+        "toReleaseId": { "type": "string" },
+        "api": { "$ref": "#/$defs/aliasTransition" },
+        "worker": { "$ref": "#/$defs/aliasTransition" },
+        "web": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/webTransition" }
+        },
+        "invalidation": { "$ref": "#/$defs/invalidation" },
+        "versionedAssetsOnly": { "const": true },
+        "stacksDeleted": { "const": 0 }
+      }
+    },
+    "repromotionTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fromReleaseId",
+        "toReleaseId",
+        "api",
+        "worker",
+        "web",
+        "invalidation",
+        "smoke",
+        "pendingIntegrity",
+        "finalReleaseId",
+        "versionedAssetsOnly"
+      ],
+      "properties": {
+        "fromReleaseId": { "type": "string" },
+        "toReleaseId": { "type": "string" },
+        "api": { "$ref": "#/$defs/aliasTransition" },
+        "worker": { "$ref": "#/$defs/aliasTransition" },
+        "web": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/webTransition" }
+        },
+        "invalidation": { "$ref": "#/$defs/invalidation" },
+        "smoke": { "$ref": "#/$defs/smoke" },
+        "pendingIntegrity": { "$ref": "#/$defs/pending" },
+        "finalReleaseId": { "type": "string" },
+        "versionedAssetsOnly": { "const": true }
+      }
+    },
+    "extension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "binding",
+        "baseRehearsalSha256",
+        "baseRehearsalStatus",
+        "supplementalScenarioIds",
+        "combinedScenarioIds",
+        "remainingScenarioIds",
+        "rb06CheckpointSha256",
+        "rb08CheckpointSha256",
+        "originProtectionContractSha256",
+        "authorizationUsage",
+        "adaptation",
+        "dataPolicy",
+        "dataRollbackPerformed",
+        "stacksDeleted",
+        "gateE703",
+        "containsSensitiveData",
+        "extensionSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "VERSIONED_ROLLBACK_REHEARSAL_SCENARIO_EXTENSION" },
+        "status": {
+          "enum": ["BLOCKED_REAL_AWS_REQUIRED", "AWS_VERIFIED_PENDING_CORE_ADAPTER"]
+        },
+        "binding": { "$ref": "#/$defs/binding" },
+        "baseRehearsalSha256": { "$ref": "#/$defs/sha256" },
+        "baseRehearsalStatus": { "const": "BLOCKED_REQUIRED_SCENARIOS" },
+        "supplementalScenarioIds": {
+          "prefixItems": [{ "const": "RB-E7-06" }, { "const": "RB-E7-08" }],
+          "items": false
+        },
+        "combinedScenarioIds": {
+          "type": "array",
+          "minItems": 8,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^RB-E7-0[1-8]$" }
+        },
+        "remainingScenarioIds": {
+          "type": "array",
+          "maxItems": 2,
+          "items": { "enum": ["RB-E7-06", "RB-E7-08"] }
+        },
+        "rb06CheckpointSha256": { "$ref": "#/$defs/sha256" },
+        "rb08CheckpointSha256": { "$ref": "#/$defs/sha256" },
+        "originProtectionContractSha256": { "$ref": "#/$defs/sha256" },
+        "authorizationUsage": { "$ref": "#/$defs/authorizationUsage" },
+        "adaptation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "targetKind",
+            "requiredBaseStatus",
+            "resultingStatus",
+            "resultingPendingScenarioIds",
+            "preservesBaseCheckpoints"
+          ],
+          "properties": {
+            "targetKind": { "const": "VERSIONED_ROLLBACK_REHEARSAL" },
+            "requiredBaseStatus": { "const": "BLOCKED_REQUIRED_SCENARIOS" },
+            "resultingStatus": { "enum": ["BLOCKED_REQUIRED_SCENARIOS", "PASS"] },
+            "resultingPendingScenarioIds": {
+              "type": "array",
+              "maxItems": 2,
+              "items": { "enum": ["RB-E7-06", "RB-E7-08"] }
+            },
+            "preservesBaseCheckpoints": { "const": true }
+          }
+        },
+        "dataPolicy": { "const": "NO_ROLLBACK_FORWARD_ONLY" },
+        "dataRollbackPerformed": { "const": false },
+        "stacksDeleted": { "const": 0 },
+        "gateE703": {
+          "enum": ["BLOCKED_REAL_AWS_REQUIRED", "BLOCKED_PENDING_REHEARSAL_CORE_INTEGRATION"]
+        },
+        "containsSensitiveData": { "const": false },
+        "extensionSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "journalLifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "ownerAlias",
+        "cleanupRoleSha256",
+        "rootPrefix",
+        "scenarioPrefixes",
+        "cleanupScopeSha256",
+        "retentionBoundary",
+        "expiresAtUtc",
+        "evidenceRetentionDays",
+        "cleanupMode",
+        "cleanupRequired",
+        "cleanupAttempted",
+        "deleteBeforeBoundaryAllowed",
+        "containsSensitiveData",
+        "lifecycleSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "ROLLBACK_RESILIENCE_SSM_JOURNAL_LIFECYCLE" },
+        "status": { "const": "PENDING_POST_CLOSEOUT_CLEANUP" },
+        "ownerAlias": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$"
+        },
+        "cleanupRoleSha256": { "$ref": "#/$defs/sha256" },
+        "rootPrefix": {
+          "type": "string",
+          "pattern": "^/checkout/stage7/rollback/[0-9a-f]{40}$"
+        },
+        "scenarioPrefixes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["RB-E7-06", "RB-E7-08"],
+          "properties": {
+            "RB-E7-06": {
+              "type": "string",
+              "pattern": "^/checkout/stage7/rollback/[0-9a-f]{40}/RB-E7-06$"
+            },
+            "RB-E7-08": {
+              "type": "string",
+              "pattern": "^/checkout/stage7/rollback/[0-9a-f]{40}/RB-E7-08$"
+            }
+          }
+        },
+        "cleanupScopeSha256": { "$ref": "#/$defs/sha256" },
+        "retentionBoundary": {
+          "const": "FINAL_EVIDENCE_AND_SUCCESSOR_HANDOFF_PRESERVED"
+        },
+        "expiresAtUtc": { "$ref": "#/$defs/utc" },
+        "evidenceRetentionDays": { "const": 30 },
+        "cleanupMode": { "const": "SEPARATE_IDEMPOTENT_PROTECTED_RUN" },
+        "cleanupRequired": { "const": true },
+        "cleanupAttempted": { "const": false },
+        "deleteBeforeBoundaryAllowed": { "const": false },
+        "containsSensitiveData": { "const": false },
+        "lifecycleSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "protectedRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "executionSha256",
+        "runtimeAttestation",
+        "rb06Checkpoint",
+        "rb08Checkpoint",
+        "extension",
+        "completion",
+        "gateE703",
+        "containsSensitiveData",
+        "runSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "PROTECTED_ROLLBACK_RESILIENCE_RUN" },
+        "status": { "const": "AWS_VERIFIED" },
+        "executionSha256": { "$ref": "#/$defs/sha256" },
+        "runtimeAttestation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "stage",
+            "kind",
+            "status",
+            "repository",
+            "workflow",
+            "runId",
+            "runAttempt",
+            "githubSha",
+            "protectedEnvironment",
+            "protectedBindingSha256",
+            "executionSha256",
+            "awsCliVersionSha256",
+            "identity",
+            "journalPrefixSha256",
+            "journalLifecycle",
+            "stateBackend",
+            "executorConstruction",
+            "injectedExecutorAccepted",
+            "containsSensitiveData",
+            "attestationSha256"
+          ],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "stage": { "const": 7 },
+            "kind": { "const": "ROLLBACK_RESILIENCE_PROTECTED_RUNTIME_ATTESTATION" },
+            "status": { "const": "AWS_IDENTITY_REVALIDATED" },
+            "repository": { "const": "ivanmonsalve0404/async-checkout-demo" },
+            "workflow": { "const": "stage7-rollback-resilience.yml" },
+            "runId": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+            "runAttempt": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+            "githubSha": { "$ref": "#/$defs/sha40" },
+            "protectedEnvironment": { "const": "assessment-release-recovery" },
+            "protectedBindingSha256": { "$ref": "#/$defs/sha256" },
+            "executionSha256": { "$ref": "#/$defs/sha256" },
+            "awsCliVersionSha256": { "$ref": "#/$defs/sha256" },
+            "identity": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "accountSha256",
+                "accountSuffix",
+                "roleSha256",
+                "sessionArnSha256",
+                "observedAtUtc"
+              ],
+              "properties": {
+                "accountSha256": { "$ref": "#/$defs/sha256" },
+                "accountSuffix": { "type": "string", "pattern": "^[0-9]{4}$" },
+                "roleSha256": { "$ref": "#/$defs/sha256" },
+                "sessionArnSha256": { "$ref": "#/$defs/sha256" },
+                "observedAtUtc": { "$ref": "#/$defs/utc" }
+              }
+            },
+            "journalPrefixSha256": { "$ref": "#/$defs/sha256" },
+            "journalLifecycle": { "$ref": "#/$defs/journalLifecycle" },
+            "stateBackend": { "const": "SSM_APPEND_ONLY_HASH_CHAIN" },
+            "executorConstruction": { "const": "INTERNAL_AWS_CLI_ONLY" },
+            "injectedExecutorAccepted": { "const": false },
+            "containsSensitiveData": { "const": false },
+            "attestationSha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "rb06Checkpoint": { "$ref": "#/$defs/rb06" },
+        "rb08Checkpoint": { "$ref": "#/$defs/rb08" },
+        "extension": { "$ref": "#/$defs/extension" },
+        "completion": { "$ref": "#/$defs/completion" },
+        "gateE703": { "const": "ELIGIBLE_PENDING_RELEASE_CLOSEOUT" },
+        "containsSensitiveData": { "const": false },
+        "runSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "completion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "baseRehearsalSha256",
+        "scenarioIds",
+        "pendingScenarioIds",
+        "rb06CheckpointSha256",
+        "rb08CheckpointSha256",
+        "extensionSha256",
+        "originProtectionContractSha256",
+        "authorizationUsageSha256",
+        "journalLifecycleSha256",
+        "reconciliationRecoveryRoleAuthoritySha256",
+        "finalReleaseId",
+        "finalCandidateSha",
+        "completedAtUtc",
+        "dataPolicy",
+        "dataRollbackPerformed",
+        "stacksDeleted",
+        "containsSensitiveData",
+        "completionSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "ROLLBACK_RESILIENCE_COMPLETION" },
+        "status": { "const": "AWS_VERIFIED" },
+        "baseRehearsalSha256": { "$ref": "#/$defs/sha256" },
+        "scenarioIds": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "RB-E7-01" },
+            { "const": "RB-E7-02" },
+            { "const": "RB-E7-03" },
+            { "const": "RB-E7-04" },
+            { "const": "RB-E7-05" },
+            { "const": "RB-E7-06" },
+            { "const": "RB-E7-07" },
+            { "const": "RB-E7-08" }
+          ],
+          "items": false
+        },
+        "pendingScenarioIds": { "type": "array", "maxItems": 0 },
+        "rb06CheckpointSha256": { "$ref": "#/$defs/sha256" },
+        "rb08CheckpointSha256": { "$ref": "#/$defs/sha256" },
+        "extensionSha256": { "$ref": "#/$defs/sha256" },
+        "originProtectionContractSha256": { "$ref": "#/$defs/sha256" },
+        "authorizationUsageSha256": { "$ref": "#/$defs/sha256" },
+        "journalLifecycleSha256": { "$ref": "#/$defs/sha256" },
+        "reconciliationRecoveryRoleAuthoritySha256": { "$ref": "#/$defs/sha256" },
+        "finalReleaseId": {
+          "type": "string",
+          "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$"
+        },
+        "finalCandidateSha": { "$ref": "#/$defs/sha40" },
+        "completedAtUtc": { "$ref": "#/$defs/utc" },
+        "dataPolicy": { "const": "NO_ROLLBACK_FORWARD_ONLY" },
+        "dataRollbackPerformed": { "const": false },
+        "stacksDeleted": { "const": 0 },
+        "containsSensitiveData": { "const": false },
+        "completionSha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

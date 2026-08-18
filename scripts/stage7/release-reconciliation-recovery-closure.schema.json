@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ivanmonsalve0404/async-checkout-demo/schemas/stage7/release-reconciliation-recovery-closure.schema.json",
+  "title": "Stage 7 protected release reconciliation recovery closure",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "status",
+    "cleanupActor",
+    "originalRecoveryActor",
+    "originalSource",
+    "phase",
+    "outcomeSha256",
+    "receiptSha256",
+    "snapshotSha256",
+    "preservationIndexSha256",
+    "preservationArtifact",
+    "journalCleanupRoleArn",
+    "cleanupRoleAuthority",
+    "cleanup",
+    "fenceWritesPerformed",
+    "publicationWritesPerformed",
+    "rollbackToPreviousOperationsPerformed",
+    "releaseDecision",
+    "closureArtifactName",
+    "completedAtUtc",
+    "containsSensitiveData",
+    "closureSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 7 },
+    "kind": { "const": "STAGE7_RELEASE_RECONCILIATION_RECOVERY_CLOSURE" },
+    "status": { "const": "CANDIDATE_N_VERIFIED_JOURNAL_PRESERVED_AND_CLEANED" },
+    "cleanupActor": { "type": "object" },
+    "originalRecoveryActor": { "type": "object" },
+    "originalSource": { "$ref": "#/$defs/source" },
+    "phase": { "enum": ["ROLLBACK_CHECK", "ROLLBACK_RESILIENCE"] },
+    "outcomeSha256": { "$ref": "#/$defs/sha256" },
+    "receiptSha256": { "$ref": "#/$defs/sha256" },
+    "snapshotSha256": { "$ref": "#/$defs/sha256" },
+    "preservationIndexSha256": { "$ref": "#/$defs/sha256" },
+    "preservationArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "id",
+        "digest",
+        "workflowRunId",
+        "sizeInBytes",
+        "createdAtUtc",
+        "expiresAtUtc",
+        "metadataRawSha256",
+        "archiveRawSha256",
+        "archiveBytes",
+        "capturedAtUtc",
+        "externalRequests",
+        "containsSensitiveData",
+        "bindingSha256"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^stage7-release-reconciliation-recovery-preservation-[1-9][0-9]{0,19}-[1-9][0-9]{0,2}$"
+        },
+        "id": { "type": "integer", "minimum": 1 },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "workflowRunId": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+        "sizeInBytes": { "type": "integer", "minimum": 1 },
+        "createdAtUtc": { "type": "string", "format": "date-time" },
+        "expiresAtUtc": { "type": "string", "format": "date-time" },
+        "metadataRawSha256": { "$ref": "#/$defs/sha256" },
+        "archiveRawSha256": { "$ref": "#/$defs/sha256" },
+        "archiveBytes": { "type": "integer", "minimum": 22, "maximum": 33554432 },
+        "capturedAtUtc": { "type": "string", "format": "date-time" },
+        "externalRequests": { "const": 1 },
+        "containsSensitiveData": { "const": false },
+        "bindingSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "journalCleanupRoleArn": {
+      "type": "string",
+      "pattern": "^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$"
+    },
+    "cleanupRoleAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "roleArn",
+        "permissionsBoundaryArn",
+        "effectivePolicyProjectionSha256",
+        "frozenEffectivePermissionsSha256",
+        "liveEffectivePermissionsSha256",
+        "frozenRawSha256",
+        "liveRawSha256",
+        "liveCanonicalSha256",
+        "liveSourceBindingCount"
+      ],
+      "properties": {
+        "roleArn": {
+          "type": "string",
+          "pattern": "^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$"
+        },
+        "permissionsBoundaryArn": {
+          "type": "string",
+          "pattern": "^arn:aws:iam::[0-9]{12}:policy/[A-Za-z0-9+=,.@_/-]{1,512}$"
+        },
+        "effectivePolicyProjectionSha256": { "$ref": "#/$defs/sha256" },
+        "frozenEffectivePermissionsSha256": { "$ref": "#/$defs/sha256" },
+        "liveEffectivePermissionsSha256": { "$ref": "#/$defs/sha256" },
+        "frozenRawSha256": { "$ref": "#/$defs/sha256" },
+        "liveRawSha256": { "$ref": "#/$defs/sha256" },
+        "liveCanonicalSha256": { "$ref": "#/$defs/sha256" },
+        "liveSourceBindingCount": { "type": "integer", "minimum": 6, "maximum": 100 }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deletedParameterNames",
+        "deletedParameterCount",
+        "residualParameterNames",
+        "residualParameterCount"
+      ],
+      "properties": {
+        "deletedParameterNames": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 155,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1011 }
+        },
+        "deletedParameterCount": { "type": "integer", "minimum": 3, "maximum": 155 },
+        "residualParameterNames": { "type": "array", "maxItems": 0 },
+        "residualParameterCount": { "const": 0 }
+      }
+    },
+    "fenceWritesPerformed": { "const": 0 },
+    "publicationWritesPerformed": { "const": 0 },
+    "rollbackToPreviousOperationsPerformed": { "const": 0 },
+    "releaseDecision": {
+      "const": "ORIGINAL_RELEASE_REMAINS_BLOCKED_NEW_DISPATCH_MAY_REEVALUATE"
+    },
+    "closureArtifactName": {
+      "type": "string",
+      "pattern": "^stage7-release-reconciliation-recovery-closure-[1-9][0-9]{0,19}-[1-9][0-9]{0,2}$"
+    },
+    "completedAtUtc": { "type": "string", "format": "date-time" },
+    "containsSensitiveData": { "const": false },
+    "closureSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "workflowPath",
+        "ref",
+        "runId",
+        "runAttempt",
+        "candidateSha",
+        "releaseId",
+        "releaseTag",
+        "configSha256"
+      ],
+      "properties": {
+        "repository": { "const": "ivanmonsalve0404/async-checkout-demo" },
+        "workflowPath": { "const": ".github/workflows/release.yml" },
+        "ref": { "const": "refs/heads/master" },
+        "runId": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+        "runAttempt": { "const": 1 },
+        "candidateSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "releaseId": {
+          "type": "string",
+          "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$"
+        },
+        "releaseTag": {
+          "type": "string",
+          "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-rc\\.[1-9][0-9]*)?$"
+        },
+        "configSha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

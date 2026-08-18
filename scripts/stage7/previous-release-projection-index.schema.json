@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ivanmonsalve0404/async-checkout-demo/schemas/stage7/previous-release-projection-index.schema.json",
+  "title": "Stage 7 exact eight-file previous-release projection index",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "status",
+    "artifactName",
+    "identity",
+    "sourceKind",
+    "sourceBundle",
+    "files",
+    "containsSensitiveData",
+    "projectionIndexSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 7 },
+    "kind": { "const": "STAGE7_PREVIOUS_RELEASE_TARGET_PROJECTION_INDEX" },
+    "status": { "const": "APPROVED_IMMUTABLE_TARGET_PROJECTION" },
+    "artifactName": { "const": "stage7-previous-release" },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "previousCandidateSha",
+        "previousReleaseId",
+        "targetCandidateSha",
+        "targetReleaseId",
+        "targetFreezeManifestSha256",
+        "predecessorManifestSha256"
+      ],
+      "properties": {
+        "previousCandidateSha": { "$ref": "#/$defs/sha" },
+        "previousReleaseId": { "$ref": "#/$defs/releaseId" },
+        "targetCandidateSha": { "$ref": "#/$defs/sha" },
+        "targetReleaseId": { "$ref": "#/$defs/releaseId" },
+        "targetFreezeManifestSha256": { "$ref": "#/$defs/sha256" },
+        "predecessorManifestSha256": {
+          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        }
+      }
+    },
+    "sourceKind": { "enum": ["BASELINE_BOOTSTRAP", "RELEASE_SUCCESSOR"] },
+    "sourceBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactName", "bundleSha256", "sourceRunId", "sourceRunAttempt", "headSha"],
+      "properties": {
+        "artifactName": { "type": "string", "minLength": 1 },
+        "bundleSha256": { "$ref": "#/$defs/sha256" },
+        "sourceRunId": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+        "sourceRunAttempt": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "headSha": { "$ref": "#/$defs/sha" },
+        "consumptionAuthoritySha256": { "$ref": "#/$defs/sha256" },
+        "reconciliationJournalAuthority": { "$ref": "#/$defs/reconciliationAuthority" },
+        "reconciliationJournalAuthoritySha256": { "$ref": "#/$defs/sha256" },
+        "releaseFenceAuthoritySetSha256": { "$ref": "#/$defs/sha256" },
+        "journalSnapshotBinding": { "$ref": "#/$defs/journalSnapshotBinding" }
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "prefixItems": [
+        { "$ref": "#/$defs/manifestFile" },
+        { "$ref": "#/$defs/sourceFile" },
+        { "$ref": "#/$defs/targetFile" },
+        { "$ref": "#/$defs/finalizationFile" },
+        { "$ref": "#/$defs/apiFile" },
+        { "$ref": "#/$defs/pendingFile" },
+        { "$ref": "#/$defs/smokeFile" }
+      ],
+      "items": false
+    },
+    "containsSensitiveData": { "const": false },
+    "projectionIndexSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "sourceKind": { "const": "RELEASE_SUCCESSOR" } } },
+      "then": {
+        "properties": {
+          "sourceBundle": {
+            "required": [
+              "consumptionAuthoritySha256",
+              "reconciliationJournalAuthority",
+              "reconciliationJournalAuthoritySha256",
+              "releaseFenceAuthoritySetSha256",
+              "journalSnapshotBinding"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "sourceBundle": {
+            "allOf": [
+              { "not": { "required": ["consumptionAuthoritySha256"] } },
+              { "not": { "required": ["reconciliationJournalAuthority"] } },
+              { "not": { "required": ["reconciliationJournalAuthoritySha256"] } },
+              { "not": { "required": ["releaseFenceAuthoritySetSha256"] } },
+              { "not": { "required": ["journalSnapshotBinding"] } }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "releaseId": {
+      "type": "string",
+      "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$"
+    },
+    "reconciliationAuthority": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "source",
+        "cleanupParameterNames",
+        "cleanupParameterCount",
+        "requiredResidualCount",
+        "containsSensitiveData",
+        "journalAuthoritySha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "STAGE7_RELEASE_RECONCILIATION_JOURNAL_AUTHORITY" },
+        "status": { "const": "PRESERVE_THEN_DELETE_EXACT_SET" },
+        "source": { "type": "object" },
+        "cleanupParameterNames": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 155,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^/checkout/stage7/rollback/" }
+        },
+        "cleanupParameterCount": { "type": "integer", "minimum": 4, "maximum": 155 },
+        "requiredResidualCount": { "const": 0 },
+        "containsSensitiveData": { "const": false },
+        "journalAuthoritySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "journalSnapshotBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "rawSha256",
+        "canonicalSha256",
+        "bytes",
+        "snapshotSha256",
+        "targetNameSetSha256",
+        "entryCount"
+      ],
+      "properties": {
+        "path": { "const": "release-reconciliation-journal-snapshot.json" },
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 2 },
+        "snapshotSha256": { "$ref": "#/$defs/sha256" },
+        "targetNameSetSha256": { "$ref": "#/$defs/sha256" },
+        "entryCount": { "type": "integer", "minimum": 3 }
+      }
+    },
+    "rawFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "manifestFile": {
+      "allOf": [
+        { "$ref": "#/$defs/rawFile" },
+        { "properties": { "path": { "const": "previous-release-manifest.json" } } }
+      ]
+    },
+    "sourceFile": {
+      "allOf": [
+        { "$ref": "#/$defs/rawFile" },
+        { "properties": { "path": { "const": "previous-source-provenance.json" } } }
+      ]
+    },
+    "targetFile": {
+      "allOf": [
+        { "$ref": "#/$defs/rawFile" },
+        { "properties": { "path": { "const": "previous-target-compatibility.json" } } }
+      ]
+    },
+    "finalizationFile": {
+      "allOf": [
+        { "$ref": "#/$defs/rawFile" },
+        { "properties": { "path": { "const": "previous-final-disable-provenance.json" } } }
+      ]
+    },
+    "apiFile": {
+      "allOf": [
+        { "$ref": "#/$defs/rawFile" },
+        { "properties": { "path": { "const": "previous-api-contract-evidence.json" } } }
+      ]
+    },
+    "pendingFile": {
+      "allOf": [
+        { "$ref": "#/$defs/rawFile" },
+        { "properties": { "path": { "const": "previous-pending-evidence.json" } } }
+      ]
+    },
+    "smokeFile": {
+      "allOf": [
+        { "$ref": "#/$defs/rawFile" },
+        { "properties": { "path": { "const": "previous-smoke-evidence.json" } } }
+      ]
+    }
+  }
+}

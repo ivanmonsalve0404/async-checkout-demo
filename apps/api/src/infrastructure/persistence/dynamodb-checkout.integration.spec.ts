@@ -369,6 +369,8 @@ describeLocal(SUITE_NAME, () => {
           { AttributeName: 'SK', AttributeType: 'S' },
           { AttributeName: 'GSI1PK', AttributeType: 'S' },
           { AttributeName: 'GSI1SK', AttributeType: 'S' },
+          { AttributeName: 'GSI2PK', AttributeType: 'S' },
+          { AttributeName: 'GSI2SK', AttributeType: 'S' },
         ],
         KeySchema: [
           { AttributeName: 'PK', KeyType: 'HASH' },
@@ -386,6 +388,17 @@ describeLocal(SUITE_NAME, () => {
               NonKeyAttributes: ['checkoutId', 'transactionId', 'dispatchPhase', 'paymentStatus'],
             },
           },
+          {
+            IndexName: 'GSI2-PendingAge',
+            KeySchema: [
+              { AttributeName: 'GSI2PK', KeyType: 'HASH' },
+              { AttributeName: 'GSI2SK', KeyType: 'RANGE' },
+            ],
+            Projection: {
+              ProjectionType: 'INCLUDE',
+              NonKeyAttributes: ['acceptedAt', 'paymentStatus'],
+            },
+          },
         ],
       }),
     );
@@ -394,7 +407,7 @@ describeLocal(SUITE_NAME, () => {
 
   afterAll(() => disconnect());
 
-  it('creates the two real tables and the reconcile GSI with the production key contract', async () => {
+  it('creates the two real tables and both production GSI key contracts', async () => {
     const tables = await lowLevelClient?.send(new ListTablesCommand({}));
     expect(tables?.TableNames).toEqual(
       expect.arrayContaining([catalogTableName, checkoutTableName]),
@@ -420,6 +433,58 @@ describeLocal(SUITE_NAME, () => {
     expect([...(index?.Projection?.NonKeyAttributes ?? [])].sort()).toEqual(
       ['checkoutId', 'dispatchPhase', 'paymentStatus', 'transactionId'].sort(),
     );
+    const pendingAge = checkout?.Table?.GlobalSecondaryIndexes?.find(
+      (candidate) => candidate.IndexName === 'GSI2-PendingAge',
+    );
+    expect(pendingAge?.IndexStatus).toBe('ACTIVE');
+    expect(pendingAge?.KeySchema).toEqual([
+      { AttributeName: 'GSI2PK', KeyType: 'HASH' },
+      { AttributeName: 'GSI2SK', KeyType: 'RANGE' },
+    ]);
+    expect([...(pendingAge?.Projection?.NonKeyAttributes ?? [])].sort()).toEqual([
+      'acceptedAt',
+      'paymentStatus',
+    ]);
+  });
+
+  it('keeps future work in the global pending index and removes it on finalization', async () => {
+    const productId = 'product_pending_age';
+    await seedProduct(productId, 1);
+    const checkout = await createCheckout('pending_age', productId);
+    const transaction = makeTransaction(checkout, 'pending_age', { nextCheckAt: EXPIRES_AT });
+    valueOf(await prepare(checkout, transaction));
+
+    let oldest: string | null = null;
+    for (let attempt = 0; attempt < 100 && oldest === null; attempt += 1) {
+      oldest = valueOf(await checkoutRepository.findOldestPendingAcceptedAt());
+      if (oldest === null) await delay(50);
+    }
+    expect(oldest).toBe(T0);
+    expect(valueOf(await checkoutRepository.claimDue(T5, T6, 10))).toEqual([]);
+    expect(valueOf(await checkoutRepository.findOldestPendingAcceptedAt())).toBe(T0);
+
+    await acknowledge(transaction, 'DECLINED', 'pending_age');
+    valueOf(
+      await checkoutRepository.finalize(
+        transaction.transactionId,
+        'DECLINED',
+        'DECLINED',
+        undefined,
+        T5,
+      ),
+    );
+    oldest = T0;
+    for (let attempt = 0; attempt < 100 && oldest !== null; attempt += 1) {
+      oldest = valueOf(await checkoutRepository.findOldestPendingAcceptedAt());
+      if (oldest !== null) await delay(50);
+    }
+    expect(oldest).toBeNull();
+    const payment = await getCheckoutItem(
+      checkout.checkoutId,
+      'PAYMENT#' + transaction.transactionId,
+    );
+    expect(payment).not.toHaveProperty('GSI2PK');
+    expect(payment).not.toHaveProperty('GSI2SK');
   });
 
   it('awards the last unit to exactly one concurrent checkout without partial loser writes', async () => {
@@ -567,6 +632,8 @@ describeLocal(SUITE_NAME, () => {
     const payment = items.find((item) => item.itemType === 'PAYMENT');
     expect(payment).not.toHaveProperty('GSI1PK');
     expect(payment).not.toHaveProperty('GSI1SK');
+    expect(payment).not.toHaveProperty('GSI2PK');
+    expect(payment).not.toHaveProperty('GSI2SK');
     expect(payment).not.toHaveProperty('leaseUntil');
     expect(payment).not.toHaveProperty('nextCheckAt');
     expect(

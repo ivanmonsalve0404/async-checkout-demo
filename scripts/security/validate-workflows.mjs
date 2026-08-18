@@ -4,9 +4,43 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
+import {
+  validatePrereleaseWorkflow,
+  validateReleaseWorkflow,
+  validateReleaseWorkflowCommands,
+} from './validate-release-workflow.mjs';
+import {
+  PRERELEASE_CLEANUP_WORKFLOW,
+  validatePrereleaseCleanupWorkflow,
+} from './validate-prerelease-cleanup-workflow.mjs';
+import {
+  BASELINE_WORKFLOW,
+  selfTestBaselineWorkflow,
+  validateBaselineWorkflow,
+} from './validate-baseline-workflow.mjs';
+import {
+  ROLLBACK_RESILIENCE_WORKFLOW,
+  validateRollbackResilienceWorkflow,
+} from './validate-rollback-resilience-workflow.mjs';
+import {
+  RELEASE_SUCCESSOR_POST_SUCCESS_WORKFLOW,
+  validateReleaseSuccessorPostSuccessWorkflow,
+} from './validate-release-successor-post-success-workflow.mjs';
+import {
+  PUBLICATION_RECOVERY_WORKFLOW,
+  selfTestPublicationRecoveryWorkflow,
+  validatePublicationRecoveryWorkflow,
+} from './validate-release-successor-publication-recovery-workflow.mjs';
+import {
+  STAGE7_RELEASE_RECONCILIATION_RECOVERY_WORKFLOW,
+  validateStage7ReleaseReconciliationRecoveryWorkflow,
+} from './validate-stage7-release-reconciliation-recovery.mjs';
+
 const ACTION_REFERENCE = /^\s*(?:-\s*)?uses:\s*([^\s#]+)\s*(?:#.*)?$/gmu;
 const PINNED_SHA = /^[0-9a-f]{40}$/u;
 const CODEQL_WORKFLOW = 'ci.yml';
+const RELEASE_WORKFLOW = 'release.yml';
+const PRERELEASE_WORKFLOW = 'prerelease.yml';
 const CODEQL_ACTION_SHA = 'ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd';
 const SETUP_NODE_ACTION_SHA = 'a0853c24544627f65ddf259abe73b1d18a591444';
 const UPLOAD_ARTIFACT_ACTION_SHA = 'ea165f8d65b6e75b540449e92b4886f43607fa02';
@@ -210,6 +244,57 @@ const authorizedSandboxWiringIsExact = (manifest, verifySource) => {
 };
 
 export function validateWorkflow(name, source) {
+  if (name === RELEASE_WORKFLOW) {
+    return validateReleaseWorkflow(name, source);
+  }
+  if (name === PRERELEASE_WORKFLOW) {
+    return validatePrereleaseWorkflow(name, source);
+  }
+  if (name === PRERELEASE_CLEANUP_WORKFLOW) {
+    return validatePrereleaseCleanupWorkflow(name, source).map((error) => `${name}: ${error}`);
+  }
+  if (name === BASELINE_WORKFLOW) {
+    return validateBaselineWorkflow(name, source);
+  }
+  if (name === ROLLBACK_RESILIENCE_WORKFLOW) {
+    try {
+      validateRollbackResilienceWorkflow({
+        workflow: source,
+        release: fs.readFileSync(
+          path.join(process.cwd(), '.github', 'workflows', RELEASE_WORKFLOW),
+          'utf8',
+        ),
+      });
+      return [];
+    } catch (error) {
+      return [`${name}: ${error instanceof Error ? error.message : String(error)}`];
+    }
+  }
+  if (name === RELEASE_SUCCESSOR_POST_SUCCESS_WORKFLOW) {
+    try {
+      validateReleaseSuccessorPostSuccessWorkflow(source);
+      return [];
+    } catch (error) {
+      return [`${name}: ${error instanceof Error ? error.message : String(error)}`];
+    }
+  }
+  if (name === PUBLICATION_RECOVERY_WORKFLOW) {
+    try {
+      validatePublicationRecoveryWorkflow(source);
+      return [];
+    } catch (error) {
+      return [`${name}: ${error instanceof Error ? error.message : String(error)}`];
+    }
+  }
+  if (name === STAGE7_RELEASE_RECONCILIATION_RECOVERY_WORKFLOW) {
+    try {
+      validateStage7ReleaseReconciliationRecoveryWorkflow(source);
+      return [];
+    } catch (error) {
+      return [`${name}: ${error instanceof Error ? error.message : String(error)}`];
+    }
+  }
+
   const errors = [];
 
   if (!/^\s{0}permissions:\s*\r?\n\s{2}contents:\s*read\s*$/gmu.test(source)) {
@@ -264,6 +349,7 @@ export function validateWorkflow(name, source) {
   const actionReferences = [...source.matchAll(ACTION_REFERENCE)].map((match) => match[1]);
   for (const reference of actionReferences) {
     if (reference.startsWith('./')) {
+      errors.push('local action references are forbidden outside an exact routed workflow');
       continue;
     }
     const separator = reference.lastIndexOf('@');
@@ -414,6 +500,245 @@ function selfTest() {
         .replace('pull_request:', 'pull_request_target:')
         .replace('0123456789abcdef0123456789abcdef01234567', 'v4'),
     ).length >= 2,
+  );
+
+  const releaseSource = fs.readFileSync(
+    path.join(process.cwd(), '.github', 'workflows', RELEASE_WORKFLOW),
+    'utf8',
+  );
+  assert.deepEqual(validateWorkflow(RELEASE_WORKFLOW, releaseSource), []);
+  const malformedReleaseErrors = validateWorkflow(
+    RELEASE_WORKFLOW,
+    releaseSource.replace('  workflow_dispatch:', '  pull_request:'),
+  );
+  assert.ok(
+    malformedReleaseErrors.some((error) =>
+      error.includes('the only trigger must be workflow_dispatch'),
+    ),
+  );
+  assert.ok(
+    !malformedReleaseErrors.some((error) => error.includes('pull_request trigger is required')),
+  );
+  assert.ok(
+    validateWorkflow('release-copy.yml', releaseSource).some((error) =>
+      error.includes('pull_request trigger is required'),
+    ),
+  );
+  const rollbackResilienceSource = fs.readFileSync(
+    path.join(process.cwd(), '.github', 'workflows', ROLLBACK_RESILIENCE_WORKFLOW),
+    'utf8',
+  );
+  assert.deepEqual(validateWorkflow(ROLLBACK_RESILIENCE_WORKFLOW, rollbackResilienceSource), []);
+  assert.ok(
+    validateWorkflow(
+      ROLLBACK_RESILIENCE_WORKFLOW,
+      rollbackResilienceSource.replace('  workflow_call:', '  workflow_dispatch:'),
+    ).some((error) => error.includes('missing required contract: workflow_call:')),
+  );
+  assert.ok(
+    validateWorkflow(
+      ROLLBACK_RESILIENCE_WORKFLOW,
+      rollbackResilienceSource.replace(
+        'actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09',
+        'actions/checkout@v5',
+      ),
+    ).some((error) => error.includes('pinned to one exact commit')),
+  );
+  assert.throws(
+    () =>
+      validateRollbackResilienceWorkflow({
+        workflow: rollbackResilienceSource,
+        release: releaseSource.replace(
+          '    uses: ./.github/workflows/stage7-rollback-resilience.yml\n',
+          '    uses: ./.github/workflows/stage7-rollback-resilience.yml\n    secrets: inherit\n',
+        ),
+      }),
+    /publication still bypasses/u,
+  );
+  assert.throws(
+    () =>
+      validateRollbackResilienceWorkflow({
+        workflow: rollbackResilienceSource,
+        release: releaseSource.replace(
+          "if: ${{ github.run_attempt == 1 && needs.release-reconciliation.result == 'success' }}\n    needs: release-reconciliation",
+          "if: ${{ github.run_attempt == 1 && needs.rollback-resilience.outputs.rehearsal_pass == 'true' }}\n    needs: rollback-resilience",
+        ),
+      }),
+    /protected reconciliation pre-fence chain|missing required contract/u,
+  );
+  assert.throws(
+    () =>
+      validateRollbackResilienceWorkflow({
+        workflow: rollbackResilienceSource,
+        release: releaseSource.replace(
+          '      - rollback-resilience\n',
+          '      - rollback-resilience-bypassed\n',
+        ),
+      }),
+    /protected reconciliation pre-fence chain/u,
+  );
+  const releaseSuccessorPostSuccessSource = fs.readFileSync(
+    path.join(process.cwd(), '.github', 'workflows', RELEASE_SUCCESSOR_POST_SUCCESS_WORKFLOW),
+    'utf8',
+  );
+  assert.deepEqual(
+    validateWorkflow(RELEASE_SUCCESSOR_POST_SUCCESS_WORKFLOW, releaseSuccessorPostSuccessSource),
+    [],
+  );
+  assert.ok(
+    validateWorkflow(
+      RELEASE_SUCCESSOR_POST_SUCCESS_WORKFLOW,
+      releaseSuccessorPostSuccessSource.replace(
+        'group: stage7-assessment-release',
+        'group: unsafe-successor-race',
+      ),
+    ).some((error) => error.includes('missing required contract')),
+  );
+  const publicationRecoverySource = fs.readFileSync(
+    path.join(process.cwd(), '.github', 'workflows', PUBLICATION_RECOVERY_WORKFLOW),
+    'utf8',
+  );
+  assert.deepEqual(validateWorkflow(PUBLICATION_RECOVERY_WORKFLOW, publicationRecoverySource), []);
+  selfTestPublicationRecoveryWorkflow();
+  assert.ok(
+    validateWorkflow(
+      PUBLICATION_RECOVERY_WORKFLOW,
+      publicationRecoverySource.replace(
+        'group: stage7-assessment-release',
+        'group: unsafe-publication-recovery-race',
+      ),
+    ).some((error) => error.includes('missing required contract')),
+  );
+  assert.ok(
+    validateWorkflow(
+      'stage7-release-successor-publication-recovery-copy.yml',
+      publicationRecoverySource,
+    ).some((error) => error.includes('pull_request trigger is required')),
+  );
+  assert.ok(
+    validateWorkflow('stage7-release-successor-copy.yml', releaseSuccessorPostSuccessSource).some(
+      (error) => error.includes('pull_request trigger is required'),
+    ),
+  );
+  const reconciliationRecoverySource = fs.readFileSync(
+    path.join(
+      process.cwd(),
+      '.github',
+      'workflows',
+      STAGE7_RELEASE_RECONCILIATION_RECOVERY_WORKFLOW,
+    ),
+    'utf8',
+  );
+  assert.deepEqual(
+    validateWorkflow(STAGE7_RELEASE_RECONCILIATION_RECOVERY_WORKFLOW, reconciliationRecoverySource),
+    [],
+  );
+  assert.ok(
+    validateWorkflow(
+      STAGE7_RELEASE_RECONCILIATION_RECOVERY_WORKFLOW,
+      reconciliationRecoverySource.replace(
+        'group: stage7-assessment-release',
+        'group: unsafe-recovery-race',
+      ),
+    ).some((error) => error.includes('missing required contract')),
+  );
+  assert.ok(
+    validateWorkflow(
+      'stage7-release-reconciliation-recovery-copy.yml',
+      reconciliationRecoverySource,
+    ).some((error) => error.includes('pull_request trigger is required')),
+  );
+  assert.ok(
+    validateWorkflow(
+      'unsafe-local.yml',
+      valid.replace(
+        'actions/checkout@0123456789abcdef0123456789abcdef01234567',
+        './.github/actions/unsafe',
+      ),
+    ).some((error) => error.includes('local action references are forbidden')),
+  );
+  const prereleaseSource = fs.readFileSync(
+    path.join(process.cwd(), '.github', 'workflows', PRERELEASE_WORKFLOW),
+    'utf8',
+  );
+  assert.deepEqual(validateWorkflow(PRERELEASE_WORKFLOW, prereleaseSource), []);
+  const baselineSource = fs.readFileSync(
+    path.join(process.cwd(), '.github', 'workflows', BASELINE_WORKFLOW),
+    'utf8',
+  );
+  assert.deepEqual(validateWorkflow(BASELINE_WORKFLOW, baselineSource), []);
+  selfTestBaselineWorkflow(baselineSource);
+  const packageSource = fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8');
+  assert.deepEqual(
+    validateReleaseWorkflowCommands(
+      [releaseSource, prereleaseSource, baselineSource, publicationRecoverySource],
+      packageSource,
+    ),
+    [],
+  );
+  assert.ok(
+    validateReleaseWorkflowCommands(
+      [
+        releaseSource.replace('pnpm release:seed --', 'pnpm release:orphan --'),
+        prereleaseSource,
+        baselineSource,
+        publicationRecoverySource,
+      ],
+      packageSource,
+    ).some((error) => error.includes('workflow command is orphaned: release:orphan')),
+  );
+  assert.ok(
+    validateReleaseWorkflowCommands(
+      [releaseSource, prereleaseSource, baselineSource, publicationRecoverySource],
+      packageSource.replace(
+        '"release:sandbox-smoke": "node scripts/stage7/control.mjs sandbox-smoke"',
+        '"release:sandbox-smoke": "pnpm sandbox:authorized:execute"',
+      ),
+    ).some((error) => error.includes('direct Stage 6 execution alias is forbidden')),
+  );
+  assert.ok(
+    validateReleaseWorkflowCommands(
+      [releaseSource, prereleaseSource, baselineSource, publicationRecoverySource],
+      packageSource.replace(
+        'node scripts/stage7/release-successor-publication-recovery-self-test.mjs && node scripts/security/validate-release-successor-publication-recovery-workflow.mjs',
+        'node scripts/stage7/release-successor-publication-recovery-self-test.mjs',
+      ),
+    ).some((error) =>
+      error.includes('Stage 7 mapping diverges for release:publication-recovery:self-test'),
+    ),
+  );
+  const malformedPrereleaseErrors = validateWorkflow(
+    PRERELEASE_WORKFLOW,
+    prereleaseSource.replace('  workflow_dispatch:', '  pull_request:'),
+  );
+  assert.ok(
+    malformedPrereleaseErrors.some((error) =>
+      error.includes('the only trigger must be workflow_dispatch'),
+    ),
+  );
+  assert.ok(
+    !malformedPrereleaseErrors.some((error) => error.includes('pull_request trigger is required')),
+  );
+  assert.ok(
+    validateWorkflow('prerelease-copy.yml', prereleaseSource).some((error) =>
+      error.includes('pull_request trigger is required'),
+    ),
+  );
+  const prereleaseCleanupSource = fs.readFileSync(
+    path.join(process.cwd(), '.github', 'workflows', PRERELEASE_CLEANUP_WORKFLOW),
+    'utf8',
+  );
+  assert.deepEqual(validateWorkflow(PRERELEASE_CLEANUP_WORKFLOW, prereleaseCleanupSource), []);
+  assert.ok(
+    validateWorkflow('prerelease-cleanup-copy.yml', prereleaseCleanupSource).some((error) =>
+      error.includes('pull_request trigger is required'),
+    ),
+  );
+  assert.ok(
+    validateWorkflow(
+      PRERELEASE_CLEANUP_WORKFLOW,
+      prereleaseCleanupSource.replace('      id-token: write', '      id-token: read'),
+    ).some((error) => error.includes('dedicated bounded OIDC cleanup session')),
   );
   const forbiddenWritePermissions = ['issues', 'checks', 'actions', 'deployments', 'statuses'];
   for (const permission of forbiddenWritePermissions) {
@@ -741,12 +1066,18 @@ function main() {
     throw new Error('at least one workflow is required');
   }
 
-  const errors = workflowFiles.flatMap((name) =>
-    validateWorkflow(name, fs.readFileSync(path.join(workflowDirectory, name), 'utf8')),
+  const workflowSources = new Map(
+    workflowFiles.map((name) => [
+      name,
+      fs.readFileSync(path.join(workflowDirectory, name), 'utf8'),
+    ]),
   );
+  const errors = workflowFiles.flatMap((name) => validateWorkflow(name, workflowSources.get(name)));
   let authorizedSandboxWiringValid;
+  let packageSource = '';
   try {
-    const manifest = JSON.parse(fs.readFileSync(path.join(rootDirectory, 'package.json'), 'utf8'));
+    packageSource = fs.readFileSync(path.join(rootDirectory, 'package.json'), 'utf8');
+    const manifest = JSON.parse(packageSource);
     const verifySource = fs.readFileSync(
       path.join(rootDirectory, 'scripts', 'stage6', 'verify.mjs'),
       'utf8',
@@ -758,6 +1089,17 @@ function main() {
   if (!authorizedSandboxWiringValid) {
     errors.push('repository: verify:stage6 must include the CI-safe authorized sandbox dry-run');
   }
+  errors.push(
+    ...validateReleaseWorkflowCommands(
+      [
+        workflowSources.get(RELEASE_WORKFLOW) ?? '',
+        workflowSources.get(PRERELEASE_WORKFLOW) ?? '',
+        workflowSources.get(BASELINE_WORKFLOW) ?? '',
+        workflowSources.get(PUBLICATION_RECOVERY_WORKFLOW) ?? '',
+      ],
+      packageSource,
+    ),
+  );
   if (errors.length > 0) {
     process.stderr.write('workflow-policy: FAIL\n');
     for (const error of errors) {

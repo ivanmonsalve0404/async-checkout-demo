@@ -20,6 +20,9 @@ importers:
       concurrently:
         specifier: 10.0.4
         version: 10.0.4
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       eslint:
         specifier: 10.8.1
         version: 10.8.1(supports-color@10.2.2)
@@ -42,6 +45,12 @@ importers:
   apps/api:
     dependencies:
       '@aws-sdk/client-dynamodb':
+        specifier: 3.1111.0
+        version: 3.1111.0
+      '@aws-sdk/client-secrets-manager':
+        specifier: 3.1111.0
+        version: 3.1111.0
+      '@aws-sdk/client-ssm':
         specifier: 3.1111.0
         version: 3.1111.0
       '@aws-sdk/lib-dynamodb':
@@ -223,6 +232,14 @@ packages:
 
   '@aws-sdk/client-dynamodb@3.1111.0':
     resolution: {integrity: sha512-rji6S5ZJfBp3ahC7pcEilaBKDrnLNZGerIzXCEOhur9gkgMhTiJjpoQSLKgR1Lnehetew1isiciL9xVoNvt9uw==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-secrets-manager@3.1111.0':
+    resolution: {integrity: sha512-+OQYrSTkRJV826I4+PuXY+h6m1lqo5LTGtbPsJ5JWlpuYr+GY9vTyWO4qOoyUu+YnRqD5NTXSCQqmZXACJsYJg==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-ssm@3.1111.0':
+    resolution: {integrity: sha512-NhVyZL203unBVPi/oFQ48m0f5z/0M8nKM6nVEoOnX9/hfWXfa81rh5J1Tj4YoDuDjb5aTKyQZAtsbD48Dwiujw==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/core@3.977.8':
@@ -3809,6 +3826,28 @@ snapshots:
       '@aws-sdk/credential-provider-node': 3.972.80
       '@aws-sdk/dynamodb-codec': 3.973.43
       '@aws-sdk/middleware-endpoint-discovery': 3.972.29
+      '@aws-sdk/types': 3.974.4
+      '@smithy/core': 3.33.0
+      '@smithy/fetch-http-handler': 5.7.0
+      '@smithy/node-http-handler': 4.11.0
+      '@smithy/types': 4.17.0
+      tslib: 2.8.1
+
+  '@aws-sdk/client-secrets-manager@3.1111.0':
+    dependencies:
+      '@aws-sdk/core': 3.977.8
+      '@aws-sdk/credential-provider-node': 3.972.80
+      '@aws-sdk/types': 3.974.4
+      '@smithy/core': 3.33.0
+      '@smithy/fetch-http-handler': 5.7.0
+      '@smithy/node-http-handler': 4.11.0
+      '@smithy/types': 4.17.0
+      tslib: 2.8.1
+
+  '@aws-sdk/client-ssm@3.1111.0':
+    dependencies:
+      '@aws-sdk/core': 3.977.8
+      '@aws-sdk/credential-provider-node': 3.972.80
       '@aws-sdk/types': 3.974.4
       '@smithy/core': 3.33.0
       '@smithy/fetch-http-handler': 5.7.0

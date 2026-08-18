@@ -322,6 +322,7 @@ describe('CheckoutService vertical payment flow', () => {
 
     context.advance(60_000);
     expect(valueOf(await context.service.reconcileDue())).toBe(1);
+    expect(context.observability.values('oldest_pending_age_seconds')).toEqual([60]);
     const approved = valueOf(
       await context.service.getTransaction(submission.transactionId, ready.capability),
     );
@@ -341,6 +342,7 @@ describe('CheckoutService vertical payment flow', () => {
     const delivery = valueOf(await context.service.getDelivery(deliveryId, ready.capability));
     expect(delivery).toMatchObject({ transactionId: submission.transactionId, status: 'CREATED' });
     expect(valueOf(await context.service.reconcileDue())).toBe(0);
+    expect(context.observability.values('oldest_pending_age_seconds')).toEqual([60, 0]);
     const repeated = valueOf(
       await context.repository.finalize(
         submission.transactionId,
@@ -355,6 +357,21 @@ describe('CheckoutService vertical payment flow', () => {
       valueOf(await context.service.getCheckout(ready.checkout.checkoutId, ready.capability))
         .checkout.status,
     ).toBe('PAID');
+  });
+
+  it('reports global pending age during future backoff and clears it after finalization', async () => {
+    const context = harness({ scenario: 'FAKE-E5-01' });
+    const ready = await readyCheckout(context.service);
+    valueOf(await submit(context.service, ready));
+
+    context.advance(30_000);
+    expect(valueOf(await context.service.reconcileDue())).toBe(0);
+    expect(context.observability.values('oldest_pending_age_seconds')).toEqual([30]);
+
+    context.advance(30_000);
+    expect(valueOf(await context.service.reconcileDue())).toBe(1);
+    expect(valueOf(await context.service.reconcileDue())).toBe(0);
+    expect(context.observability.values('oldest_pending_age_seconds')).toEqual([30, 60, 0]);
   });
 
   it.each([
@@ -1273,11 +1290,17 @@ describe('CheckoutService vertical payment flow', () => {
       ),
     ).resolves.toEqual(err({ code: 'INTERNAL_ERROR' }));
 
+    const failedClaimDue = jest
+      .fn()
+      .mockResolvedValue(err({ code: 'REPOSITORY_UNAVAILABLE' as const }));
     const repositoryFailure = {
       findTransaction: jest
         .fn()
         .mockResolvedValue(err({ code: 'REPOSITORY_UNAVAILABLE' as const })),
-      claimDue: jest.fn().mockResolvedValue(err({ code: 'REPOSITORY_UNAVAILABLE' as const })),
+      findOldestPendingAcceptedAt: jest
+        .fn()
+        .mockResolvedValue(err({ code: 'REPOSITORY_UNAVAILABLE' as const })),
+      claimDue: failedClaimDue,
     } as unknown as CheckoutRepository;
     const repositoryFailureService = new CheckoutService(
       context.catalog,
@@ -1292,6 +1315,7 @@ describe('CheckoutService vertical payment flow', () => {
     await expect(repositoryFailureService.reconcileDue()).resolves.toEqual(
       err({ code: 'INTERNAL_ERROR' }),
     );
+    expect(failedClaimDue).not.toHaveBeenCalled();
 
     const submission = valueOf(await submit(context.service, ready));
     await expect(context.service.getTransaction(submission.transactionId, null)).resolves.toEqual(

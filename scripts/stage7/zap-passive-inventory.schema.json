@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ivanmonsalve0404/async-checkout-demo/schemas/stage7/zap-passive-inventory.schema.json",
+  "title": "Stage 7 exact passive ZAP request inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "status",
+    "targetOriginSha256",
+    "openApiRawSha256",
+    "requestCount",
+    "requests",
+    "requestsSha256",
+    "redirectsAllowed",
+    "activeScanAllowed",
+    "mutationRequestsAllowed",
+    "containsSensitiveData",
+    "inventorySha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 7 },
+    "kind": { "const": "ZAP_PASSIVE_EXACT_REQUEST_INVENTORY" },
+    "status": { "const": "APPROVED_BEFORE_EGRESS" },
+    "targetOriginSha256": { "$ref": "#/$defs/sha256" },
+    "openApiRawSha256": { "$ref": "#/$defs/sha256" },
+    "requestCount": { "const": 6 },
+    "requests": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "prefixItems": [
+        { "$ref": "#/$defs/root" },
+        { "$ref": "#/$defs/products" },
+        { "$ref": "#/$defs/missingProduct" },
+        { "$ref": "#/$defs/docs" },
+        { "$ref": "#/$defs/live" },
+        { "$ref": "#/$defs/ready" }
+      ],
+      "items": false
+    },
+    "requestsSha256": { "$ref": "#/$defs/sha256" },
+    "redirectsAllowed": { "const": false },
+    "activeScanAllowed": { "const": false },
+    "mutationRequestsAllowed": { "const": false },
+    "containsSensitiveData": { "const": false },
+    "inventorySha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "method",
+        "path",
+        "source",
+        "expectedStatus",
+        "followRedirects",
+        "mutationExpected",
+        "responseBodyPersisted"
+      ],
+      "properties": {
+        "requestId": { "type": "string", "pattern": "^ZAP-PASSIVE-0[1-6]$" },
+        "method": { "const": "GET" },
+        "path": { "type": "string", "pattern": "^/" },
+        "source": { "type": "string", "minLength": 1 },
+        "expectedStatus": { "enum": [200, 404] },
+        "followRedirects": { "const": false },
+        "mutationExpected": { "const": false },
+        "responseBodyPersisted": { "const": false }
+      }
+    },
+    "root": {
+      "allOf": [
+        { "$ref": "#/$defs/request" },
+        {
+          "properties": {
+            "requestId": { "const": "ZAP-PASSIVE-01" },
+            "path": { "const": "/" },
+            "source": { "const": "WEB_ROOT" },
+            "expectedStatus": { "const": 200 }
+          }
+        }
+      ]
+    },
+    "products": {
+      "allOf": [
+        { "$ref": "#/$defs/request" },
+        {
+          "properties": {
+            "requestId": { "const": "ZAP-PASSIVE-02" },
+            "path": { "const": "/api/v1/products" },
+            "source": { "const": "OPENAPI:listProducts" },
+            "expectedStatus": { "const": 200 }
+          }
+        }
+      ]
+    },
+    "missingProduct": {
+      "allOf": [
+        { "$ref": "#/$defs/request" },
+        {
+          "properties": {
+            "requestId": { "const": "ZAP-PASSIVE-03" },
+            "path": { "type": "string", "pattern": "^/api/v1/products/stage7-zap-[0-9a-f]{32}$" },
+            "source": { "const": "OPENAPI:getProduct:DETERMINISTIC_MISSING_ID" },
+            "expectedStatus": { "const": 404 }
+          }
+        }
+      ]
+    },
+    "docs": {
+      "allOf": [
+        { "$ref": "#/$defs/request" },
+        {
+          "properties": {
+            "requestId": { "const": "ZAP-PASSIVE-04" },
+            "path": { "const": "/api/docs" },
+            "source": { "const": "OPENAPI:getApiDocumentation" },
+            "expectedStatus": { "const": 200 }
+          }
+        }
+      ]
+    },
+    "live": {
+      "allOf": [
+        { "$ref": "#/$defs/request" },
+        {
+          "properties": {
+            "requestId": { "const": "ZAP-PASSIVE-05" },
+            "path": { "const": "/api/health/live" },
+            "source": { "const": "OPENAPI:getLiveness" },
+            "expectedStatus": { "const": 200 }
+          }
+        }
+      ]
+    },
+    "ready": {
+      "allOf": [
+        { "$ref": "#/$defs/request" },
+        {
+          "properties": {
+            "requestId": { "const": "ZAP-PASSIVE-06" },
+            "path": { "const": "/api/health/ready" },
+            "source": { "const": "OPENAPI:getReadiness" },
+            "expectedStatus": { "const": 200 }
+          }
+        }
+      ]
+    }
+  }
+}

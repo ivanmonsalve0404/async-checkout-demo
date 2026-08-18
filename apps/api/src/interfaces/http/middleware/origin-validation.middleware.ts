@@ -1,18 +1,41 @@
 import { Inject, Injectable, type NestMiddleware } from '@nestjs/common';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 import { APP_CONFIG, type AppConfig } from '../../../infrastructure/configuration/app-config';
+import {
+  RUNTIME_SECRETS,
+  type RuntimeSecrets,
+} from '../../../infrastructure/configuration/runtime-secrets';
 import { createProblem, ProblemException } from '../problems/problem';
 import type { RequestWithCorrelation } from '../request-context';
 
 const unsafeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const jsonMethods = new Set(['POST', 'PUT', 'PATCH']);
+export const PRERELEASE_ORIGIN_HEADER = 'x-stage7-origin-verify';
+const digest = (value: string): Buffer => createHash('sha256').update(value, 'utf8').digest();
 
 @Injectable()
 export class OriginValidationMiddleware implements NestMiddleware {
-  public constructor(@Inject(APP_CONFIG) private readonly config: AppConfig) {}
+  public constructor(
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
+    @Inject(RUNTIME_SECRETS) private readonly secrets: RuntimeSecrets,
+  ) {}
 
   public use(request: Request, response: Response, next: NextFunction): void {
     void response;
+    if (
+      this.config.prereleaseAccessMode === 'origin_gate' ||
+      this.config.prereleaseAccessMode === 'cloudfront_signed_cookie'
+    ) {
+      const supplied = request.header(PRERELEASE_ORIGIN_HEADER) ?? '';
+      const expected = this.secrets.prereleaseOriginToken;
+      if (expected === undefined || !timingSafeEqual(digest(supplied), digest(expected))) {
+        const correlated = request as RequestWithCorrelation;
+        throw new ProblemException(
+          createProblem('ORIGIN_FORBIDDEN', 403, correlated.correlationId, correlated.originalUrl),
+        );
+      }
+    }
     const origin = request.header('origin');
     const crossSite = request.header('sec-fetch-site') === 'cross-site';
     const forbidden =

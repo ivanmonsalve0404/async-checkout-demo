@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checkout.example.invalid/schemas/stage7/rollback-resilience-journal.schema.json",
+  "title": "Stage 7 append-only SSM rollback journal",
+  "oneOf": [
+    { "$ref": "#/$defs/premutationAuthority" },
+    { "$ref": "#/$defs/owner" },
+    { "$ref": "#/$defs/manifest" },
+    { "$ref": "#/$defs/abandoned" }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "candidateSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "runId": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+    "rollbackBindingPreimage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "freezeManifestSha256",
+        "previousReleaseManifestSha256",
+        "candidateRecordSha256",
+        "approvalSha256",
+        "awsAuthEvidenceSha256",
+        "iamEffectivePermissionsBindingSha256",
+        "approvedPlanSha256",
+        "deploymentEvidenceSha256",
+        "observabilityEvidenceSha256",
+        "activationEvidenceSha256",
+        "externalAuthorizationEvidenceSha256",
+        "authorizationBudgetSha256",
+        "reconciliationRecoveryRoleAuthoritySha256",
+        "baseRehearsalSha256"
+      ],
+      "properties": {
+        "freezeManifestSha256": { "$ref": "#/$defs/sha256" },
+        "previousReleaseManifestSha256": { "$ref": "#/$defs/sha256" },
+        "candidateRecordSha256": { "$ref": "#/$defs/sha256" },
+        "approvalSha256": { "$ref": "#/$defs/sha256" },
+        "awsAuthEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "iamEffectivePermissionsBindingSha256": { "$ref": "#/$defs/sha256" },
+        "approvedPlanSha256": { "$ref": "#/$defs/sha256" },
+        "deploymentEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "observabilityEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "activationEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "externalAuthorizationEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "authorizationBudgetSha256": { "$ref": "#/$defs/sha256" },
+        "reconciliationRecoveryRoleAuthoritySha256": { "$ref": "#/$defs/sha256" },
+        "baseRehearsalSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "premutationExecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "repository",
+        "workflow",
+        "runId",
+        "runAttempt",
+        "githubActions",
+        "githubRef",
+        "githubSha",
+        "protectedEnvironment",
+        "accountId",
+        "region",
+        "roleArn",
+        "startedAtUtc"
+      ],
+      "properties": {
+        "mode": { "const": "AWS_REAL" },
+        "repository": { "const": "ivanmonsalve0404/async-checkout-demo" },
+        "workflow": { "const": "stage7-rollback-resilience.yml" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "runAttempt": { "const": "1" },
+        "githubActions": { "const": true },
+        "githubRef": { "const": "refs/heads/master" },
+        "githubSha": { "$ref": "#/$defs/candidateSha" },
+        "protectedEnvironment": { "const": "assessment-release-recovery" },
+        "accountId": { "type": "string", "pattern": "^[0-9]{12}$" },
+        "region": { "type": "string", "pattern": "^[a-z]{2}(-gov)?-[a-z]+-[1-9][0-9]*$" },
+        "roleArn": {
+          "type": "string",
+          "pattern": "^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$"
+        },
+        "startedAtUtc": { "type": "string", "format": "date-time" }
+      }
+    },
+    "premutationAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "candidateSha",
+        "scenarioId",
+        "releaseId",
+        "releaseTag",
+        "configSha256",
+        "rollbackBindingPreimage",
+        "execution",
+        "executionSha256",
+        "bindingSha256",
+        "protectedBindingSha256",
+        "rollbackRoleSha256",
+        "journalCleanupRoleSha256",
+        "journalLifecycleSha256",
+        "parameterName",
+        "containsSensitiveData",
+        "authoritySha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "ROLLBACK_RESILIENCE_SSM_PREMUTATION_AUTHORITY" },
+        "status": { "const": "PREMUTATION_PREIMAGE_BOUND_IMMUTABLE" },
+        "candidateSha": { "$ref": "#/$defs/candidateSha" },
+        "scenarioId": { "enum": ["RB-E7-06", "RB-E7-08"] },
+        "releaseId": {
+          "type": "string",
+          "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$"
+        },
+        "releaseTag": {
+          "type": "string",
+          "pattern": "^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-rc\\.[1-9][0-9]*)?$"
+        },
+        "configSha256": { "$ref": "#/$defs/sha256" },
+        "rollbackBindingPreimage": { "$ref": "#/$defs/rollbackBindingPreimage" },
+        "execution": { "$ref": "#/$defs/premutationExecution" },
+        "executionSha256": { "$ref": "#/$defs/sha256" },
+        "bindingSha256": { "$ref": "#/$defs/sha256" },
+        "protectedBindingSha256": { "$ref": "#/$defs/sha256" },
+        "rollbackRoleSha256": { "$ref": "#/$defs/sha256" },
+        "journalCleanupRoleSha256": { "$ref": "#/$defs/sha256" },
+        "journalLifecycleSha256": { "$ref": "#/$defs/sha256" },
+        "parameterName": {
+          "type": "string",
+          "pattern": "^/checkout/stage7/rollback/[0-9a-f]{40}/RB-E7-(06|08)/premutation-authority$"
+        },
+        "containsSensitiveData": { "const": false },
+        "authoritySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "previousStateSha256": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
+    },
+    "owner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "candidateSha",
+        "scenarioId",
+        "sourceRunId",
+        "sourceRunAttempt",
+        "bindingSha256",
+        "protectedBindingSha256",
+        "rollbackRoleSha256",
+        "journalCleanupRoleSha256",
+        "journalLifecycleSha256",
+        "premutationAuthorityParameterName",
+        "premutationAuthorityRawSha256",
+        "premutationAuthorityCanonicalSha256",
+        "premutationAuthorityBytes",
+        "parameterName",
+        "containsSensitiveData",
+        "ownerSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "ROLLBACK_RESILIENCE_SSM_JOURNAL_OWNER" },
+        "status": { "const": "OWNED_IMMUTABLE" },
+        "candidateSha": { "$ref": "#/$defs/candidateSha" },
+        "scenarioId": { "enum": ["RB-E7-06", "RB-E7-08"] },
+        "sourceRunId": { "$ref": "#/$defs/runId" },
+        "sourceRunAttempt": { "const": 1 },
+        "bindingSha256": { "$ref": "#/$defs/sha256" },
+        "protectedBindingSha256": { "$ref": "#/$defs/sha256" },
+        "rollbackRoleSha256": { "$ref": "#/$defs/sha256" },
+        "journalCleanupRoleSha256": { "$ref": "#/$defs/sha256" },
+        "journalLifecycleSha256": { "$ref": "#/$defs/sha256" },
+        "premutationAuthorityParameterName": {
+          "type": "string",
+          "pattern": "^/checkout/stage7/rollback/[0-9a-f]{40}/RB-E7-(06|08)/premutation-authority$"
+        },
+        "premutationAuthorityRawSha256": { "$ref": "#/$defs/sha256" },
+        "premutationAuthorityCanonicalSha256": { "$ref": "#/$defs/sha256" },
+        "premutationAuthorityBytes": { "type": "integer", "minimum": 2, "maximum": 3900 },
+        "parameterName": {
+          "type": "string",
+          "pattern": "^/checkout/stage7/rollback/[0-9a-f]{40}/RB-E7-(06|08)/owner$"
+        },
+        "containsSensitiveData": { "const": false },
+        "ownerSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "sequence",
+        "stateSha256",
+        "previousStateSha256",
+        "encoding",
+        "chunks",
+        "payloadBytes",
+        "payloadSha256",
+        "containsSensitiveData"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "const": "ROLLBACK_RESILIENCE_SSM_JOURNAL_ENTRY" },
+        "sequence": { "type": "integer", "minimum": 1, "maximum": 999999 },
+        "stateSha256": { "$ref": "#/$defs/sha256" },
+        "previousStateSha256": { "$ref": "#/$defs/previousStateSha256" },
+        "encoding": { "const": "gzip-base64" },
+        "chunks": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "payloadBytes": { "type": "integer", "minimum": 2 },
+        "payloadSha256": { "$ref": "#/$defs/sha256" },
+        "containsSensitiveData": { "const": false }
+      }
+    },
+    "abandoned": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "sequence",
+        "stateSha256",
+        "previousStateSha256",
+        "replacementStateSha256",
+        "containsSensitiveData"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "const": "ROLLBACK_RESILIENCE_SSM_JOURNAL_ABANDONED" },
+        "sequence": { "type": "integer", "minimum": 1, "maximum": 999999 },
+        "stateSha256": { "$ref": "#/$defs/sha256" },
+        "previousStateSha256": { "$ref": "#/$defs/previousStateSha256" },
+        "replacementStateSha256": { "$ref": "#/$defs/sha256" },
+        "containsSensitiveData": { "const": false }
+      }
+    }
+  }
+}

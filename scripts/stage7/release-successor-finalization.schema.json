@@ -1,0 +1,389 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ivanmonsalve0404/async-checkout-demo/schemas/stage7/release-successor-finalization.schema.json",
+  "title": "Stage 7 immutable release fence, finalization marker and provenance",
+  "oneOf": [
+    { "$ref": "#/$defs/fence" },
+    { "$ref": "#/$defs/marker" },
+    { "$ref": "#/$defs/provenance" }
+  ],
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runId": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+    "releaseId": {
+      "type": "string",
+      "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$"
+    },
+    "evidenceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rawSha256", "canonicalSha256", "bytes"],
+      "properties": {
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 2, "maximum": 16777216 }
+      }
+    },
+    "evidenceBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approval", "activation", "drift", "rollbackCompletion", "preFenceGate"],
+      "properties": {
+        "approval": { "$ref": "#/$defs/evidenceBinding" },
+        "activation": { "$ref": "#/$defs/evidenceBinding" },
+        "drift": { "$ref": "#/$defs/evidenceBinding" },
+        "rollbackCompletion": { "$ref": "#/$defs/evidenceBinding" },
+        "preFenceGate": { "$ref": "#/$defs/evidenceBinding" }
+      }
+    },
+    "authorityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rawSha256", "canonicalSha256", "bytes"],
+      "properties": {
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 16777216 }
+      }
+    },
+    "rawAuthorityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rawSha256", "canonicalSha256", "bytes"],
+      "properties": {
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalSha256": { "type": "null" },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 16777216 }
+      }
+    },
+    "authorityBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "releaseMetadata",
+        "config",
+        "freeze",
+        "predecessor",
+        "predecessorApiContract",
+        "predecessorPending",
+        "predecessorSmoke",
+        "candidateRecord",
+        "emergencyRecovery",
+        "emergencyRecoveryNoActionOutcome",
+        "approvedPlan",
+        "rawDiff",
+        "githubApproval",
+        "approval",
+        "activation",
+        "drift",
+        "rollback",
+        "rollbackSourceBinding",
+        "rollbackProtectedRun",
+        "rollbackCompletion",
+        "reconciliationRollbackCheck",
+        "reconciliationRollbackResilience",
+        "preFenceGate",
+        "rollbackInputs",
+        "rb06Descriptor",
+        "rb08Descriptor",
+        "awsAuth",
+        "journalRoleEffectivePermissions",
+        "reconciliationRecoveryRoleEffectivePermissions"
+      ],
+      "properties": {
+        "releaseMetadata": { "$ref": "#/$defs/authorityBinding" },
+        "config": { "$ref": "#/$defs/authorityBinding" },
+        "freeze": { "$ref": "#/$defs/authorityBinding" },
+        "predecessor": { "$ref": "#/$defs/authorityBinding" },
+        "predecessorApiContract": { "$ref": "#/$defs/authorityBinding" },
+        "predecessorPending": { "$ref": "#/$defs/authorityBinding" },
+        "predecessorSmoke": { "$ref": "#/$defs/authorityBinding" },
+        "candidateRecord": { "$ref": "#/$defs/authorityBinding" },
+        "emergencyRecovery": { "$ref": "#/$defs/authorityBinding" },
+        "emergencyRecoveryNoActionOutcome": { "$ref": "#/$defs/authorityBinding" },
+        "approvedPlan": { "$ref": "#/$defs/authorityBinding" },
+        "rawDiff": { "$ref": "#/$defs/rawAuthorityBinding" },
+        "githubApproval": { "$ref": "#/$defs/authorityBinding" },
+        "approval": { "$ref": "#/$defs/authorityBinding" },
+        "activation": { "$ref": "#/$defs/authorityBinding" },
+        "drift": { "$ref": "#/$defs/authorityBinding" },
+        "rollback": { "$ref": "#/$defs/authorityBinding" },
+        "rollbackSourceBinding": { "$ref": "#/$defs/authorityBinding" },
+        "rollbackProtectedRun": { "$ref": "#/$defs/authorityBinding" },
+        "rollbackCompletion": { "$ref": "#/$defs/authorityBinding" },
+        "reconciliationRollbackCheck": { "$ref": "#/$defs/authorityBinding" },
+        "reconciliationRollbackResilience": { "$ref": "#/$defs/authorityBinding" },
+        "preFenceGate": { "$ref": "#/$defs/authorityBinding" },
+        "rollbackInputs": { "$ref": "#/$defs/authorityBinding" },
+        "rb06Descriptor": { "$ref": "#/$defs/authorityBinding" },
+        "rb08Descriptor": { "$ref": "#/$defs/authorityBinding" },
+        "awsAuth": { "$ref": "#/$defs/authorityBinding" },
+        "journalRoleEffectivePermissions": { "$ref": "#/$defs/authorityBinding" },
+        "reconciliationRecoveryRoleEffectivePermissions": {
+          "$ref": "#/$defs/authorityBinding"
+        }
+      }
+    },
+    "fence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "repository",
+        "sourceWorkflowPath",
+        "sourceRunId",
+        "sourceRunAttempt",
+        "candidateSha",
+        "releaseId",
+        "journalLifecycleSha256",
+        "journalCleanupRoleSha256",
+        "journalRoleAuthoritySha256",
+        "evidenceBindings",
+        "authoritySetSha256",
+        "mutationsBlocked",
+        "orphanedFailurePolicy",
+        "containsSensitiveData",
+        "fenceSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "RELEASE_SUCCESSOR_RELEASE_COMPLETION_FENCE" },
+        "status": { "const": "RELEASE_EVIDENCE_FENCED_IMMUTABLE" },
+        "repository": { "const": "ivanmonsalve0404/async-checkout-demo" },
+        "sourceWorkflowPath": { "const": ".github/workflows/release.yml" },
+        "sourceRunId": { "$ref": "#/$defs/runId" },
+        "sourceRunAttempt": { "const": 1 },
+        "candidateSha": { "$ref": "#/$defs/sha" },
+        "releaseId": { "$ref": "#/$defs/releaseId" },
+        "journalLifecycleSha256": { "$ref": "#/$defs/sha256" },
+        "journalCleanupRoleSha256": { "$ref": "#/$defs/sha256" },
+        "journalRoleAuthoritySha256": { "$ref": "#/$defs/sha256" },
+        "evidenceBindings": { "$ref": "#/$defs/evidenceBindings" },
+        "authoritySetSha256": { "$ref": "#/$defs/sha256" },
+        "mutationsBlocked": { "const": true },
+        "orphanedFailurePolicy": {
+          "const": "BLOCKED_FENCE_REQUIRES_SEPARATE_AUTHORIZED_RECOVERY"
+        },
+        "containsSensitiveData": { "const": false },
+        "fenceSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "marker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "repository",
+        "sourceWorkflowPath",
+        "sourceRunId",
+        "sourceRunAttempt",
+        "candidateSha",
+        "releaseId",
+        "releaseEvidenceSetSha256",
+        "journalLifecycleSha256",
+        "releaseFenceSha256",
+        "journalRoleAuthoritySha256",
+        "containsSensitiveData",
+        "markerSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "RELEASE_SUCCESSOR_RECOVERY_FINALIZATION_MARKER" },
+        "status": { "const": "FINALIZED_IMMUTABLE" },
+        "repository": { "const": "ivanmonsalve0404/async-checkout-demo" },
+        "sourceWorkflowPath": { "const": ".github/workflows/release.yml" },
+        "sourceRunId": { "$ref": "#/$defs/runId" },
+        "sourceRunAttempt": { "const": 1 },
+        "candidateSha": { "$ref": "#/$defs/sha" },
+        "releaseId": { "$ref": "#/$defs/releaseId" },
+        "releaseEvidenceSetSha256": { "$ref": "#/$defs/sha256" },
+        "journalLifecycleSha256": { "$ref": "#/$defs/sha256" },
+        "releaseFenceSha256": { "$ref": "#/$defs/sha256" },
+        "journalRoleAuthoritySha256": { "$ref": "#/$defs/sha256" },
+        "containsSensitiveData": { "const": false },
+        "markerSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "parameterBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "parameterName",
+        "parameterNameSha256",
+        "version",
+        "valueRawSha256",
+        "valueCanonicalSha256"
+      ],
+      "properties": {
+        "parameterName": { "type": "string", "minLength": 1 },
+        "parameterNameSha256": { "$ref": "#/$defs/sha256" },
+        "version": { "const": 1 },
+        "valueRawSha256": { "$ref": "#/$defs/sha256" },
+        "valueCanonicalSha256": { "$ref": "#/$defs/sha256" },
+        "fenceSha256": { "$ref": "#/$defs/sha256" },
+        "markerSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "roleAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accountIdSha256",
+        "awsCliVersion",
+        "awsCliVersionSha256",
+        "roleAuditCanonicalSha256",
+        "trustPolicySha256",
+        "permissionsBoundaryArnSha256",
+        "trustSubjectsSha256",
+        "effectivePolicyProjectionSha256"
+      ],
+      "properties": {
+        "accountIdSha256": { "$ref": "#/$defs/sha256" },
+        "awsCliVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "awsCliVersionSha256": { "$ref": "#/$defs/sha256" },
+        "roleAuditCanonicalSha256": { "$ref": "#/$defs/sha256" },
+        "trustPolicySha256": { "$ref": "#/$defs/sha256" },
+        "permissionsBoundaryArnSha256": { "$ref": "#/$defs/sha256" },
+        "trustSubjectsSha256": { "$ref": "#/$defs/sha256" },
+        "effectivePolicyProjectionSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "callerAttemptAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assumedRoleArnSha256",
+        "sessionNameSha256",
+        "callerIdentityRawSha256",
+        "callerIdentityCanonicalSha256"
+      ],
+      "properties": {
+        "assumedRoleArnSha256": { "$ref": "#/$defs/sha256" },
+        "sessionNameSha256": { "$ref": "#/$defs/sha256" },
+        "callerIdentityRawSha256": { "$ref": "#/$defs/sha256" },
+        "callerIdentityCanonicalSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "auditEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "awsVersionRawSha256",
+        "roleAuditRawSha256",
+        "awsAuthRawSha256",
+        "awsAuthCanonicalSha256",
+        "effectivePermissionsFrozenRawSha256",
+        "effectivePermissionsLiveRawSha256",
+        "effectivePermissionsLiveCanonicalSha256",
+        "effectivePermissionsFrozenSha256",
+        "effectivePermissionsLiveSha256"
+      ],
+      "properties": {
+        "awsVersionRawSha256": { "$ref": "#/$defs/sha256" },
+        "roleAuditRawSha256": { "$ref": "#/$defs/sha256" },
+        "awsAuthRawSha256": { "$ref": "#/$defs/sha256" },
+        "awsAuthCanonicalSha256": { "$ref": "#/$defs/sha256" },
+        "effectivePermissionsFrozenRawSha256": { "$ref": "#/$defs/sha256" },
+        "effectivePermissionsLiveRawSha256": { "$ref": "#/$defs/sha256" },
+        "effectivePermissionsLiveCanonicalSha256": { "$ref": "#/$defs/sha256" },
+        "effectivePermissionsFrozenSha256": { "$ref": "#/$defs/sha256" },
+        "effectivePermissionsLiveSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "journalCleanupRoleSha256",
+        "rollbackRoleSha256",
+        "ephemeralCleanupRoleSha256",
+        "roleAuthority",
+        "roleAuthoritySha256",
+        "callerAttemptAuthority",
+        "callerAttemptAuthoritySha256",
+        "auditEvidence",
+        "auditEvidenceSha256",
+        "rolesDistinct"
+      ],
+      "properties": {
+        "journalCleanupRoleSha256": { "$ref": "#/$defs/sha256" },
+        "rollbackRoleSha256": { "$ref": "#/$defs/sha256" },
+        "ephemeralCleanupRoleSha256": { "$ref": "#/$defs/sha256" },
+        "roleAuthority": { "$ref": "#/$defs/roleAuthority" },
+        "roleAuthoritySha256": { "$ref": "#/$defs/sha256" },
+        "callerAttemptAuthority": { "$ref": "#/$defs/callerAttemptAuthority" },
+        "callerAttemptAuthoritySha256": { "$ref": "#/$defs/sha256" },
+        "auditEvidence": { "$ref": "#/$defs/auditEvidence" },
+        "auditEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "rolesDistinct": { "const": true }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "candidateSha",
+        "releaseId",
+        "sourceRunId",
+        "sourceRunAttempt",
+        "decision",
+        "safeToHandoff",
+        "releaseEvidenceSetSha256",
+        "journalLifecycleSha256",
+        "releaseFence",
+        "marker",
+        "authority",
+        "writeMode",
+        "idempotent",
+        "completedAtUtc",
+        "authorityReadRequests",
+        "externalRequests",
+        "mutationsPerformed",
+        "containsSensitiveData",
+        "provenanceSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "RELEASE_SUCCESSOR_FINAL_DISABLE_PROVENANCE" },
+        "status": { "const": "PASS" },
+        "candidateSha": { "$ref": "#/$defs/sha" },
+        "releaseId": { "$ref": "#/$defs/releaseId" },
+        "sourceRunId": { "$ref": "#/$defs/runId" },
+        "sourceRunAttempt": { "const": 1 },
+        "decision": { "const": "SAME_RUN_RECOVERY_FINALIZED" },
+        "safeToHandoff": { "const": true },
+        "releaseEvidenceSetSha256": { "$ref": "#/$defs/sha256" },
+        "journalLifecycleSha256": { "$ref": "#/$defs/sha256" },
+        "releaseFence": {
+          "allOf": [{ "$ref": "#/$defs/parameterBinding" }, { "required": ["fenceSha256"] }]
+        },
+        "marker": {
+          "allOf": [{ "$ref": "#/$defs/parameterBinding" }, { "required": ["markerSha256"] }]
+        },
+        "authority": { "$ref": "#/$defs/authority" },
+        "writeMode": { "const": "SSM_PUT_PARAMETER_OVERWRITE_FALSE_THEN_GET" },
+        "idempotent": { "type": "boolean" },
+        "completedAtUtc": { "type": "string", "format": "date-time" },
+        "authorityReadRequests": { "type": "integer", "minimum": 7 },
+        "externalRequests": { "type": "integer", "minimum": 10 },
+        "mutationsPerformed": { "enum": [0, 1] },
+        "containsSensitiveData": { "const": false },
+        "provenanceSha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

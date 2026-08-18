@@ -56,6 +56,7 @@ export interface PaymentProvider {
       captureVariant: 'FAKE_CONTRACT' | 'DIRECT_JWE' | 'HOSTED_COMPONENT';
       publicKey: string;
       installments: readonly number[];
+      authorizedUntilUtc?: string;
     }>,
     ProviderError
   >;

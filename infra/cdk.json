@@ -7,6 +7,7 @@
     "paymentAdapter": "fake",
     "paymentsEnabled": false,
     "tokenizationMode": "disabled",
+    "@aws-cdk/core:defaultCrossStackReferences": "strong",
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true
   }
 }

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ivanmonsalve0404/async-checkout-demo/schemas/stage7/release-successor-source.schema.json",
+  "title": "Stage 7 target-independent release-successor source index",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "status",
+    "artifactName",
+    "sourceRunId",
+    "sourceRunAttempt",
+    "sourceHeadSha",
+    "sourceReleaseId",
+    "sourceProvenanceSha256",
+    "reconciliationJournalAuthoritySha256",
+    "releaseFenceAuthoritySetSha256",
+    "journalSnapshotBinding",
+    "files",
+    "immutable",
+    "targetCandidateBound",
+    "targetFreezeManifestSha256",
+    "containsSensitiveData",
+    "createdAtUtc",
+    "bundleSha256",
+    "indexSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 7 },
+    "kind": { "const": "STAGE7_RELEASE_SUCCESSOR_SOURCE_BUNDLE" },
+    "status": { "const": "RELEASE_N_POST_SUCCESS_VALIDATED" },
+    "artifactName": { "const": "stage7-release-successor-source" },
+    "sourceRunId": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+    "sourceRunAttempt": { "const": 1 },
+    "sourceHeadSha": { "$ref": "#/$defs/sha" },
+    "sourceReleaseId": {
+      "type": "string",
+      "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$"
+    },
+    "sourceProvenanceSha256": { "$ref": "#/$defs/sha256" },
+    "reconciliationJournalAuthoritySha256": { "$ref": "#/$defs/sha256" },
+    "releaseFenceAuthoritySetSha256": { "$ref": "#/$defs/sha256" },
+    "journalSnapshotBinding": { "$ref": "#/$defs/journalSnapshotBinding" },
+    "files": {
+      "type": "array",
+      "minItems": 56,
+      "maxItems": 56,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/rawFile" }
+    },
+    "immutable": { "const": true },
+    "targetCandidateBound": { "const": false },
+    "targetFreezeManifestSha256": { "type": "null" },
+    "containsSensitiveData": { "const": false },
+    "createdAtUtc": { "type": "string", "format": "date-time" },
+    "bundleSha256": { "$ref": "#/$defs/sha256" },
+    "indexSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "journalSnapshotBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "rawSha256",
+        "canonicalSha256",
+        "bytes",
+        "snapshotSha256",
+        "targetNameSetSha256",
+        "entryCount"
+      ],
+      "properties": {
+        "path": { "const": "release-reconciliation-journal-snapshot.json" },
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 2 },
+        "snapshotSha256": { "$ref": "#/$defs/sha256" },
+        "targetNameSetSha256": { "$ref": "#/$defs/sha256" },
+        "entryCount": { "type": "integer", "minimum": 3 }
+      }
+    },
+    "rawFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^release-successor-[a-z0-9-]+\\.(?:json|txt)$"
+        },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 16777216 }
+      }
+    }
+  }
+}
