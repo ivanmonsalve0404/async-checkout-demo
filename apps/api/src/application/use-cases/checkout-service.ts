@@ -234,7 +234,17 @@ export class CheckoutService {
     const contracts = this.currentMerchantContracts();
     if (!contracts.ok) return contracts;
     const [terms, personalData] = contracts.value;
-    const expiresAt = new Date(this.runtime.now().getTime() + 15 * 60 * 1000);
+    const now = this.runtime.now();
+    const providerExpiry = Date.parse(configuration.value.authorizedUntilUtc ?? '');
+    const expiresAt = new Date(
+      Math.min(
+        now.getTime() + 15 * 60 * 1000,
+        Number.isFinite(providerExpiry) ? providerExpiry : Number.POSITIVE_INFINITY,
+      ),
+    );
+    if (expiresAt.getTime() <= now.getTime()) {
+      return err({ code: 'PROVIDER_AUTH_OR_CONFIG_INVALID' });
+    }
     return ok({
       captureVariant: configuration.value.captureVariant,
       sandboxPublicKey: configuration.value.publicKey,
@@ -444,6 +454,13 @@ export class CheckoutService {
       RECONCILIATION_BATCH_SIZE,
     );
     if (!due.ok) return err({ code: 'INTERNAL_ERROR' });
+
+    const oldestPendingAgeSeconds = due.value.reduce((oldest, transaction) => {
+      const acceptedAt = Date.parse(transaction.acceptedAt);
+      if (!Number.isFinite(acceptedAt)) return oldest;
+      return Math.max(oldest, Math.floor((claimedAt.getTime() - acceptedAt) / 1000));
+    }, 0);
+    this.observability.observe('oldest_pending_age_seconds', oldestPendingAgeSeconds);
 
     let processed = 0;
     let providerReads = 0;

@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
@@ -14,8 +15,9 @@ import {
 } from '../stage6/lib/artifact-sanitizer.mjs';
 
 const ROOT = process.cwd();
-const API_ORIGIN = 'http://127.0.0.1:3000';
-const WEB_ORIGIN = 'http://127.0.0.1:4173';
+const LOOPBACK_HOST = '127.0.0.1';
+let apiOrigin;
+let webOrigin;
 const PRODUCT_ID = 'product-demo-001';
 const EDGE_PATH = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const EVIDENCE_PATH = path.join(
@@ -62,6 +64,112 @@ const check = (condition, code) => {
   if (!condition) throw new SmokeFailure(code);
 };
 
+const closeServer = (server) =>
+  new Promise((resolve, reject) => {
+    server.close((error) => (error === undefined ? resolve() : reject(error)));
+  });
+
+const listenOnLoopback = (server, port) =>
+  new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen({ host: LOOPBACK_HOST, port }, () => resolve());
+  });
+
+const isUsablePort = (value) =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 1024 && value <= 65_535;
+
+const configuredPort = (name) => {
+  const value = process.env[name];
+  if (value === undefined) return undefined;
+  const port = Number(value);
+  check(isUsablePort(port) && String(port) === value, `${name}_INVALID`);
+  return port;
+};
+
+const isLoopbackPortAvailable = async (port) => {
+  const server = createServer();
+  try {
+    await listenOnLoopback(server, port);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (server.listening) await closeServer(server);
+  }
+};
+
+const allocateLoopbackPort = async () => {
+  const server = createServer();
+  try {
+    await listenOnLoopback(server, 0);
+    const address = server.address();
+    check(
+      typeof address === 'object' && address !== null && isUsablePort(address.port),
+      'SMOKE_PORT_ALLOCATION_FAILED',
+    );
+    return address.port;
+  } finally {
+    if (server.listening) await closeServer(server);
+  }
+};
+
+const allocateDistinctLoopbackPort = async (excluded) => {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const port = await allocateLoopbackPort();
+    if (!excluded.has(port)) return port;
+  }
+  throw new SmokeFailure('SMOKE_PORT_ALLOCATION_COLLISION');
+};
+
+const configureOrigins = async () => {
+  const configuredApiPort = configuredPort('SMOKE_API_PORT');
+  const configuredWebPort = configuredPort('SMOKE_WEB_PORT');
+  const apiPort = configuredApiPort ?? (await allocateDistinctLoopbackPort(new Set()));
+  const webPort = configuredWebPort ?? (await allocateDistinctLoopbackPort(new Set([apiPort])));
+  check(apiPort !== webPort, 'SMOKE_PORTS_MUST_DIFFER');
+  if (configuredApiPort !== undefined) {
+    check(await isLoopbackPortAvailable(apiPort), 'SMOKE_API_PORT_IN_USE');
+  }
+  if (configuredWebPort !== undefined) {
+    check(await isLoopbackPortAvailable(webPort), 'SMOKE_WEB_PORT_IN_USE');
+  }
+  apiOrigin = `http://${LOOPBACK_HOST}:${apiPort}`;
+  webOrigin = `http://${LOOPBACK_HOST}:${webPort}`;
+  return { apiPort, webPort };
+};
+
+const runPortAllocationSelfTest = async () => {
+  const blocker = createServer();
+  await listenOnLoopback(blocker, 0);
+  const address = blocker.address();
+  check(
+    typeof address === 'object' && address !== null && isUsablePort(address.port),
+    'SMOKE_PORT_SELF_TEST_SETUP_FAILED',
+  );
+  const originalApiPort = process.env.SMOKE_API_PORT;
+  try {
+    process.env.SMOKE_API_PORT = String(address.port);
+    let failure;
+    try {
+      await configureOrigins();
+    } catch (error) {
+      failure = error;
+    }
+    check(
+      failure instanceof SmokeFailure && failure.code === 'SMOKE_API_PORT_IN_USE',
+      'SMOKE_PORT_COLLISION_CANARY_FAILED',
+    );
+  } finally {
+    if (originalApiPort === undefined) {
+      delete process.env.SMOKE_API_PORT;
+    } else {
+      process.env.SMOKE_API_PORT = originalApiPort;
+    }
+    await closeServer(blocker);
+  }
+  process.stdout.write('SMOKE_PORT_ALLOCATION_SELF_TEST PASS\n');
+};
+
 const within = async (promise, timeoutMs, code) => {
   let timer;
   const deadline = new Promise((_, reject) => {
@@ -76,7 +184,7 @@ const within = async (promise, timeoutMs, code) => {
 
 const localUrl = (pathname) => {
   check(pathname.startsWith('/api/'), 'NON_API_PATH_REJECTED');
-  return `${WEB_ORIGIN}${pathname}`;
+  return `${webOrigin}${pathname}`;
 };
 
 const isLoopback = (candidate) => {
@@ -198,7 +306,11 @@ const waitFor = async (name, child, url, attempts = 100) => {
     if (child.exitCode !== null) throw new SmokeFailure(`${name.toUpperCase()}_EXITED`);
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
-      if (response.ok) return;
+      if (response.ok) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        if (child.exitCode !== null) throw new SmokeFailure(`${name.toUpperCase()}_EXITED`);
+        return;
+      }
     } catch {
       // Bounded local startup polling only.
     }
@@ -210,8 +322,8 @@ const waitFor = async (name, child, url, attempts = 100) => {
 const guardedNodeOptions = () =>
   `${process.env.NODE_OPTIONS ?? ''} --import=${pathToFileURL(API_NETWORK_GUARD_PATH).href}`.trim();
 const apiEnvironment = (overrides) => ({
-  ALLOWED_ORIGIN: WEB_ORIGIN,
-  API_PORT: '3000',
+  ALLOWED_ORIGIN: webOrigin,
+  API_PORT: new URL(apiOrigin).port,
   APP_ENV: 'test',
   CHECKOUT_TTL_SECONDS: '1800',
   DATA_ADAPTER: 'memory',
@@ -221,7 +333,7 @@ const apiEnvironment = (overrides) => ({
   PAYMENTS_ENABLED: 'false',
   NODE_OPTIONS: guardedNodeOptions(),
   PRODUCT_INITIAL_STOCK: '3',
-  PUBLIC_ASSET_ORIGIN: WEB_ORIGIN,
+  PUBLIC_ASSET_ORIGIN: webOrigin,
   QUOTE_TTL_SECONDS: '900',
   TOKENIZATION_MODE: 'disabled',
   ...overrides,
@@ -246,7 +358,7 @@ const createApiSession = (context, inheritedCapability = () => undefined) => {
         ...(options.data === undefined ? {} : { data: options.data }),
         headers: {
           Accept: 'application/json',
-          Origin: WEB_ORIGIN,
+          Origin: webOrigin,
           'Sec-Fetch-Site': 'same-origin',
           ...(requestCapability === undefined ? {} : { Cookie: requestCapability }),
           ...options.headers,
@@ -462,7 +574,7 @@ const fillCustomerDelivery = async (page, fixture) => {
 };
 
 const openCheckoutAtCustomer = async (page) => {
-  await page.goto(`${WEB_ORIGIN}${PRODUCT_PATH}`);
+  await page.goto(`${webOrigin}${PRODUCT_PATH}`);
   await expect(page.getByTestId('product-surface')).toBeVisible({ timeout: 5_000 });
   await page.getByTestId('product-checkout-cta').click();
   await expect(page.getByTestId('checkout-step-payment')).toBeVisible({ timeout: 5_000 });
@@ -583,13 +695,22 @@ const assertApiNetworkGuard = async () => {
 };
 
 const run = async () => {
+  const { webPort } = await configureOrigins();
   const web = start(
     process.execPath,
-    [path.join(ROOT, 'apps', 'web', 'node_modules', 'vite', 'bin', 'vite.js'), 'preview'],
-    {},
+    [
+      path.join(ROOT, 'apps', 'web', 'node_modules', 'vite', 'bin', 'vite.js'),
+      'preview',
+      '--host',
+      LOOPBACK_HOST,
+      '--port',
+      String(webPort),
+      '--strictPort',
+    ],
+    { SMOKE_API_PROXY_TARGET: apiOrigin },
     path.join(ROOT, 'apps', 'web'),
   );
-  await waitFor('web', web, WEB_ORIGIN);
+  await waitFor('web', web, webOrigin);
 
   const executablePath =
     process.env.SMOKE_BROWSER_EXECUTABLE ??
@@ -625,7 +746,7 @@ const run = async () => {
             String(chunk).match(/SMOKE_EXTERNAL_NETWORK_BLOCKED/g)?.length ?? 0;
         },
       );
-      await waitFor(`api-${id}`, api, `${API_ORIGIN}/api/health`);
+      await waitFor(`api-${id}`, api, `${apiOrigin}/api/health`);
       context = await sharedBrowser.newContext({ viewport: { width: 390, height: 844 } });
       browserExternalRequests = await installBrowserNetworkGuard(context);
       const page = await context.newPage();
@@ -704,11 +825,11 @@ const run = async () => {
       mark('RETURN_TO_PRODUCT');
       await page.getByTestId('return-product').click();
       mark('WAIT_PRODUCT_ROUTE');
-      await expect(page).toHaveURL(`${WEB_ORIGIN}/products/${PRODUCT_ID}`);
+      await expect(page).toHaveURL(`${webOrigin}/products/${PRODUCT_ID}`);
       mark('REOPEN');
       await page.getByTestId('product-checkout-cta').click();
       mark('WAIT_STATUS_ROUTE');
-      await expect(page).toHaveURL(`${WEB_ORIGIN}/products/${PRODUCT_ID}/checkout/status`);
+      await expect(page).toHaveURL(`${webOrigin}/products/${PRODUCT_ID}/checkout/status`);
       mark('WAIT_PENDING_VISIBLE');
       const pendingRecovered = await page
         .getByTestId('transaction-pending')
@@ -725,8 +846,8 @@ const run = async () => {
       mark('CHECK_SINGLE_SUBMISSION');
       check(transactionPosts() === 1, 'PENDING_RECOVERY_DUPLICATED_SUBMISSION');
       mark('READ_HELD_STOCK');
-      const stockResponse = await fetch(`${API_ORIGIN}/api/v1/stock/${PRODUCT_ID}`, {
-        headers: { Accept: 'application/json', Origin: WEB_ORIGIN },
+      const stockResponse = await fetch(`${apiOrigin}/api/v1/stock/${PRODUCT_ID}`, {
+        headers: { Accept: 'application/json', Origin: webOrigin },
         signal: AbortSignal.timeout(5_000),
       });
       check(stockResponse.status === 200, 'PENDING_STOCK_HTTP_STATUS');
@@ -983,7 +1104,7 @@ const run = async () => {
     },
     async ({ page }) => {
       const transactionPosts = countRequests(page, 'POST', '/transactions');
-      await page.goto(`${WEB_ORIGIN}${PRODUCT_PATH}`);
+      await page.goto(`${webOrigin}${PRODUCT_PATH}`);
       await page.getByTestId('product-checkout-cta').click();
       await expect(page.getByTestId('checkout-expired')).toBeVisible({ timeout: 5_000 });
       check(transactionPosts() === 0, 'EXPIRED_SESSION_SUBMITTED_PAYMENT');
@@ -1130,7 +1251,9 @@ const runIsolatedMatrix = async () => {
 };
 
 try {
-  if (process.env.SMOKE_WORKER === '1' || process.env.SMOKE_ONLY !== undefined) {
+  if (process.argv.includes('--self-test')) {
+    await runPortAllocationSelfTest();
+  } else if (process.env.SMOKE_WORKER === '1' || process.env.SMOKE_ONLY !== undefined) {
     await run();
   } else {
     await runIsolatedMatrix();

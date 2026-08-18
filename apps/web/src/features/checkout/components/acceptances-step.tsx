@@ -23,6 +23,8 @@ export const AcceptancesStep = ({ configuration, onBack, onContinue }: Acceptanc
   const personalData = configuration.acceptanceContracts.find(
     ({ type }) => type === 'PERSONAL_DATA',
   );
+  const missingTerms = invalid && !termsAccepted;
+  const missingPersonalData = invalid && !personalDataAccepted;
 
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -77,6 +79,8 @@ export const AcceptancesStep = ({ configuration, onBack, onContinue }: Acceptanc
             <input
               type="checkbox"
               checked={termsAccepted}
+              aria-invalid={missingTerms ? true : undefined}
+              aria-describedby={missingTerms ? 'terms-acceptance-error' : undefined}
               onChange={(event) => {
                 setTermsAccepted(event.target.checked);
                 setInvalid(false);
@@ -89,6 +93,11 @@ export const AcceptancesStep = ({ configuration, onBack, onContinue }: Acceptanc
               </a>
               .
             </span>
+            {missingTerms && (
+              <span id="terms-acceptance-error" className="field-error acceptance-error">
+                Debes aceptar los términos y condiciones para continuar.
+              </span>
+            )}
           </label>
         )}
         {personalData !== undefined && (
@@ -96,6 +105,8 @@ export const AcceptancesStep = ({ configuration, onBack, onContinue }: Acceptanc
             <input
               type="checkbox"
               checked={personalDataAccepted}
+              aria-invalid={missingPersonalData ? true : undefined}
+              aria-describedby={missingPersonalData ? 'personal-data-acceptance-error' : undefined}
               onChange={(event) => {
                 setPersonalDataAccepted(event.target.checked);
                 setInvalid(false);
@@ -108,6 +119,11 @@ export const AcceptancesStep = ({ configuration, onBack, onContinue }: Acceptanc
               </a>
               .
             </span>
+            {missingPersonalData && (
+              <span id="personal-data-acceptance-error" className="field-error acceptance-error">
+                Debes autorizar el tratamiento de tus datos para continuar.
+              </span>
+            )}
           </label>
         )}
       </div>

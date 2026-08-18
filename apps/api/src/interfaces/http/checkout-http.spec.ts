@@ -10,6 +10,7 @@ import {
   customerSchema,
   parseBody,
   paymentSubmissionSchema,
+  paymentSubmissionSchemaFor,
   setCheckoutHeaders,
   unwrap,
 } from './checkout-http';
@@ -50,6 +51,23 @@ describe('checkout HTTP boundary helpers', () => {
       ),
     ).toMatchObject({ fullName: 'Ada Lovelace' });
     expect(parseBody(paymentSubmissionSchema, validPayment, request())).toEqual(validPayment);
+  });
+
+  it('keeps fake and authorized sandbox payment tokens mutually exclusive', () => {
+    const sandboxPayment = {
+      ...validPayment,
+      paymentMethodToken: 'tok_test_provideropaque123',
+    };
+
+    expect(
+      parseBody(paymentSubmissionSchemaFor('AUTHORIZED_SANDBOX'), sandboxPayment, request()),
+    ).toEqual(sandboxPayment);
+    expect(() => parseBody(paymentSubmissionSchemaFor('FAKE'), sandboxPayment, request())).toThrow(
+      ProblemException,
+    );
+    expect(() =>
+      parseBody(paymentSubmissionSchemaFor('AUTHORIZED_SANDBOX'), validPayment, request()),
+    ).toThrow(ProblemException);
   });
 
   it.each([

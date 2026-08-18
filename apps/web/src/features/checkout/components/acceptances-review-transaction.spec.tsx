@@ -80,11 +80,26 @@ describe('acceptance, review, and transaction steps', () => {
     );
     await userEvent.click(screen.getByRole('button', { name: 'Revisar compra' }));
     expect(screen.getByRole('alert')).toHaveTextContent('dos condiciones');
+    const termsCheckbox = screen.getByRole('checkbox', { name: /términos/ });
+    const personalDataCheckbox = screen.getByRole('checkbox', { name: /tratamiento/ });
+    expect(termsCheckbox).toHaveAttribute('aria-invalid', 'true');
+    expect(termsCheckbox).toHaveAttribute('aria-describedby', 'terms-acceptance-error');
+    expect(
+      screen.getByText('Debes aceptar los términos y condiciones para continuar.'),
+    ).toHaveAttribute('id', 'terms-acceptance-error');
+    expect(personalDataCheckbox).toHaveAttribute('aria-invalid', 'true');
+    expect(personalDataCheckbox).toHaveAttribute(
+      'aria-describedby',
+      'personal-data-acceptance-error',
+    );
+    expect(
+      screen.getByText('Debes autorizar el tratamiento de tus datos para continuar.'),
+    ).toHaveAttribute('id', 'personal-data-acceptance-error');
     const links = screen.getAllByRole('link');
     expect(links).toHaveLength(2);
     expect(links[0]).toHaveAttribute('rel', 'noopener noreferrer');
-    await userEvent.click(screen.getByRole('checkbox', { name: /términos/ }));
-    await userEvent.click(screen.getByRole('checkbox', { name: /tratamiento/ }));
+    await userEvent.click(termsCheckbox);
+    await userEvent.click(personalDataCheckbox);
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Número de cuotas' }), '3');
     await userEvent.click(screen.getByRole('button', { name: 'Revisar compra' }));
     expect(onContinue).toHaveBeenCalledWith({

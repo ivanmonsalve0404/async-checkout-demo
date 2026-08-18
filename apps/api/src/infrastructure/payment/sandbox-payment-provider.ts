@@ -34,6 +34,12 @@ export interface SandboxPaymentProviderOptions {
   readonly publicKey?: string;
   readonly integritySecret?: string;
   readonly transport?: SandboxTransport;
+  readonly providerAcceptances?: Readonly<{
+    terms: string;
+    personalData: string;
+  }>;
+  readonly authorizedUntilUtc?: string;
+  readonly now?: () => Date;
   readonly timeoutMs?: number;
 }
 
@@ -42,6 +48,11 @@ interface ReadySandboxPaymentProviderOptions {
   readonly publicKey: string;
   readonly integritySecret: string;
   readonly transport: SandboxTransport;
+  readonly providerAcceptances: Readonly<{
+    terms: string;
+    personalData: string;
+  }>;
+  readonly authorizedUntilUtc: string;
 }
 
 const providerStatuses = new Set<ProviderStatus>([
@@ -52,6 +63,16 @@ const providerStatuses = new Set<ProviderStatus>([
   'ERROR',
   'UNKNOWN_EXTERNAL',
 ]);
+
+const canonicalUtcMillis = (value: string | undefined): number | null => {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)) {
+    return null;
+  }
+  const milliseconds = Date.parse(value);
+  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value
+    ? milliseconds
+    : null;
+};
 
 export const signSandboxIntegrity = (
   reference: string,
@@ -99,6 +120,7 @@ export class SandboxPaymentProvider implements PaymentProvider {
       captureVariant: 'DIRECT_JWE',
       publicKey: options.publicKey,
       installments: [1, 2, 3],
+      authorizedUntilUtc: options.authorizedUntilUtc,
     });
   }
 
@@ -117,8 +139,8 @@ export class SandboxPaymentProvider implements PaymentProvider {
       },
       timeoutMs: this.timeoutMs,
       body: {
-        acceptance_token: command.acceptances.termsAcceptanceToken,
-        accept_personal_auth: command.acceptances.personalDataAcceptanceToken,
+        acceptance_token: options.providerAcceptances.terms,
+        accept_personal_auth: options.providerAcceptances.personalData,
         amount_in_cents: command.amountInCents,
         currency: command.currency,
         customer_email: command.customerEmail,
@@ -200,18 +222,40 @@ export class SandboxPaymentProvider implements PaymentProvider {
   }
 
   private readyOptions(): ReadySandboxPaymentProviderOptions | null {
-    const { privateKey, publicKey, integritySecret, transport } = this.options;
+    const {
+      privateKey,
+      publicKey,
+      integritySecret,
+      transport,
+      providerAcceptances,
+      authorizedUntilUtc,
+    } = this.options;
+    const authorizedUntil = canonicalUtcMillis(authorizedUntilUtc);
+    const now = (this.options.now ?? (() => new Date()))().getTime();
     if (
       this.options.enabled &&
+      authorizedUntil !== null &&
+      now < authorizedUntil &&
       typeof publicKey === 'string' &&
       publicKey.length > 0 &&
       typeof privateKey === 'string' &&
       privateKey.length > 0 &&
       typeof integritySecret === 'string' &&
       integritySecret.length > 0 &&
-      typeof transport === 'function'
+      typeof transport === 'function' &&
+      typeof providerAcceptances?.terms === 'string' &&
+      providerAcceptances.terms.length > 0 &&
+      typeof providerAcceptances.personalData === 'string' &&
+      providerAcceptances.personalData.length > 0
     ) {
-      return { privateKey, publicKey, integritySecret, transport };
+      return {
+        privateKey,
+        publicKey,
+        integritySecret,
+        transport,
+        providerAcceptances,
+        authorizedUntilUtc: authorizedUntilUtc as string,
+      };
     }
     return null;
   }

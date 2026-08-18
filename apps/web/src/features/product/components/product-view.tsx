@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { ProductResponse } from '../api/product-api';
 import { formatMoney, formatMoneyForAssistiveTechnology } from '../../../shared/lib/format-money';
 
@@ -28,6 +29,7 @@ export const ProductView = ({
   hasProgress = false,
   returnNotice,
 }: ProductViewProps) => {
+  const [failedImageUrl, setFailedImageUrl] = useState<string>();
   if (state.kind === 'loading') {
     return (
       <section className="product-card" aria-busy="true" aria-label="Cargando producto">
@@ -73,6 +75,8 @@ export const ProductView = ({
 
   const { product } = state;
   const isOutOfStock = product.available === 0;
+  const imageUrl =
+    failedImageUrl === product.imageUrl ? '/product-placeholder.svg' : product.imageUrl;
   return (
     <div data-testid="product-surface">
       {returnNotice !== undefined && (
@@ -84,10 +88,25 @@ export const ProductView = ({
       )}
       <article className="product-card" aria-labelledby="product-title">
         <div className="product-media">
-          <img src={product.imageUrl} alt={product.name} width="800" height="600" />
+          <img
+            src={imageUrl}
+            alt={product.name}
+            width="800"
+            height="600"
+            decoding="async"
+            onError={() => {
+              if (imageUrl !== '/product-placeholder.svg') {
+                setFailedImageUrl(product.imageUrl);
+              }
+            }}
+          />
         </div>
         <div className="product-copy">
           <p className="eyebrow">Producto seleccionado</p>
+          <p className="product-ticket">
+            <span className="product-ticket-label">Ficha urbana</span>
+            <span>{product.sku}</span>
+          </p>
           <h1 id="product-title">{product.name}</h1>
           <p className="description">{product.description}</p>
           <p className="price">

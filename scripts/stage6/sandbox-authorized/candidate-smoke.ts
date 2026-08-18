@@ -789,6 +789,10 @@ const run = async (): Promise<void> => {
     publicKey,
     privateKey,
     integritySecret,
+    providerAcceptances: {
+      terms: acceptances.termsToken,
+      personalData: acceptances.personalDataToken,
+    },
     timeoutMs: 8_000,
     transport: async (request) => {
       const category: RequestCategory =

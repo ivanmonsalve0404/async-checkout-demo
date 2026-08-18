@@ -4,9 +4,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
+import {
+  validatePrereleaseWorkflow,
+  validateReleaseWorkflow,
+  validateReleaseWorkflowCommands,
+} from './validate-release-workflow.mjs';
+
 const ACTION_REFERENCE = /^\s*(?:-\s*)?uses:\s*([^\s#]+)\s*(?:#.*)?$/gmu;
 const PINNED_SHA = /^[0-9a-f]{40}$/u;
 const CODEQL_WORKFLOW = 'ci.yml';
+const RELEASE_WORKFLOW = 'release.yml';
+const PRERELEASE_WORKFLOW = 'prerelease.yml';
 const CODEQL_ACTION_SHA = 'ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd';
 const SETUP_NODE_ACTION_SHA = 'a0853c24544627f65ddf259abe73b1d18a591444';
 const UPLOAD_ARTIFACT_ACTION_SHA = 'ea165f8d65b6e75b540449e92b4886f43607fa02';
@@ -210,6 +218,13 @@ const authorizedSandboxWiringIsExact = (manifest, verifySource) => {
 };
 
 export function validateWorkflow(name, source) {
+  if (name === RELEASE_WORKFLOW) {
+    return validateReleaseWorkflow(name, source);
+  }
+  if (name === PRERELEASE_WORKFLOW) {
+    return validatePrereleaseWorkflow(name, source);
+  }
+
   const errors = [];
 
   if (!/^\s{0}permissions:\s*\r?\n\s{2}contents:\s*read\s*$/gmu.test(source)) {
@@ -414,6 +429,71 @@ function selfTest() {
         .replace('pull_request:', 'pull_request_target:')
         .replace('0123456789abcdef0123456789abcdef01234567', 'v4'),
     ).length >= 2,
+  );
+
+  const releaseSource = fs.readFileSync(
+    path.join(process.cwd(), '.github', 'workflows', RELEASE_WORKFLOW),
+    'utf8',
+  );
+  assert.deepEqual(validateWorkflow(RELEASE_WORKFLOW, releaseSource), []);
+  const malformedReleaseErrors = validateWorkflow(
+    RELEASE_WORKFLOW,
+    releaseSource.replace('  workflow_dispatch:', '  pull_request:'),
+  );
+  assert.ok(
+    malformedReleaseErrors.some((error) =>
+      error.includes('the only trigger must be workflow_dispatch'),
+    ),
+  );
+  assert.ok(
+    !malformedReleaseErrors.some((error) => error.includes('pull_request trigger is required')),
+  );
+  assert.ok(
+    validateWorkflow('release-copy.yml', releaseSource).some((error) =>
+      error.includes('pull_request trigger is required'),
+    ),
+  );
+  const prereleaseSource = fs.readFileSync(
+    path.join(process.cwd(), '.github', 'workflows', PRERELEASE_WORKFLOW),
+    'utf8',
+  );
+  assert.deepEqual(validateWorkflow(PRERELEASE_WORKFLOW, prereleaseSource), []);
+  const packageSource = fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8');
+  assert.deepEqual(
+    validateReleaseWorkflowCommands([releaseSource, prereleaseSource], packageSource),
+    [],
+  );
+  assert.ok(
+    validateReleaseWorkflowCommands(
+      [releaseSource.replace('pnpm release:seed --', 'pnpm release:orphan --'), prereleaseSource],
+      packageSource,
+    ).some((error) => error.includes('workflow command is orphaned: release:orphan')),
+  );
+  assert.ok(
+    validateReleaseWorkflowCommands(
+      [releaseSource, prereleaseSource],
+      packageSource.replace(
+        '"release:sandbox-smoke": "node scripts/stage7/control.mjs sandbox-smoke"',
+        '"release:sandbox-smoke": "pnpm sandbox:authorized:execute"',
+      ),
+    ).some((error) => error.includes('direct Stage 6 execution alias is forbidden')),
+  );
+  const malformedPrereleaseErrors = validateWorkflow(
+    PRERELEASE_WORKFLOW,
+    prereleaseSource.replace('  workflow_dispatch:', '  pull_request:'),
+  );
+  assert.ok(
+    malformedPrereleaseErrors.some((error) =>
+      error.includes('the only trigger must be workflow_dispatch'),
+    ),
+  );
+  assert.ok(
+    !malformedPrereleaseErrors.some((error) => error.includes('pull_request trigger is required')),
+  );
+  assert.ok(
+    validateWorkflow('prerelease-copy.yml', prereleaseSource).some((error) =>
+      error.includes('pull_request trigger is required'),
+    ),
   );
   const forbiddenWritePermissions = ['issues', 'checks', 'actions', 'deployments', 'statuses'];
   for (const permission of forbiddenWritePermissions) {
@@ -741,12 +821,18 @@ function main() {
     throw new Error('at least one workflow is required');
   }
 
-  const errors = workflowFiles.flatMap((name) =>
-    validateWorkflow(name, fs.readFileSync(path.join(workflowDirectory, name), 'utf8')),
+  const workflowSources = new Map(
+    workflowFiles.map((name) => [
+      name,
+      fs.readFileSync(path.join(workflowDirectory, name), 'utf8'),
+    ]),
   );
+  const errors = workflowFiles.flatMap((name) => validateWorkflow(name, workflowSources.get(name)));
   let authorizedSandboxWiringValid;
+  let packageSource = '';
   try {
-    const manifest = JSON.parse(fs.readFileSync(path.join(rootDirectory, 'package.json'), 'utf8'));
+    packageSource = fs.readFileSync(path.join(rootDirectory, 'package.json'), 'utf8');
+    const manifest = JSON.parse(packageSource);
     const verifySource = fs.readFileSync(
       path.join(rootDirectory, 'scripts', 'stage6', 'verify.mjs'),
       'utf8',
@@ -758,6 +844,12 @@ function main() {
   if (!authorizedSandboxWiringValid) {
     errors.push('repository: verify:stage6 must include the CI-safe authorized sandbox dry-run');
   }
+  errors.push(
+    ...validateReleaseWorkflowCommands(
+      [workflowSources.get(RELEASE_WORKFLOW) ?? '', workflowSources.get(PRERELEASE_WORKFLOW) ?? ''],
+      packageSource,
+    ),
+  );
   if (errors.length > 0) {
     process.stderr.write('workflow-policy: FAIL\n');
     for (const error of errors) {

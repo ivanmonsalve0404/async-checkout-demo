@@ -10,7 +10,7 @@ info:
     Los datos completos de tarjeta nunca forman parte de esta API. Los valores
     efímeros de pago y aceptación sólo aparecen como campos de escritura sin
     ejemplos, defaults ni persistencia.
-  x-status: STAGE_5_LOCAL_FAKE_VERIFIED
+  x-status: STAGE_7_RELEASE_CANDIDATE_FROZEN
   x-source-baseline:
     requirements: 33 RF identities and 28 RNF identities
     acceptanceCriteria: 45
@@ -30,8 +30,8 @@ info:
     stage5RateLimiting: Checkout creation 10/min by network+origin; customer/delivery 10/min and payment 2/min by network and capability
     globalReadThrottle: DEFERRED_STAGE_7 to API Gateway; local GET operations do not advertise 429 or quota headers
 servers:
-  - url: https://checkout.example.invalid
-    description: Symbolic HTTPS demo host; reserved invalid domain
+  - url: /
+    description: Entorno de assessment que sirve este contrato congelado
   - url: http://localhost:3000
     description: Local fake-only environment; no external payment provider
 tags:
@@ -647,13 +647,13 @@ paths:
     get:
       operationId: getApiDocumentation
       tags: [Operations]
-      summary: Abrir la documentación API sanitizada
-      description: Superficie pública sin valores de capability, secretos ni tokens.
+      summary: Descargar el contrato OpenAPI congelado y sanitizado
+      description: Archivo público y read-only; no contiene credenciales ni valores sensibles.
       security: []
       parameters:
         - $ref: '#/components/parameters/CorrelationId'
       x-api-id: API-13
-      x-status: IMPLEMENTED_LOCAL
+      x-status: IMPLEMENTED_RELEASE
       x-trace:
         requirements: [RF-15, RNF-11]
         acceptanceCriteria: []
@@ -664,26 +664,65 @@ paths:
         uxFlows: []
       responses:
         '200':
-          description: Interfaz HTML de documentación
+          description: OpenAPI 3.1.2 congelado y sanitizado
           headers:
             Cache-Control: { $ref: '#/components/headers/PublicDocsCache' }
+            Content-Disposition:
+              description: Nombre estable para descarga o visualización inline.
+              schema:
+                type: string
+                const: 'inline; filename="openapi.yaml"'
             X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
           content:
-            text/html:
+            application/yaml:
               schema: { type: string }
         '403': { $ref: '#/components/responses/OriginForbidden' }
         '500': { $ref: '#/components/responses/InternalError' }
-  /api/health:
+  /api/health/live:
     get:
-      operationId: getHealth
+      operationId: getLiveness
       tags: [Operations]
-      summary: Consultar salud técnica mínima
-      description: No revela dependencias, hosts, llaves, secretos, topología ni versiones internas.
+      summary: Consultar liveness del proceso
+      description: No consulta dependencias y no revela hosts, llaves, secretos, topología ni versiones internas.
       security: []
       parameters:
         - $ref: '#/components/parameters/CorrelationId'
       x-api-id: API-14
-      x-status: IMPLEMENTED_LOCAL
+      x-status: IMPLEMENTED_RELEASE
+      x-trace:
+        requirements: [RNF-14, RNF-23]
+        acceptanceCriteria: []
+        scenarios: [SC-EN-24-01]
+        uat: [UAT-32, UAT-47]
+        data: []
+        errors: [ERR-02, ERR-20]
+        uxFlows: [UXF-13]
+      responses:
+        '200':
+          description: Proceso iniciado y capaz de responder
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LivenessResponse' }
+              examples:
+                healthy:
+                  value:
+                    status: alive
+                    checkedAt: '2026-01-01T00:00:00Z'
+        '403': { $ref: '#/components/responses/OriginForbidden' }
+  /api/health/ready:
+    get:
+      operationId: getReadiness
+      tags: [Operations]
+      summary: Consultar readiness de dependencias críticas
+      description: Valida repositorio y configuración de pagos sin crear transacciones ni revelar datos internos.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      x-api-id: API-15
+      x-status: IMPLEMENTED_RELEASE
       x-trace:
         requirements: [RNF-14, RNF-23]
         acceptanceCriteria: []
@@ -694,7 +733,7 @@ paths:
         uxFlows: [UXF-13]
       responses:
         '200':
-          description: Proceso disponible para servir tráfico permitido
+          description: Dependencias críticas listas para tráfico permitido
           headers:
             Cache-Control: { $ref: '#/components/headers/NoStore' }
             X-Correlation-Id: { $ref: '#/components/headers/CorrelationId' }
@@ -702,7 +741,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/HealthResponse' }
               examples:
-                healthy:
+                ready:
                   value:
                     status: ok
                     checkedAt: '2026-01-01T00:00:00Z'
@@ -848,7 +887,7 @@ components:
         const: no-cache
       example: no-cache
     PublicDocsCache:
-      description: Cache breve sólo para la interfaz documental sanitizada.
+      description: Cache breve sólo para el contrato documental sanitizado.
       schema:
         type: string
         const: public, max-age=300
@@ -1424,6 +1463,32 @@ components:
           x-data-class: C3
           x-ephemeral: true
           x-loggable: false
+    PaymentMethodToken:
+      description: |
+        Token C3 opaco, efímero y sólo de escritura. Los datos completos de
+        tarjeta (PAN, CVC/CVV, vencimiento y nombre) nunca se envían a esta API:
+        el adaptador de captura los transforma en este token antes del POST.
+        El servidor habilita exactamente un formato por entorno: fake local o
+        sandbox autorizado. Los dos formatos son mutuamente excluyentes y el
+        sandbox deshabilitado rechaza cualquier envío antes de la aplicación.
+      oneOf:
+        - type: string
+          minLength: 17
+          maxLength: 137
+          pattern: '^tok_fake_[A-Za-z0-9_-]{8,128}$'
+          description: Token sintético del adaptador fake, permitido sólo en el entorno local fake.
+          x-validation-mode: FAKE
+        - type: string
+          minLength: 12
+          maxLength: 260
+          pattern: '^tok_(?!fake_)[A-Za-z0-9_-]{8,256}$'
+          description: Token opaco emitido por el sandbox autorizado; el prefijo tok_fake_ queda excluido.
+          x-validation-mode: AUTHORIZED_SANDBOX
+      writeOnly: true
+      x-data-class: C3
+      x-ephemeral: true
+      x-loggable: false
+      x-persisted: false
     PaymentSubmissionRequest:
       type: object
       additionalProperties: false
@@ -1432,16 +1497,7 @@ components:
         quoteId:
           $ref: '#/components/schemas/OpaqueId'
         paymentMethodToken:
-          type: string
-          minLength: 17
-          maxLength: 137
-          pattern: '^tok_fake_[A-Za-z0-9_-]{8,128}$'
-          writeOnly: true
-          description: Token C3 efímero del adapter fake de etapa 5; persistencia cero y sin ejemplo. El adapter sandbox permanece deshabilitado y requiere cambio contractual tras SPK-02.
-          x-data-class: C3
-          x-ephemeral: true
-          x-loggable: false
-          x-persisted: false
+          $ref: '#/components/schemas/PaymentMethodToken'
         installments:
           type: integer
           minimum: 1
@@ -1460,8 +1516,14 @@ components:
         - providerReference
         - providerTransactionId
         - cardNumber
+        - pan
         - securityCode
+        - cvc
+        - cvv
         - expiry
+        - expiryMonth
+        - expiryYear
+        - cardholderName
     PaymentSubmissionResponse:
       type: object
       additionalProperties: false
@@ -1662,6 +1724,17 @@ components:
         status:
           type: string
           const: ok
+        checkedAt:
+          type: string
+          format: date-time
+    LivenessResponse:
+      type: object
+      additionalProperties: false
+      required: [status, checkedAt]
+      properties:
+        status:
+          type: string
+          const: alive
         checkedAt:
           type: string
           format: date-time

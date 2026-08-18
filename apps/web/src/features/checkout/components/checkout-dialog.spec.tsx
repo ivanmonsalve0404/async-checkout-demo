@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { createAppStore, type AppStore } from '../../../app/store/store';
@@ -711,5 +711,18 @@ describe('CheckoutDialog orchestration', () => {
     unmount();
     render(<button data-testid="product-checkout-cta">Comprar</button>);
     await waitFor(() => expect(screen.getByTestId('product-checkout-cta')).toHaveFocus());
+  });
+
+  it('wraps focus from either edge of the modal', async () => {
+    renderDialog();
+    const close = screen.getByRole('button', { name: 'Cerrar checkout' });
+    const continueButton = screen.getByRole('button', { name: 'Continuar' });
+
+    close.focus();
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+    expect(continueButton).toHaveFocus();
+
+    fireEvent.keyDown(continueButton, { key: 'Tab' });
+    expect(close).toHaveFocus();
   });
 });

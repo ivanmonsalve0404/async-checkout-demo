@@ -11,9 +11,12 @@ import type { RequestWithCorrelation } from './request-context';
 
 const opaqueId = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/);
 const fakePaymentToken = z.string().regex(/^tok_fake_[A-Za-z0-9_-]{8,128}$/);
+const sandboxPaymentToken = z.string().regex(/^tok_(?!fake_)[A-Za-z0-9_-]{8,256}$/u);
 const acceptanceToken = z.string().regex(/^[A-Za-z0-9_-]{32,512}\.[A-Za-z0-9_-]{43}$/);
 export const CAPABILITY_COOKIE_NAME = '__Secure-checkout_cap';
 const CAPABILITY_MAX_AGE_SECONDS = 86_400;
+
+export type PaymentTokenValidationMode = 'FAKE' | 'AUTHORIZED_SANDBOX' | 'DISABLED';
 
 export const createCheckoutSchema = z.object({ productId: opaqueId }).strict();
 export const customerSchema = z
@@ -36,19 +39,30 @@ export const deliveryDetailsSchema = z
     deliveryInstructions: z.string().trim().max(250).optional(),
   })
   .strict();
-export const paymentSubmissionSchema: z.ZodType<SubmitPaymentInput> = z
-  .object({
-    quoteId: opaqueId,
-    paymentMethodToken: fakePaymentToken,
-    installments: z.number().int().min(1).max(36),
-    acceptances: z
-      .object({
-        termsAcceptanceToken: acceptanceToken,
-        personalDataAcceptanceToken: acceptanceToken,
-      })
-      .strict(),
-  })
-  .strict();
+const paymentTokenSchemaFor = (mode: PaymentTokenValidationMode): z.ZodType<string> => {
+  if (mode === 'FAKE') return fakePaymentToken;
+  if (mode === 'AUTHORIZED_SANDBOX') return sandboxPaymentToken;
+  return z.string().refine(() => false, 'Payment submission is disabled');
+};
+
+export const paymentSubmissionSchemaFor = (
+  mode: PaymentTokenValidationMode,
+): z.ZodType<SubmitPaymentInput> =>
+  z
+    .object({
+      quoteId: opaqueId,
+      paymentMethodToken: paymentTokenSchemaFor(mode),
+      installments: z.number().int().min(1).max(36),
+      acceptances: z
+        .object({
+          termsAcceptanceToken: acceptanceToken,
+          personalDataAcceptanceToken: acceptanceToken,
+        })
+        .strict(),
+    })
+    .strict();
+
+export const paymentSubmissionSchema = paymentSubmissionSchemaFor('FAKE');
 export const parseBody = <T>(
   schema: z.ZodType<T>,
   body: unknown,

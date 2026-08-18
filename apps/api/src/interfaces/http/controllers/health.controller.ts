@@ -11,6 +11,11 @@ export interface HealthResponse {
   readonly checkedAt: string;
 }
 
+export interface LivenessResponse {
+  readonly status: 'alive';
+  readonly checkedAt: string;
+}
+
 @Controller('api/health')
 export class HealthController {
   public constructor(
@@ -23,6 +28,18 @@ export class HealthController {
   @Get()
   @Header('Cache-Control', 'no-store')
   public async getHealth(@Req() request: RequestWithCorrelation): Promise<HealthResponse> {
+    return this.getReadiness(request);
+  }
+
+  @Get('live')
+  @Header('Cache-Control', 'no-store')
+  public getLiveness(): LivenessResponse {
+    return { status: 'alive', checkedAt: new Date().toISOString() };
+  }
+
+  @Get('ready')
+  @Header('Cache-Control', 'no-store')
+  public async getReadiness(@Req() request: RequestWithCorrelation): Promise<HealthResponse> {
     if (
       !(await this.catalogRepository.isReady()) ||
       !this.paymentProvider.getPublicConfiguration().ok

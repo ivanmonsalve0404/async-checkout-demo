@@ -1,4 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import request from 'supertest';
 import { createApplication } from '../../../bootstrap';
 
@@ -73,9 +76,22 @@ describe('API contract walking skeleton', () => {
   );
 
   it('serves only sanitized local documentation', async () => {
+    const contract = readFileSync(
+      resolve(__dirname, '../../../../../..', 'output/architecture/openapi.yaml'),
+      'utf8',
+    );
     const response = await request(application.getHttpServer()).get('/api/docs').expect(200);
-    expect(response.headers['content-type']).toContain('text/html');
-    expect(response.text).toContain('packages/contracts/openapi.yaml');
-    expect(response.text).not.toMatch(/token|credential|secret/i);
+    expect(response.headers).toMatchObject({
+      'cache-control': 'public, max-age=300',
+      'content-disposition': 'inline; filename="openapi.yaml"',
+      'content-type': 'application/yaml; charset=utf-8',
+      'x-content-type-options': 'nosniff',
+    });
+    expect(createHash('sha256').update(response.text).digest('hex')).toBe(
+      createHash('sha256').update(contract).digest('hex'),
+    );
+    expect(response.text).toContain('openapi: 3.1.2');
+    expect(response.text).not.toMatch(/(?:sk|prv|pub)_(?:live|prod)_[A-Za-z0-9_-]+/);
+    expect(response.text).not.toContain('https://production.wompi.co');
   });
 });

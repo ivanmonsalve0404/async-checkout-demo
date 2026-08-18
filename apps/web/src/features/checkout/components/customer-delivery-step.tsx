@@ -17,6 +17,16 @@ interface FormErrors {
   readonly postalCode?: string;
 }
 
+const customerDeliveryFieldIds = {
+  addressLine1: { error: 'customer-delivery-address-error' },
+  city: { error: 'customer-delivery-city-error' },
+  email: { error: 'customer-delivery-email-error' },
+  fullName: { error: 'customer-delivery-name-error' },
+  phone: { error: 'customer-delivery-phone-error' },
+  postalCode: { error: 'customer-delivery-postal-code-error' },
+  region: { error: 'customer-delivery-region-error' },
+} as const;
+
 const normalizedText = (value: FormDataEntryValue | null): string =>
   (typeof value === 'string' ? value : '').trim().replace(/\s+/g, ' ');
 
@@ -152,9 +162,14 @@ export const CustomerDeliveryStep = ({ checkout, onBack, onSave }: CustomerDeliv
             maxLength={120}
             defaultValue={currentCustomer?.fullName ?? ''}
             aria-invalid={errors.fullName === undefined ? undefined : true}
+            aria-describedby={
+              errors.fullName === undefined ? undefined : customerDeliveryFieldIds.fullName.error
+            }
           />
           {errors.fullName !== undefined && (
-            <small className="field-error">{errors.fullName}</small>
+            <small id={customerDeliveryFieldIds.fullName.error} className="field-error">
+              {errors.fullName}
+            </small>
           )}
         </label>
         <label className="field">
@@ -166,8 +181,15 @@ export const CustomerDeliveryStep = ({ checkout, onBack, onSave }: CustomerDeliv
             maxLength={254}
             defaultValue={currentCustomer?.email ?? ''}
             aria-invalid={errors.email === undefined ? undefined : true}
+            aria-describedby={
+              errors.email === undefined ? undefined : customerDeliveryFieldIds.email.error
+            }
           />
-          {errors.email !== undefined && <small className="field-error">{errors.email}</small>}
+          {errors.email !== undefined && (
+            <small id={customerDeliveryFieldIds.email.error} className="field-error">
+              {errors.email}
+            </small>
+          )}
         </label>
         <label className="field">
           <span>Teléfono</span>
@@ -178,8 +200,15 @@ export const CustomerDeliveryStep = ({ checkout, onBack, onSave }: CustomerDeliv
             maxLength={16}
             defaultValue={currentCustomer?.phone ?? ''}
             aria-invalid={errors.phone === undefined ? undefined : true}
+            aria-describedby={
+              errors.phone === undefined ? undefined : customerDeliveryFieldIds.phone.error
+            }
           />
-          {errors.phone !== undefined && <small className="field-error">{errors.phone}</small>}
+          {errors.phone !== undefined && (
+            <small id={customerDeliveryFieldIds.phone.error} className="field-error">
+              {errors.phone}
+            </small>
+          )}
         </label>
       </fieldset>
       <fieldset className="form-grid">
@@ -192,9 +221,16 @@ export const CustomerDeliveryStep = ({ checkout, onBack, onSave }: CustomerDeliv
             maxLength={160}
             defaultValue={currentDelivery?.addressLine1 ?? ''}
             aria-invalid={errors.addressLine1 === undefined ? undefined : true}
+            aria-describedby={
+              errors.addressLine1 === undefined
+                ? undefined
+                : customerDeliveryFieldIds.addressLine1.error
+            }
           />
           {errors.addressLine1 !== undefined && (
-            <small className="field-error">{errors.addressLine1}</small>
+            <small id={customerDeliveryFieldIds.addressLine1.error} className="field-error">
+              {errors.addressLine1}
+            </small>
           )}
         </label>
         <label className="field field-wide">
@@ -214,8 +250,15 @@ export const CustomerDeliveryStep = ({ checkout, onBack, onSave }: CustomerDeliv
             maxLength={80}
             defaultValue={currentDelivery?.city ?? ''}
             aria-invalid={errors.city === undefined ? undefined : true}
+            aria-describedby={
+              errors.city === undefined ? undefined : customerDeliveryFieldIds.city.error
+            }
           />
-          {errors.city !== undefined && <small className="field-error">{errors.city}</small>}
+          {errors.city !== undefined && (
+            <small id={customerDeliveryFieldIds.city.error} className="field-error">
+              {errors.city}
+            </small>
+          )}
         </label>
         <label className="field">
           <span>Departamento o región</span>
@@ -225,8 +268,15 @@ export const CustomerDeliveryStep = ({ checkout, onBack, onSave }: CustomerDeliv
             maxLength={80}
             defaultValue={currentDelivery?.region ?? ''}
             aria-invalid={errors.region === undefined ? undefined : true}
+            aria-describedby={
+              errors.region === undefined ? undefined : customerDeliveryFieldIds.region.error
+            }
           />
-          {errors.region !== undefined && <small className="field-error">{errors.region}</small>}
+          {errors.region !== undefined && (
+            <small id={customerDeliveryFieldIds.region.error} className="field-error">
+              {errors.region}
+            </small>
+          )}
         </label>
         <label className="field">
           <span>Código postal (opcional)</span>
@@ -236,9 +286,16 @@ export const CustomerDeliveryStep = ({ checkout, onBack, onSave }: CustomerDeliv
             maxLength={12}
             defaultValue={currentDelivery?.postalCode ?? ''}
             aria-invalid={errors.postalCode === undefined ? undefined : true}
+            aria-describedby={
+              errors.postalCode === undefined
+                ? undefined
+                : customerDeliveryFieldIds.postalCode.error
+            }
           />
           {errors.postalCode !== undefined && (
-            <small className="field-error">{errors.postalCode}</small>
+            <small id={customerDeliveryFieldIds.postalCode.error} className="field-error">
+              {errors.postalCode}
+            </small>
           )}
         </label>
         <label className="field field-wide">

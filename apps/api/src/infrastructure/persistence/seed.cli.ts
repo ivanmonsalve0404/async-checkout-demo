@@ -1,9 +1,9 @@
-import { loadAppConfig } from '../configuration/app-config';
+import { loadRuntimeAppConfig } from '../configuration/app-config';
 import { createCatalogRepository } from './catalog-repository.factory';
 import { createProductSeed } from './product-seed';
 
 const main = async (): Promise<void> => {
-  const config = loadAppConfig(process.env);
+  const config = await loadRuntimeAppConfig(process.env);
   const repository = createCatalogRepository(config);
   const seed = createProductSeed(config.productSeedId, config.publicAssetOrigin);
   const result = await repository.seedIfAbsent(seed);

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
 import type { ProductResponse } from '../api/product-api';
@@ -24,10 +24,25 @@ describe('ProductView', () => {
   it('renders API product, price, and stock', () => {
     render(<ProductView state={{ kind: 'success', product }} />);
     expect(screen.getByRole('heading', { name: product.name })).toBeInTheDocument();
+    expect(screen.getByText('Ficha urbana')).toBeInTheDocument();
+    expect(screen.getByText(product.sku)).toBeInTheDocument();
     expect(screen.getByText('3 unidades disponibles')).toBeInTheDocument();
     expect(screen.getByText(/Precio 25[.\s]000 pesos colombianos/i)).toHaveClass('visually-hidden');
     expect(screen.getByText(/\$\s*25[.\s]000/i)).toHaveAttribute('aria-hidden', 'true');
     expect(screen.getByRole('button', { name: 'Continuar al pago' })).toBeDisabled();
+    expect(screen.getByRole('img', { name: product.name })).toHaveAttribute('decoding', 'async');
+  });
+
+  it('uses the local placeholder when the product image cannot load', () => {
+    render(<ProductView state={{ kind: 'success', product }} />);
+    const image = screen.getByRole('img', { name: product.name });
+
+    fireEvent.error(image);
+
+    expect(screen.getByRole('img', { name: product.name })).toHaveAttribute(
+      'src',
+      '/product-placeholder.svg',
+    );
   });
 
   it('renders out-of-stock copy and disables continuation', () => {

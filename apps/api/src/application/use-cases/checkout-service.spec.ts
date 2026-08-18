@@ -322,6 +322,7 @@ describe('CheckoutService vertical payment flow', () => {
 
     context.advance(60_000);
     expect(valueOf(await context.service.reconcileDue())).toBe(1);
+    expect(context.observability.values('oldest_pending_age_seconds')).toEqual([60]);
     const approved = valueOf(
       await context.service.getTransaction(submission.transactionId, ready.capability),
     );
@@ -341,6 +342,7 @@ describe('CheckoutService vertical payment flow', () => {
     const delivery = valueOf(await context.service.getDelivery(deliveryId, ready.capability));
     expect(delivery).toMatchObject({ transactionId: submission.transactionId, status: 'CREATED' });
     expect(valueOf(await context.service.reconcileDue())).toBe(0);
+    expect(context.observability.values('oldest_pending_age_seconds')).toEqual([60, 0]);
     const repeated = valueOf(
       await context.repository.finalize(
         submission.transactionId,

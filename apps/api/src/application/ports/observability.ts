@@ -35,6 +35,7 @@ export const metricNames = [
   'reconciliation_retries_total',
   'provider_timeouts_total',
   'payment_unknown_total',
+  'oldest_pending_age_seconds',
   'idempotency_replays_total',
   'idempotency_conflicts_total',
   'reservations_total',

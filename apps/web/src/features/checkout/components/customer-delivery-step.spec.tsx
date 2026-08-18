@@ -59,6 +59,20 @@ describe('CustomerDeliveryStep', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Continuar' }));
     expect(screen.getByRole('alert')).toHaveTextContent('Corrige');
     expect(document.activeElement).toBe(screen.getByRole('alert'));
+    const requiredFields: Array<[string, string]> = [
+      ['Nombre completo', 'customer-delivery-name-error'],
+      ['Correo electrónico', 'customer-delivery-email-error'],
+      ['Teléfono', 'customer-delivery-phone-error'],
+      ['Dirección', 'customer-delivery-address-error'],
+      ['Ciudad', 'customer-delivery-city-error'],
+      ['Departamento o región', 'customer-delivery-region-error'],
+    ];
+    for (const [name, errorId] of requiredFields) {
+      const input = screen.getByRole('textbox', { name: new RegExp(`^${name}`) });
+      expect(input).toHaveAttribute('aria-invalid', 'true');
+      expect(input).toHaveAttribute('aria-describedby', errorId);
+      expect(document.getElementById(errorId)).toHaveTextContent(/Ingresa/);
+    }
   });
 
   it('normalizes PII and sends only the OpenAPI fields', async () => {

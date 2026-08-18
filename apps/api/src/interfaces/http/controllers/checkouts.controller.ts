@@ -17,6 +17,7 @@ import {
   type CheckoutApplicationError,
   CheckoutService,
 } from '../../../application/use-cases/checkout-service';
+import { APP_CONFIG, type AppConfig } from '../../../infrastructure/configuration/app-config';
 import {
   capabilityCookie,
   capabilityFrom,
@@ -24,10 +25,11 @@ import {
   customerSchema,
   deliveryDetailsSchema,
   parseBody,
-  paymentSubmissionSchema,
+  paymentSubmissionSchemaFor,
   setCheckoutHeaders,
   unwrap,
   type DeliveryInput,
+  type PaymentTokenValidationMode,
 } from '../checkout-http';
 import {
   presentCheckout,
@@ -38,9 +40,22 @@ import {
 } from '../presenters/checkout.presenter';
 import type { RequestWithCorrelation } from '../request-context';
 
+const paymentTokenValidationModeFor = (
+  config: Pick<AppConfig, 'paymentAdapter' | 'paymentsEnabled'>,
+): PaymentTokenValidationMode =>
+  config.paymentAdapter === 'fake'
+    ? 'FAKE'
+    : config.paymentsEnabled
+      ? 'AUTHORIZED_SANDBOX'
+      : 'DISABLED';
+
 @Controller('api/v1/checkouts')
 export class CheckoutsController {
-  public constructor(@Inject(CheckoutService) private readonly service: CheckoutService) {}
+  public constructor(
+    @Inject(CheckoutService) private readonly service: CheckoutService,
+    @Inject(APP_CONFIG)
+    private readonly config: Pick<AppConfig, 'paymentAdapter' | 'paymentsEnabled'>,
+  ) {}
 
   private async setRecoveryHeaders(
     checkoutId: string,
@@ -149,7 +164,11 @@ export class CheckoutsController {
     @Req() request: RequestWithCorrelation,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const input = parseBody(paymentSubmissionSchema, body, request);
+    const input = parseBody(
+      paymentSubmissionSchemaFor(paymentTokenValidationModeFor(this.config)),
+      body,
+      request,
+    );
     const capability = capabilityFrom(request);
     const result = await this.service.submitPayment(
       checkoutId,

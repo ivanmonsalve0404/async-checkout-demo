@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "tsc --noEmit",
-    "test": "tsx --test test/config.test.ts test/foundation-stack.test.ts",
+    "test": "tsx --test test/config.test.ts test/foundation-stack.test.ts test/release-stacks.test.ts",
     "synth": "cdk synth --quiet",
     "typecheck": "tsc --noEmit",
     "verify": "pnpm run build && pnpm run test && pnpm run synth"

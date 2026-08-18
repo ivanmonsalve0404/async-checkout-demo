@@ -242,6 +242,10 @@
   text-decoration: underline;
 }
 
+.acceptance-error {
+  grid-column: 2;
+}
+
 .dialog-actions {
   display: grid;
   gap: var(--space-3);

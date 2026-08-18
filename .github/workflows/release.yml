@@ -1,0 +1,2150 @@
+name: Stage 7 Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact 40-character commit SHA already approved for release
+        required: true
+        type: string
+      release_tag:
+        description: Existing immutable release-candidate tag (vX.Y.Z-rc.N)
+        required: true
+        type: string
+      release_id:
+        description: Release identifier (rel-YYYYMMDD-HHMM-sha7)
+        required: true
+        type: string
+      initial_release:
+        description: Confirm this is the first protected release with no previous deployed baseline
+        required: true
+        default: true
+        type: boolean
+      config_sha256:
+        description: SHA-256 of the approved STAGE7_CONFIG_B64 payload
+        required: true
+        type: string
+      stage6_run_id:
+        description: Exact successful Stage 6 workflow run containing the candidate evidence
+        required: true
+        type: string
+      stage6_manifest_sha256:
+        description: SHA-256 of the Stage 6 closeout manifest from that run
+        required: true
+        type: string
+      confirm_deploy:
+        description: Confirm that the protected-environment approval may deploy
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage7-assessment-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  AWS_EC2_METADATA_DISABLED: 'true'
+  NODE_VERSION: '24.19.0'
+  PNPM_VERSION: '11.19.0'
+  STAGE7_AWS_ACCOUNT_ID: ${{ vars.STAGE7_AWS_ACCOUNT_ID }}
+  STAGE7_AWS_REGION: ${{ vars.STAGE7_AWS_REGION }}
+  STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+  STAGE7_ENVIRONMENT: assessment-release
+  STAGE7_EVIDENCE_ROOT: output/evidence/runtime/stage-7
+  STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+  STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+
+jobs:
+  release-metadata:
+    name: 01 Release metadata
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/master' &&
+      github.repository == 'ivanmonsalve0404/async-checkout-demo'
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the exact Stage 6 evidence source
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: verification-reports
+          path: .stage7/stage6
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.stage6_run_id }}
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Validate immutable release identity
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          INITIAL_RELEASE: ${{ inputs.initial_release }}
+          STAGE6_MANIFEST_SHA256: ${{ inputs.stage6_manifest_sha256 }}
+          STAGE6_RUN_ID: ${{ inputs.stage6_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[1-9][0-9]*$ ]]
+          [[ "${RELEASE_ID}" =~ ^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$ ]]
+          [[ "${STAGE6_RUN_ID}" =~ ^[0-9]{1,20}$ ]]
+          [[ "${STAGE6_MANIFEST_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          test "${INITIAL_RELEASE}" = 'true'
+          test "${RELEASE_ID##*-}" = "${CANDIDATE_SHA:0:7}"
+          test "$(git rev-parse HEAD)" = "${CANDIDATE_SHA}"
+          test "$(git rev-parse origin/master)" = "${CANDIDATE_SHA}"
+          test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "${CANDIDATE_SHA}"
+          test "${GITHUB_REF}" = 'refs/heads/master'
+          test "${GITHUB_REPOSITORY}" = 'ivanmonsalve0404/async-checkout-demo'
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Validate Stage 7 metadata and entry gate
+        env:
+          STAGE6_MANIFEST_SHA256: ${{ inputs.stage6_manifest_sha256 }}
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pnpm release:preflight -- --local-only --stage6-evidence .stage7/stage6 --stage6-manifest-sha256 "${STAGE6_MANIFEST_SHA256}" --evidence "${STAGE7_EVIDENCE_ROOT}/release-metadata.json"
+      - name: Preserve sanitized release metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-release-metadata
+          if-no-files-found: error
+          path: |
+            output/evidence/runtime/stage-7/release-metadata.json
+          retention-days: 30
+
+  verify-candidate:
+    name: 02 Verify candidate
+    needs: release-metadata
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the exact Stage 6 evidence source
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: verification-reports
+          path: .stage7/stage6
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.stage6_run_id }}
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile
+      - name: Revalidate the exact candidate and strict Stage 6 gate
+        env:
+          STAGE6_MANIFEST_SHA256: ${{ inputs.stage6_manifest_sha256 }}
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pnpm release:verify-candidate -- --scope full --stage6-evidence .stage7/stage6 --stage6-manifest-sha256 "${STAGE6_MANIFEST_SHA256}"
+      - name: Preserve sanitized verification evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-candidate-verification
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/verify-candidate.json
+          retention-days: 30
+
+  build-or-fetch:
+    name: 03 Build or fetch immutable artifacts
+    needs: verify-candidate
+    environment: assessment-release
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the exact Stage 6 evidence source
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: verification-reports
+          path: .stage7/stage6
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.stage6_run_id }}
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Build and package the application once without cloud credentials
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test -z "${AWS_ACCESS_KEY_ID:-}"
+          test -z "${AWS_SECRET_ACCESS_KEY:-}"
+          test -z "${AWS_SESSION_TOKEN:-}"
+          test -z "${AWS_SECURITY_TOKEN:-}"
+          pnpm build
+          pnpm release:build
+      - name: Assume the allowlisted read role for pre-freeze synthesis
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-prefreeze-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Bind the exceptional read-only pre-freeze authority
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          pnpm release:preflight -- --aws-read --pre-freeze-synth --approved-environment --no-write --evidence "${STAGE7_EVIDENCE_ROOT}/prefreeze.json"
+          pnpm release:scan -- --pre-upload "${STAGE7_EVIDENCE_ROOT}/prefreeze.json"
+      - name: Preserve sanitized pre-freeze read-only evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-prefreeze
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/prefreeze.json
+          retention-days: 30
+      - name: Synthesize the frozen infrastructure under bounded read authority
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pnpm infra:synth:release -- --initial-release --output output/release/build/iac
+      - name: Remove the temporary AWS credentials before scanning and freezing
+        run: |
+          set -euo pipefail
+          unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
+          {
+            printf 'AWS_ACCESS_KEY_ID=\n'
+            printf 'AWS_SECRET_ACCESS_KEY=\n'
+            printf 'AWS_SESSION_TOKEN=\n'
+            printf 'AWS_SECURITY_TOKEN=\n'
+          } >> "${GITHUB_ENV}"
+      - name: Scan the candidate only after cloud credentials are removed
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test -z "${AWS_ACCESS_KEY_ID:-}"
+          test -z "${AWS_SECRET_ACCESS_KEY:-}"
+          test -z "${AWS_SESSION_TOKEN:-}"
+          test -z "${AWS_SECURITY_TOKEN:-}"
+          pnpm release:scan -- --pre-upload output/release/build/api output/release/build/worker output/release/build/web output/release/build/iac output/release/build/public-config.json
+      - name: Preserve immutable candidate artifacts
+        id: candidate-artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-candidate
+          if-no-files-found: error
+          path: |
+            output/release/build/api/
+            output/release/build/worker/
+            output/release/build/web/
+            output/release/build/iac/
+            output/release/build/public-config.json
+          retention-days: 30
+      - name: Freeze the uploaded artifact identity without rebuilding
+        env:
+          SOURCE_ARTIFACT_ID: ${{ steps.candidate-artifact.outputs.artifact-id }}
+          SOURCE_ARTIFACT_SHA256: ${{ steps.candidate-artifact.outputs.artifact-digest }}
+          STAGE6_MANIFEST_SHA256: ${{ inputs.stage6_manifest_sha256 }}
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_ARTIFACT_ID}" =~ ^[0-9]{1,20}$ ]]
+          [[ "${SOURCE_ARTIFACT_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          pnpm release:manifest -- --freeze-existing --stage6-evidence .stage7/stage6 --stage6-manifest-sha256 "${STAGE6_MANIFEST_SHA256}" --source-artifact-id "${SOURCE_ARTIFACT_ID}" --source-artifact-sha256 "${SOURCE_ARTIFACT_SHA256}" --pre-freeze-evidence "${STAGE7_EVIDENCE_ROOT}/prefreeze.json" --tag "${STAGE7_RELEASE_TAG}"
+          pnpm release:scan -- --pre-upload "${STAGE7_EVIDENCE_ROOT}/candidate-manifest.json"
+      - name: Preserve the immutable candidate manifest separately
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-candidate-manifest
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/candidate-manifest.json
+          retention-days: 30
+
+  checksums-sbom:
+    name: 04 Checksums, inventory and provenance
+    needs: build-or-fetch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable candidate
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate
+          path: .stage7/candidate
+      - name: Download the immutable candidate manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate-manifest
+          path: .stage7/candidate-manifest
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verify checksums and emit dependency inventory and provenance
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pnpm release:manifest -- --verify-artifact .stage7/candidate --manifest .stage7/candidate-manifest/candidate-manifest.json --inventory --provenance
+      - name: Preserve sanitized integrity evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-integrity
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/checksums-sbom.json
+          retention-days: 30
+
+  secret-scan:
+    name: 05 Secret scan
+    needs: checksums-sbom
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out complete history at the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable candidate
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate
+          path: .stage7/candidate
+      - name: Download integrity evidence
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-integrity
+          path: .stage7/integrity
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Scan tree, history, builds, manifest and provider boundary
+        run: pnpm release:scan -- --candidate .stage7/candidate --integrity .stage7/integrity
+      - name: Preserve sanitized security evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-security
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/security.json
+          retention-days: 30
+
+  aws-auth:
+    name: 06 AWS read-only identity
+    needs: secret-scan
+    environment: assessment-release
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable candidate manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate-manifest
+          path: .stage7/candidate-manifest
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Assume the allowlisted read role through OIDC after config validation
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-${{ github.job }}-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Verify account, region, role, bootstrap and quotas without mutation
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pnpm release:preflight -- --aws-read --manifest .stage7/candidate-manifest/candidate-manifest.json --evidence "${STAGE7_EVIDENCE_ROOT}/aws-auth.json"
+      - name: Preserve sanitized AWS preflight evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-aws-auth
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/aws-auth.json
+          retention-days: 30
+
+  infra-synth-test:
+    name: 07 IaC tests and offline synthesis
+    needs: aws-auth
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable candidate
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate
+          path: .stage7/candidate
+      - name: Download the immutable candidate manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate-manifest
+          path: .stage7/candidate-manifest
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Test and verify the frozen release cloud assembly without AWS credentials
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          pnpm infra:test
+          pnpm infra:synth:release -- --initial-release --verify .stage7/candidate/iac --manifest .stage7/candidate-manifest/candidate-manifest.json
+          pnpm release:scan -- --cloud-assembly .stage7/candidate/iac
+      - name: Preserve the sanitized IaC verification evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-infra-synth
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/infra-synth.json
+          retention-days: 30
+
+  infra-diff:
+    name: 08 IaC diff and change review
+    needs: infra-synth-test
+    environment: assessment-release
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable candidate
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate
+          path: .stage7/candidate
+      - name: Download the immutable candidate manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate-manifest
+          path: .stage7/candidate-manifest
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Assume the allowlisted read role through OIDC after config validation
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-${{ github.job }}-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Revalidate AWS identity immediately before planning
+        run: pnpm release:preflight -- --aws-read --manifest .stage7/candidate-manifest/candidate-manifest.json --no-write
+      - name: Produce and sanitize the exact release plan and diff
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          pnpm release:plan -- --cloud-assembly .stage7/candidate/iac
+          pnpm infra:diff:release -- --initial-release --app .stage7/candidate/iac --manifest .stage7/candidate-manifest/candidate-manifest.json
+      - name: Scan the informational plan and exact raw diff before review upload
+        run: pnpm release:scan -- --pre-upload "${STAGE7_EVIDENCE_ROOT}/release-plan.json" "${STAGE7_EVIDENCE_ROOT}/infra-diff.json" "${STAGE7_EVIDENCE_ROOT}/infra-diff.txt"
+      - name: Preserve the informational pre-diff release plan
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-release-plan
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/release-plan.json
+          retention-days: 30
+      - name: Preserve the exact sanitized diff for protected review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-infra-diff
+          if-no-files-found: error
+          path: |
+            output/evidence/runtime/stage-7/infra-diff.json
+            output/evidence/runtime/stage-7/infra-diff.txt
+          retention-days: 30
+
+  approval:
+    name: 09 Protected release approval
+    needs: infra-diff
+    environment: assessment-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the exact diff pending protected approval
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-infra-diff
+          path: .stage7/infra-diff
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Validate explicit dispatch and protected-environment approval
+        env:
+          CONFIRM_DEPLOY: ${{ inputs.confirm_deploy }}
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_PROTECTED_ENVIRONMENT: assessment-release
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test "${CONFIRM_DEPLOY}" = 'true'
+          pnpm release:preflight -- --approval .stage7/infra-diff --evidence "${STAGE7_EVIDENCE_ROOT}/approval.json"
+      - name: Preserve sanitized approval evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-approval
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/approval.json
+          retention-days: 30
+
+  deploy-data:
+    name: 10 Deploy data and seed
+    needs: approval
+    environment: assessment-release
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable candidate
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate
+          path: .stage7/candidate
+      - name: Download the immutable candidate manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate-manifest
+          path: .stage7/candidate-manifest
+      - name: Download the exact reviewed infrastructure diff
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-infra-diff
+          path: .stage7/infra-diff
+      - name: Download the exact protected approval binding
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-approval
+          path: .stage7/approval
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Assume the allowlisted deploy role through OIDC after config validation
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-${{ github.job }}-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Revalidate authority immediately before data mutation
+        env:
+          CONFIRM_DEPLOY: ${{ inputs.confirm_deploy }}
+        run: pnpm release:preflight -- --aws-deploy --manifest .stage7/candidate-manifest/candidate-manifest.json --approved-environment
+      - name: Deploy DataStack and execute the idempotent seed
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          pnpm release:deploy:data -- --initial-release --app .stage7/candidate/iac --manifest .stage7/candidate-manifest/candidate-manifest.json --plan .stage7/infra-diff/infra-diff.json --approval .stage7/approval/approval.json
+          pnpm release:seed -- --idempotent
+      - name: Preserve sanitized data evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-data
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/data.json
+          retention-days: 30
+
+  deploy-api:
+    name: 11 Deploy API and reconciler
+    needs: deploy-data
+    environment: assessment-release
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable candidate
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate
+          path: .stage7/candidate
+      - name: Download the immutable candidate manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate-manifest
+          path: .stage7/candidate-manifest
+      - name: Download the exact reviewed infrastructure diff
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-infra-diff
+          path: .stage7/infra-diff
+      - name: Download the exact protected approval binding
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-approval
+          path: .stage7/approval
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Assume the allowlisted deploy role through OIDC after config validation
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-${{ github.job }}-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Revalidate authority immediately before API mutation
+        env:
+          CONFIRM_DEPLOY: ${{ inputs.confirm_deploy }}
+        run: pnpm release:preflight -- --aws-deploy --manifest .stage7/candidate-manifest/candidate-manifest.json --approved-environment
+      - name: Deploy the initial versioned API and reconciler aliases
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pnpm release:deploy:api -- --app .stage7/candidate/iac --manifest .stage7/candidate-manifest/candidate-manifest.json --plan .stage7/infra-diff/infra-diff.json --approval .stage7/approval/approval.json --initial-release
+      - name: Preserve sanitized API evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-api
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/api.json
+          retention-days: 30
+
+  deploy-observability:
+    name: 12 Deploy observability and budget
+    needs: deploy-api
+    environment: assessment-release
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable candidate
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate
+          path: .stage7/candidate
+      - name: Download the immutable candidate manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate-manifest
+          path: .stage7/candidate-manifest
+      - name: Download the exact reviewed infrastructure diff
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-infra-diff
+          path: .stage7/infra-diff
+      - name: Download the exact protected approval binding
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-approval
+          path: .stage7/approval
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Assume the allowlisted deploy role through OIDC after config validation
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-${{ github.job }}-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Revalidate authority immediately before observability mutation
+        env:
+          CONFIRM_DEPLOY: ${{ inputs.confirm_deploy }}
+        run: pnpm release:preflight -- --aws-deploy --manifest .stage7/candidate-manifest/candidate-manifest.json --approved-environment
+      - name: Deploy dashboards, alarms and approved budget
+        env:
+          STAGE7_ALERT_EMAIL: ${{ secrets.STAGE7_ALERT_EMAIL }}
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pnpm release:deploy:observability -- --initial-release --app .stage7/candidate/iac --manifest .stage7/candidate-manifest/candidate-manifest.json --plan .stage7/infra-diff/infra-diff.json --approval .stage7/approval/approval.json
+      - name: Preserve pending observability evidence for human confirmation
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-observability-pending
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/observability.json
+          retention-days: 30
+      - name: Explain the alarm email confirmation handoff
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'Confirm the exact SNS alarm email subscription, then approve the protected postdeploy-smoke job.' 'The release remains blocked until a read-only AWS check proves exactly one matching EMAIL subscription is confirmed and not PendingConfirmation.' >> "${GITHUB_STEP_SUMMARY}"
+
+  deploy-web:
+    name: 13 Deploy web and edge
+    needs: deploy-observability
+    environment: assessment-release
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable candidate
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate
+          path: .stage7/candidate
+      - name: Download the immutable candidate manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate-manifest
+          path: .stage7/candidate-manifest
+      - name: Download the exact reviewed infrastructure diff
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-infra-diff
+          path: .stage7/infra-diff
+      - name: Download the exact protected approval binding
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-approval
+          path: .stage7/approval
+      - name: Download the API deployment checkpoint
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-api
+          path: .stage7/api
+      - name: Download the seed checkpoint
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-data
+          path: .stage7/data
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Assume the allowlisted deploy role through OIDC after config validation
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-${{ github.job }}-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Revalidate authority immediately before web mutation
+        env:
+          CONFIRM_DEPLOY: ${{ inputs.confirm_deploy }}
+        run: pnpm release:preflight -- --aws-deploy --manifest .stage7/candidate-manifest/candidate-manifest.json --approved-environment
+      - name: Deploy the initial versioned web assets, private origin and CloudFront
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pnpm release:deploy:web -- --app .stage7/candidate/iac --manifest .stage7/candidate-manifest/candidate-manifest.json --plan .stage7/infra-diff/infra-diff.json --approval .stage7/approval/approval.json --candidate .stage7/candidate --initial-release
+      - name: Emit the blocked request for fresh full-release external authorization
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p .stage7/web
+          install -m 600 "${STAGE7_EVIDENCE_ROOT}/web.json" .stage7/web/web.json
+          pnpm release:preflight -- --scope full --external-authorization-request .stage7/web --evidence "${STAGE7_EVIDENCE_ROOT}/external-authorization-request.json"
+          pnpm release:scan -- --pre-upload "${STAGE7_EVIDENCE_ROOT}/web.json" "${STAGE7_EVIDENCE_ROOT}/external-authorization-request.json"
+      - name: Preserve sanitized web evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-web
+          if-no-files-found: error
+          path: |
+            output/evidence/runtime/stage-7/web.json
+            output/evidence/runtime/stage-7/external-authorization-request.json
+          retention-days: 30
+      - name: Explain the protected full-release authorization handoff
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'Download stage7-web and review external-authorization-request.json while the API mapping, CloudFront distribution and scheduler remain disabled.' 'Create the exact fresh AUTH-E7-EXT-01/02/03 bundle for this full-release origin, base64-encode it into STAGE7_EXTERNAL_AUTHORIZATIONS_B64, confirm the SNS email subscription, then approve postdeploy-smoke.' 'Without both matching authorization and confirmed observability, activation and all target traffic remain blocked.' >> "${GITHUB_STEP_SUMMARY}"
+
+  postdeploy-smoke:
+    name: 14 Post-deploy smoke
+    needs: deploy-web
+    environment: assessment-release
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable candidate manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate-manifest
+          path: .stage7/candidate-manifest
+      - name: Download the immutable candidate
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate
+          path: .stage7/candidate
+      - name: Download the API activation checkpoint
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-api
+          path: .stage7/api
+      - name: Download the web activation checkpoint
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-web
+          path: .stage7/web
+      - name: Download the seed checkpoint
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-data
+          path: .stage7/data
+      - name: Download pending observability evidence
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-observability-pending
+          path: .stage7/observability-pending
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Materialize and bind fresh full-release external authorization
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_EXTERNAL_AUTHORIZATIONS_B64: ${{ vars.STAGE7_EXTERNAL_AUTHORIZATIONS_B64 }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}"
+          umask 077
+          target="${RUNNER_TEMP}/stage7-external-authorizations.json"
+          printf '%s' "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          export STAGE7_EXTERNAL_AUTHORIZATIONS="${target}"
+          pnpm release:preflight -- --scope full --external-authorization .stage7/web --approved-environment --evidence "${STAGE7_EVIDENCE_ROOT}/external-authorization.json"
+          pnpm release:scan -- --pre-upload "${STAGE7_EVIDENCE_ROOT}/external-authorization.json"
+          printf 'STAGE7_EXTERNAL_AUTHORIZATIONS=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Preserve sanitized full-release authorization evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-external-authorization
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/external-authorization.json
+          retention-days: 30
+      - name: Assume the allowlisted read role to verify observability
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-observe-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Revalidate read authority before observability verification
+        run: pnpm release:preflight -- --aws-read --manifest .stage7/candidate-manifest/candidate-manifest.json --no-write
+      - name: Prove the exact alarm email subscription is confirmed
+        run: pnpm release:verify:observability -- --record .stage7/observability-pending/observability.json
+      - name: Preserve confirmed observability readiness
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-observability
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/observability.json
+          retention-days: 30
+      - name: Materialize private full-release smoke inputs before activation
+        env:
+          STAGE7_SMOKE_INPUTS_B64: ${{ secrets.STAGE7_SMOKE_INPUTS_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_SMOKE_INPUTS_B64}"
+          umask 077
+          target="${RUNNER_TEMP}/stage7-private-smoke-inputs.json"
+          printf '%s' "${STAGE7_SMOKE_INPUTS_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          SMOKE_INPUTS_PATH="${target}" node --input-type=module -e "import fs from 'node:fs'; JSON.parse(fs.readFileSync(process.env.SMOKE_INPUTS_PATH, 'utf8'));"
+          printf 'STAGE7_SMOKE_INPUTS=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Validate private smoke binding locally before initial activation
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_PROTECTED_ENVIRONMENT: assessment-release
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          pnpm release:preflight -- --scope full --smoke-inputs --manifest .stage7/candidate-manifest/candidate-manifest.json --deployment .stage7/web --approved-environment --evidence "${STAGE7_EVIDENCE_ROOT}/smoke-input-preflight.json"
+          pnpm release:scan -- --pre-upload "${STAGE7_EVIDENCE_ROOT}/smoke-input-preflight.json"
+      - name: Assume the allowlisted deploy role only after observability is confirmed
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-activate-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Revalidate deploy authority immediately before activation
+        env:
+          CONFIRM_DEPLOY: ${{ inputs.confirm_deploy }}
+        run: pnpm release:preflight -- --aws-deploy --manifest .stage7/candidate-manifest/candidate-manifest.json --approved-environment
+      - name: Activate the initial candidate only after observability is confirmed
+        run: pnpm release:activate -- --app .stage7/candidate/iac --manifest .stage7/candidate-manifest/candidate-manifest.json --api-record .stage7/api/api.json --web-record .stage7/web/web.json --seed-evidence .stage7/data/data.json --observability-evidence "${STAGE7_EVIDENCE_ROOT}/observability.json" --initial-release
+      - name: Re-assume the allowlisted read role after activation
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-smoke-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Revalidate read authority immediately before target verification
+        run: pnpm release:preflight -- --aws-read --manifest .stage7/candidate-manifest/candidate-manifest.json --no-write
+      - name: Run all 18 low-volume deployed smoke cases
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pnpm release:smoke -- --scope full --manifest .stage7/candidate-manifest/candidate-manifest.json
+      - name: Scan the initial activation ledger before the internal handoff
+        run: pnpm release:scan -- --pre-upload "${STAGE7_EVIDENCE_ROOT}/activation.json"
+      - name: Hand off the initial activation ledger without publishing a duplicate basename
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: internal-stage7-initial-activation
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/activation.json
+          retention-days: 7
+      - name: Preserve sanitized smoke evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-smoke
+          if-no-files-found: error
+          path: |
+            output/evidence/runtime/stage-7/smoke-input-preflight.json
+            output/evidence/runtime/stage-7/smoke.json
+          retention-days: 30
+
+  edge-security:
+    name: 15 Edge security
+    needs: postdeploy-smoke
+    environment: assessment-release
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable candidate manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate-manifest
+          path: .stage7/candidate-manifest
+      - name: Download the exact authorized web target
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-web
+          path: .stage7/web
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Rebind fresh authorization before any edge target traffic
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_EXTERNAL_AUTHORIZATIONS_B64: ${{ vars.STAGE7_EXTERNAL_AUTHORIZATIONS_B64 }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}"
+          umask 077
+          target="${RUNNER_TEMP}/stage7-external-authorizations.json"
+          printf '%s' "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          export STAGE7_EXTERNAL_AUTHORIZATIONS="${target}"
+          pnpm release:preflight -- --scope full --external-authorization .stage7/web --approved-environment
+          printf 'STAGE7_EXTERNAL_AUTHORIZATIONS=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Assume the allowlisted read role through OIDC after config validation
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-${{ github.job }}-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Revalidate AWS identity before passive checks
+        run: pnpm release:preflight -- --aws-read --manifest .stage7/candidate-manifest/candidate-manifest.json --no-write
+      - name: Capture passive ZAP evidence with the pinned scanner image
+        run: |
+          set -euo pipefail
+          target="${RUNNER_TEMP}/zap-target"
+          report="${RUNNER_TEMP}/zap-passive-report.json"
+          request_count_file="${RUNNER_TEMP}/zap-request-count.txt"
+          pnpm release:scan -- --scope full --prepare-zap-target "${target}"
+          node scripts/stage7/zap-passive-capture.mjs --target-file "${target}" --report "${report}" --count "${request_count_file}" --rules scripts/stage7/zap-passive-rules.tsv --image-digest zaproxy/zap-stable@sha256:51dbcc578b217ea7563b22a6948f5f41dd2002936fc5148300077f988663b4aa
+          request_count="$(tr -d '\r\n' < "${request_count_file}")"
+          [[ "${request_count}" =~ ^[1-9][0-9]?$|^100$ ]]
+          printf 'STAGE7_ZAP_REPORT=%s\n' "${report}" >> "${GITHUB_ENV}"
+          printf 'STAGE7_ZAP_REQUEST_COUNT=%s\n' "${request_count}" >> "${GITHUB_ENV}"
+          printf 'STAGE7_ZAP_RULESET=%s\n' "${GITHUB_WORKSPACE}/scripts/stage7/zap-passive-rules.tsv" >> "${GITHUB_ENV}"
+          printf 'STAGE7_ZAP_VERSION=2.16.1\n' >> "${GITHUB_ENV}"
+      - name: Verify TLS, headers, exact CORS, private S3 and passive DAST
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+        run: pnpm release:scan -- --scope full --deployed-edge --headers --zap-passive-only --passive-only
+      - name: Preserve sanitized edge evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-edge-security
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/edge-security.json
+          retention-days: 30
+
+  quality:
+    name: 16 Cross-browser, accessibility and performance quality
+    needs: edge-security
+    environment: assessment-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable candidate manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate-manifest
+          path: .stage7/candidate-manifest
+      - name: Download the exact authorized web target
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-web
+          path: .stage7/web
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager and browsers
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm exec playwright install --with-deps chromium firefox webkit
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Rebind fresh authorization before quality traffic
+        env:
+          STAGE7_EXTERNAL_AUTHORIZATIONS_B64: ${{ vars.STAGE7_EXTERNAL_AUTHORIZATIONS_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}"
+          umask 077
+          target="${RUNNER_TEMP}/stage7-external-authorizations.json"
+          printf '%s' "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          export STAGE7_EXTERNAL_AUTHORIZATIONS="${target}"
+          pnpm release:preflight -- --scope full --external-authorization .stage7/web --approved-environment
+          printf 'STAGE7_EXTERNAL_AUTHORIZATIONS=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Run bounded deployed quality gates without cloud credentials
+        env:
+          STAGE7_PROTECTED_ENVIRONMENT: assessment-release
+        run: |
+          set -euo pipefail
+          pnpm release:quality -- --scope full --manifest .stage7/candidate-manifest/candidate-manifest.json --deployment .stage7/web --approved-environment
+          pnpm release:scan -- --pre-upload "${STAGE7_EVIDENCE_ROOT}/quality.json"
+      - name: Preserve sanitized quality evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-quality
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/quality.json
+          retention-days: 30
+
+  sandbox-smoke:
+    name: 17 Authorized sandbox smoke
+    needs: quality
+    environment: assessment-release
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable candidate manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate-manifest
+          path: .stage7/candidate-manifest
+      - name: Download the exact authorized web target
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-web
+          path: .stage7/web
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Rebind fresh authorization before provider sandbox traffic
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_EXTERNAL_AUTHORIZATIONS_B64: ${{ vars.STAGE7_EXTERNAL_AUTHORIZATIONS_B64 }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}"
+          umask 077
+          target="${RUNNER_TEMP}/stage7-external-authorizations.json"
+          printf '%s' "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          export STAGE7_EXTERNAL_AUTHORIZATIONS="${target}"
+          pnpm release:preflight -- --scope full --external-authorization .stage7/web --approved-environment
+          printf 'STAGE7_EXTERNAL_AUTHORIZATIONS=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Materialize the original one-use AUTH-E6-02 capability
+        env:
+          STAGE6_SANDBOX_AUTHORIZATION_B64: ${{ vars.STAGE6_SANDBOX_AUTHORIZATION_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE6_SANDBOX_AUTHORIZATION_B64}"
+          umask 077
+          target="${RUNNER_TEMP}/stage6-sandbox-authorization.json"
+          printf '%s' "${STAGE6_SANDBOX_AUTHORIZATION_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          AUTHORIZATION_PATH="${target}" node --input-type=module -e "import fs from 'node:fs'; JSON.parse(fs.readFileSync(process.env.AUTHORIZATION_PATH, 'utf8'));"
+          printf 'STAGE6_SANDBOX_AUTHORIZATION=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Assume the allowlisted verification role through OIDC after config validation
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-${{ github.job }}-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Revalidate scoped sandbox authority immediately before execution
+        env:
+          CONFIRM_SANDBOX_SMOKE: 'true'
+        run: pnpm release:preflight -- --scope full --sandbox-authorized --manifest .stage7/candidate-manifest/candidate-manifest.json --approved-environment
+      - name: Execute one bounded sandbox smoke and verify idempotent effects
+        env:
+          CONFIRM_SANDBOX_SMOKE: 'true'
+          STAGE6_SANDBOX_CARD_CVC: ${{ secrets.STAGE6_SANDBOX_CARD_CVC }}
+          STAGE6_SANDBOX_CARD_EXPIRY: ${{ secrets.STAGE6_SANDBOX_CARD_EXPIRY }}
+          STAGE6_SANDBOX_CARD_HOLDER: ${{ secrets.STAGE6_SANDBOX_CARD_HOLDER }}
+          STAGE6_SANDBOX_CARD_NUMBER: ${{ secrets.STAGE6_SANDBOX_CARD_NUMBER }}
+          STAGE6_SANDBOX_CUSTOMER_EMAIL: ${{ secrets.STAGE6_SANDBOX_CUSTOMER_EMAIL }}
+          STAGE6_SANDBOX_EXECUTION: EXECUTE_AUTH02_ONCE
+          STAGE6_SANDBOX_FIXTURE_AUTHORIZED: 'YES'
+          STAGE6_SANDBOX_INTEGRITY_SECRET: ${{ secrets.STAGE6_SANDBOX_INTEGRITY_SECRET }}
+          STAGE6_SANDBOX_KILL_SWITCH: ARMED_AUTH02
+          STAGE6_SANDBOX_MUTATION_LIMIT: '1'
+          STAGE6_SANDBOX_ORIGIN: https://sandbox.wompi.co
+          STAGE6_SANDBOX_PRIVATE_KEY: ${{ secrets.STAGE6_SANDBOX_PRIVATE_KEY }}
+          STAGE6_SANDBOX_PUBLIC_KEY: ${{ secrets.STAGE6_SANDBOX_PUBLIC_KEY }}
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_PROTECTED_ENVIRONMENT: assessment-release
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pnpm release:sandbox-smoke -- --scope full --manifest .stage7/candidate-manifest/candidate-manifest.json --deployment .stage7/web --approved-environment
+      - name: Preserve sanitized sandbox evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-sandbox
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/sandbox-smoke.json
+          retention-days: 30
+
+  rollback-check:
+    name: 18 Rollback and re-promotion rehearsal
+    needs: sandbox-smoke
+    environment: assessment-release
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable candidate
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate
+          path: .stage7/candidate
+      - name: Download the immutable candidate manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate-manifest
+          path: .stage7/candidate-manifest
+      - name: Download the API rollback checkpoint
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-api
+          path: .stage7/api
+      - name: Download the web rollback checkpoint
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-web
+          path: .stage7/web
+      - name: Download the seed checkpoint
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-data
+          path: .stage7/data
+      - name: Download confirmed observability readiness
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-observability
+          path: .stage7/observability
+      - name: Restore the initial activation ledger for append-only re-promotion evidence
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: internal-stage7-initial-activation
+          path: output/evidence/runtime/stage-7
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Rebind fresh authorization before rollback smoke and re-promotion
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_EXTERNAL_AUTHORIZATIONS_B64: ${{ vars.STAGE7_EXTERNAL_AUTHORIZATIONS_B64 }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}"
+          umask 077
+          target="${RUNNER_TEMP}/stage7-external-authorizations.json"
+          printf '%s' "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          export STAGE7_EXTERNAL_AUTHORIZATIONS="${target}"
+          pnpm release:preflight -- --scope full --external-authorization .stage7/web --approved-environment
+          printf 'STAGE7_EXTERNAL_AUTHORIZATIONS=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Assume the allowlisted rollback role through OIDC after config validation
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-${{ github.job }}-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_ROLLBACK_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Revalidate rollback authority immediately before mutation
+        env:
+          CONFIRM_DEPLOY: ${{ inputs.confirm_deploy }}
+        run: pnpm release:preflight -- --aws-rollback --manifest .stage7/candidate-manifest/candidate-manifest.json --approved-environment
+      - name: Rehearse the first-release unpublished state
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          pnpm release:rollback:api -- --record .stage7/api/api.json --initial-release --to-disabled
+          pnpm release:rollback:web -- --record .stage7/web/web.json --initial-release --to-unpublished
+      - name: Assume the allowlisted read role for the unpublished-state smoke
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 900
+          role-session-name: e7-rollback-read-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Revalidate read authority before the unpublished-state smoke
+        run: pnpm release:preflight -- --aws-read --manifest .stage7/candidate-manifest/candidate-manifest.json --no-write
+      - name: Prove the initial release is unavailable without data mutation
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pnpm release:smoke -- --scope full --post-rollback --initial-release --expected-manifest .stage7/candidate-manifest/candidate-manifest.json
+      - name: Materialize private full-release smoke inputs before re-promotion
+        env:
+          STAGE7_SMOKE_INPUTS_B64: ${{ secrets.STAGE7_SMOKE_INPUTS_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_SMOKE_INPUTS_B64}"
+          umask 077
+          target="${RUNNER_TEMP}/stage7-private-smoke-inputs.json"
+          printf '%s' "${STAGE7_SMOKE_INPUTS_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          SMOKE_INPUTS_PATH="${target}" node --input-type=module -e "import fs from 'node:fs'; JSON.parse(fs.readFileSync(process.env.SMOKE_INPUTS_PATH, 'utf8'));"
+          printf 'STAGE7_SMOKE_INPUTS=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Revalidate private smoke binding locally before re-promotion
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_PROTECTED_ENVIRONMENT: assessment-release
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          pnpm release:preflight -- --scope full --smoke-inputs --manifest .stage7/candidate-manifest/candidate-manifest.json --deployment .stage7/web --approved-environment --evidence "${STAGE7_EVIDENCE_ROOT}/repromotion-smoke-input-preflight.json"
+          pnpm release:scan -- --pre-upload "${STAGE7_EVIDENCE_ROOT}/repromotion-smoke-input-preflight.json"
+      - name: Re-assume the allowlisted rollback role for exact re-promotion
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-repromote-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_ROLLBACK_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Revalidate rollback authority immediately before re-promotion
+        env:
+          CONFIRM_DEPLOY: ${{ inputs.confirm_deploy }}
+        run: pnpm release:preflight -- --aws-rollback --manifest .stage7/candidate-manifest/candidate-manifest.json --approved-environment
+      - name: Re-promote the exact initial candidate
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pnpm release:activate -- --app .stage7/candidate/iac --manifest .stage7/candidate-manifest/candidate-manifest.json --api-record .stage7/api/api.json --web-record .stage7/web/web.json --seed-evidence .stage7/data/data.json --observability-evidence .stage7/observability/observability.json --re-promote --initial-release
+      - name: Re-assume the allowlisted read role for final verification
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 900
+          role-session-name: e7-repromotion-read-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Revalidate read authority before final candidate verification
+        run: pnpm release:preflight -- --aws-read --manifest .stage7/candidate-manifest/candidate-manifest.json --no-write
+      - name: Prove the exact candidate is healthy after re-promotion
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pnpm release:smoke -- --scope full --post-repromotion --expected-manifest .stage7/candidate-manifest/candidate-manifest.json
+      - name: Verify final CloudFormation drift under read-only authority
+        run: pnpm release:verify:drift -- --scope full --app .stage7/candidate/iac --manifest .stage7/candidate-manifest/candidate-manifest.json
+      - name: Scan the final activation and drift evidence before upload
+        run: pnpm release:scan -- --pre-upload "${STAGE7_EVIDENCE_ROOT}/activation.json" "${STAGE7_EVIDENCE_ROOT}/drift.json"
+      - name: Preserve sanitized rollback evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-rollback
+          if-no-files-found: error
+          path: |
+            output/evidence/runtime/stage-7/activation.json
+            output/evidence/runtime/stage-7/drift.json
+            output/evidence/runtime/stage-7/repromotion-smoke-input-preflight.json
+            output/evidence/runtime/stage-7/rollback.json
+          retention-days: 30
+
+  publish-release:
+    name: 19 Publish release
+    needs: rollback-check
+    environment: assessment-release
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the exact candidate without stored credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download all sanitized Stage 7 evidence
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: stage7-*
+          path: .stage7/evidence
+          merge-multiple: true
+      - name: Download the exact authorized web target separately
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-web
+          path: .stage7/web
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Prepare the immutable publication package without external writes
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pnpm release:publish -- --evidence .stage7/evidence
+      - name: Rebind fresh authorization before deployed URL verification
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_EXTERNAL_AUTHORIZATIONS_B64: ${{ vars.STAGE7_EXTERNAL_AUTHORIZATIONS_B64 }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}"
+          umask 077
+          target="${RUNNER_TEMP}/stage7-external-authorizations.json"
+          printf '%s' "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          export STAGE7_EXTERNAL_AUTHORIZATIONS="${target}"
+          pnpm release:preflight -- --scope full --external-authorization .stage7/web --approved-environment
+          printf 'STAGE7_EXTERNAL_AUTHORIZATIONS=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Publish README and the verified release candidate natively
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = 'ivanmonsalve0404/async-checkout-demo'
+          test "${GITHUB_REF}" = 'refs/heads/master'
+          test "$(git rev-parse HEAD)" = "${STAGE7_CANDIDATE_SHA}"
+          plan='output/release/publication/publication-plan.json'
+          readme='output/release/publication/README.md'
+          notes='output/release/publication/release-notes.md'
+          manifest='output/release/publication/candidate-manifest.json'
+          test -s "${plan}"
+          test -s "${readme}"
+          test -s "${notes}"
+          test -s "${manifest}"
+          remote_master="$(gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/master" --jq '.object.sha')"
+          remote_tag="$(gh api "/repos/${GITHUB_REPOSITORY}/git/ref/tags/${STAGE7_RELEASE_TAG}" --jq '.object.sha')"
+          test "${remote_master}" = "${STAGE7_CANDIDATE_SHA}"
+          test "${remote_tag}" = "${STAGE7_CANDIDATE_SHA}"
+          if gh release view "${STAGE7_RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
+            exit 1
+          fi
+          request="${RUNNER_TEMP}/stage7-readme-update.json"
+          response="${RUNNER_TEMP}/stage7-readme-response.json"
+          umask 077
+          PUBLICATION_PLAN="${plan}" PUBLICATION_README="${readme}" REQUEST_FILE="${request}" node --input-type=module -e "import fs from 'node:fs'; const p=JSON.parse(fs.readFileSync(process.env.PUBLICATION_PLAN,'utf8')); const content=fs.readFileSync(process.env.PUBLICATION_README).toString('base64'); fs.writeFileSync(process.env.REQUEST_FILE,JSON.stringify({message:'docs: publish '+p.releaseTag,content,branch:'master',sha:p.expectedReadmeGitBlobSha}),{mode:0o600});"
+          chmod 600 "${request}"
+          gh api --method PUT "/repos/${GITHUB_REPOSITORY}/contents/README.md" --input "${request}" > "${response}"
+          PUBLICATION_PLAN="${plan}" PUBLICATION_RESPONSE="${response}" CANDIDATE_SHA="${STAGE7_CANDIDATE_SHA}" node --input-type=module -e "import fs from 'node:fs'; const p=JSON.parse(fs.readFileSync(process.env.PUBLICATION_PLAN,'utf8')); const r=JSON.parse(fs.readFileSync(process.env.PUBLICATION_RESPONSE,'utf8')); if(r.content?.sha!==p.desiredReadmeGitBlobSha||r.commit?.parents?.[0]?.sha!==process.env.CANDIDATE_SHA||!/^[0-9a-f]{40}$/.test(r.commit?.sha??'')) process.exit(1);"
+          gh release create "${STAGE7_RELEASE_TAG}" "${manifest}#candidate-manifest.json" --repo "${GITHUB_REPOSITORY}" --verify-tag --target "${STAGE7_CANDIDATE_SHA}" --title "${STAGE7_RELEASE_TAG}" --notes-file "${notes}" --prerelease > "${RUNNER_TEMP}/stage7-release-url.txt"
+          pnpm release:verify -- --publication-native "${plan}" --evidence "${STAGE7_EVIDENCE_ROOT}/publication-proof.json" --external-writes-performed 2
+          pnpm release:scan -- --pre-upload output/release/publication "${STAGE7_EVIDENCE_ROOT}/publication.json" "${STAGE7_EVIDENCE_ROOT}/publication-proof.json"
+      - name: Preserve the verified publication package and proof
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-publication
+          if-no-files-found: error
+          path: |
+            output/release/publication/README.md
+            output/release/publication/release-notes.md
+            output/release/publication/publication-plan.json
+            output/evidence/runtime/stage-7/publication.json
+            output/evidence/runtime/stage-7/publication-proof.json
+          retention-days: 30
+
+  summary:
+    name: 20 Release summary and gates
+    if: ${{ always() }}
+    needs:
+      - release-metadata
+      - verify-candidate
+      - build-or-fetch
+      - checksums-sbom
+      - secret-scan
+      - aws-auth
+      - infra-synth-test
+      - infra-diff
+      - approval
+      - deploy-data
+      - deploy-api
+      - deploy-observability
+      - deploy-web
+      - postdeploy-smoke
+      - edge-security
+      - quality
+      - sandbox-smoke
+      - rollback-check
+      - publish-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download available sanitized Stage 7 evidence
+        if: ${{ needs.release-metadata.result == 'success' }}
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: stage7-*
+          path: .stage7/evidence
+          merge-multiple: true
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+      - name: Consolidate all three Stage 7 gates fail-closed
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_JOB_RESULTS: ${{ toJSON(needs) }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pnpm release:verify -- --evidence .stage7/evidence
+      - name: Preserve sanitized Stage 7 closeout
+        if: ${{ always() && hashFiles('output/evidence/runtime/stage-7/closeout.json') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-release-reports
+          if-no-files-found: error
+          path: output/evidence/runtime/stage-7/closeout.json
+          retention-days: 30
