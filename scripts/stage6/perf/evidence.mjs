@@ -238,7 +238,7 @@ export const validatePerformanceEvidence = (evidence) => {
       evidence.status === 'PASS' &&
       evidence.command === 'node scripts/stage6/perf/run.mjs' &&
       evidence.tool?.name === 'Lighthouse + Playwright PerformanceObserver' &&
-      evidence.tool?.version === '13.4.1 + 1.61.1' &&
+      evidence.tool?.version === '13.4.1 + 1.62.1' &&
       evidence.environment === expectedEnvironment() &&
       evidence.executionScope === 'LOCAL_SYNTHETIC_LOOPBACK_ONLY' &&
       evidence.networkPolicy === 'LOOPBACK_ONLY_DENY_EXTERNAL' &&
@@ -330,7 +330,7 @@ const validFixture = () => {
     commitSha: 'a'.repeat(40),
     runId: 'e6-20260816t120000z-0123abcd',
     command: 'node scripts/stage6/perf/run.mjs',
-    tool: { name: 'Lighthouse + Playwright PerformanceObserver', version: '13.4.1 + 1.61.1' },
+    tool: { name: 'Lighthouse + Playwright PerformanceObserver', version: '13.4.1 + 1.62.1' },
     environment: expectedEnvironment(),
     executionScope: 'LOCAL_SYNTHETIC_LOOPBACK_ONLY',
     branch: 'codex/stage-6-integration-verification',

@@ -132,6 +132,7 @@ const steps = [
     allowedExitCodes: [0, 2],
   },
   { id: 'E6-SECURITY', ...pnpmCommand(['test:security']) },
+  { id: 'E6-SMOKE-REFRESH', ...pnpmCommand(['test:smoke']) },
   {
     id: 'E6-UAT',
     ...pnpmCommand(['test:uat']),
@@ -148,6 +149,8 @@ if (process.argv.includes('--self-test')) {
   const stepIds = steps.map(({ id }) => id);
   const authorizedSandboxIndex = stepIds.indexOf('E6-SANDBOX-AUTHORIZED-DRY-RUN');
   const sandboxIndex = stepIds.indexOf('E6-SANDBOX-EVIDENCE');
+  const smokeRefreshIndex = stepIds.indexOf('E6-SMOKE-REFRESH');
+  const uatIndex = stepIds.indexOf('E6-UAT');
   if (
     normalizeStepExitCode(0, undefined) !== 0 ||
     normalizeStepExitCode(0, { status: 'PASS' }) !== 0 ||
@@ -171,7 +174,10 @@ if (process.argv.includes('--self-test')) {
     stepIds.filter((id) => id === 'E6-SANDBOX-EVIDENCE').length !== 1 ||
     sandboxIndex >= stepIds.indexOf('E6-SECURITY') ||
     sandboxIndex >= stepIds.indexOf('E6-UAT') ||
-    !steps[sandboxIndex]?.allowedExitCodes?.includes(2)
+    !steps[sandboxIndex]?.allowedExitCodes?.includes(2) ||
+    stepIds.filter((id) => id === 'E6-SMOKE-REFRESH').length !== 1 ||
+    smokeRefreshIndex !== uatIndex - 1 ||
+    steps[smokeRefreshIndex]?.arguments?.at(-1) !== 'test:smoke'
   ) {
     throw new Error('stage-6 orchestration self-test failed');
   }

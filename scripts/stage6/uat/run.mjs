@@ -1052,9 +1052,10 @@ await execute(
       const session = new ApiSession();
       const docs = await loopbackFetch(API_ORIGIN + '/api/docs');
       check(
-        docs.status === 200 && docs.headers.get('content-type')?.includes('text/html'),
+        docs.status === 200 && docs.headers.get('content-type')?.includes('application/yaml'),
         'OPENAPI_DOCS_HTTP',
       );
+      check((await docs.text()) === contract, 'OPENAPI_DOCS_BODY');
       const missing = await session.request('GET', '/api/v1/products/product_missing_001');
       safeProblem(missing, 404, 'PRODUCT_NOT_FOUND');
       expectStatus(await session.request('GET', '/api/v1/products'), 200, 'OPENAPI_PRODUCTS');
@@ -3364,7 +3365,7 @@ const report = {
     command: COMMAND,
     tool: {
       node: process.version,
-      playwright: '1.61.1',
+      playwright: '1.62.1',
       httpClient: 'node-fetch-native',
       fixtureComposition: '@nestjs/testing-11.2.1',
     },

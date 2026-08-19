@@ -106,7 +106,7 @@ El repositorio local usa la rama `foundation/stage-4` y commits temáticos. No s
 | Redux Toolkit | `2.12.0` | pin web |
 | NestJS | `11.2.1` | pin API |
 | Jest | `30.4.2` | pin web/API |
-| Playwright Test | `1.61.1` | pin raíz |
+| Playwright Test | `1.62.1` | pin raíz |
 | openapi-typescript | `7.13.0` | pin contracts |
 | aws-cdk-lib / CDK CLI | `2.265.0` / `2.1136.0` | pins infra |
 

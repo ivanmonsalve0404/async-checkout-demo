@@ -419,7 +419,7 @@ export function validateWorkflow(name, source) {
     }
     const requiredManualEvidenceFragments = [
       'name: Materialize optional manual accessibility evidence',
-      "if: ${{ vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 != '' }}",
+      "if: ${{ github.event_name != 'pull_request' && vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 != '' }}",
       'STAGE6_A11Y_MANUAL_EVIDENCE_B64: ${{ vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 }}',
       'stage6-a11y-manual.json',
       'base64 --decode',
@@ -440,7 +440,7 @@ export function validateWorkflow(name, source) {
     }
     const requiredExternalEvidenceFragments = [
       'name: Materialize optional authorized external evidence',
-      "if: ${{ vars.STAGE6_EXTERNAL_EVIDENCE_B64 != '' }}",
+      "if: ${{ github.event_name != 'pull_request' && vars.STAGE6_EXTERNAL_EVIDENCE_B64 != '' }}",
       'shell: bash',
       'STAGE6_EXTERNAL_EVIDENCE_B64: ${{ vars.STAGE6_EXTERNAL_EVIDENCE_B64 }}',
       'umask 077',
@@ -803,7 +803,7 @@ function selfTest() {
     '    timeout-minutes: 45',
     '    steps:',
     '      - name: Materialize optional manual accessibility evidence',
-    "        if: ${{ vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 != '' }}",
+    "        if: ${{ github.event_name != 'pull_request' && vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 != '' }}",
     '        env:',
     '          STAGE6_A11Y_MANUAL_EVIDENCE_B64: ${{ vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 }}',
     '        run: |',
@@ -811,7 +811,7 @@ function selfTest() {
     '          printf \'%s\' "${STAGE6_A11Y_MANUAL_EVIDENCE_B64}" | base64 --decode > "${target}"',
     '          echo "STAGE6_A11Y_MANUAL_EVIDENCE=${target}" >> "${GITHUB_ENV}"',
     '      - name: Materialize optional authorized external evidence',
-    "        if: ${{ vars.STAGE6_EXTERNAL_EVIDENCE_B64 != '' }}",
+    "        if: ${{ github.event_name != 'pull_request' && vars.STAGE6_EXTERNAL_EVIDENCE_B64 != '' }}",
     '        shell: bash',
     '        env:',
     '          STAGE6_EXTERNAL_EVIDENCE_B64: ${{ vars.STAGE6_EXTERNAL_EVIDENCE_B64 }}',
@@ -949,6 +949,24 @@ function selfTest() {
       validCodeql.replace(
         '    runs-on: ubuntu-24.04\n    timeout-minutes: 15',
         '    permissions:\n      issues: write\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15',
+      ),
+    ).length > 0,
+  );
+  assert.ok(
+    validateWorkflow(
+      CODEQL_WORKFLOW,
+      validCodeql.replace(
+        "github.event_name != 'pull_request' && vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 != ''",
+        "vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 != ''",
+      ),
+    ).length > 0,
+  );
+  assert.ok(
+    validateWorkflow(
+      CODEQL_WORKFLOW,
+      validCodeql.replace(
+        "github.event_name != 'pull_request' && vars.STAGE6_EXTERNAL_EVIDENCE_B64 != ''",
+        "vars.STAGE6_EXTERNAL_EVIDENCE_B64 != ''",
       ),
     ).length > 0,
   );

@@ -119,7 +119,7 @@ jobs:
           repo_digest="$(docker image inspect "${DYNAMODB_LOCAL_IMAGE}" --format '{{index .RepoDigests 0}}')"
           test "${repo_digest##*@}" = "${DYNAMODB_LOCAL_IMAGE_DIGEST}"
       - name: Materialize optional manual accessibility evidence
-        if: ${{ vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 != '' }}
+        if: ${{ github.event_name != 'pull_request' && vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 != '' }}
         shell: bash
         env:
           STAGE6_A11Y_MANUAL_EVIDENCE_B64: ${{ vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 }}
@@ -129,7 +129,7 @@ jobs:
           printf '%s' "${STAGE6_A11Y_MANUAL_EVIDENCE_B64}" | base64 --decode > "${target}"
           echo "STAGE6_A11Y_MANUAL_EVIDENCE=${target}" >> "${GITHUB_ENV}"
       - name: Materialize optional authorized external evidence
-        if: ${{ vars.STAGE6_EXTERNAL_EVIDENCE_B64 != '' }}
+        if: ${{ github.event_name != 'pull_request' && vars.STAGE6_EXTERNAL_EVIDENCE_B64 != '' }}
         shell: bash
         env:
           STAGE6_EXTERNAL_EVIDENCE_B64: ${{ vars.STAGE6_EXTERNAL_EVIDENCE_B64 }}

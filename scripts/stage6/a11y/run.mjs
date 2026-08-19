@@ -639,7 +639,7 @@ const run = async () => {
     scriptPath: SCRIPT_PATH,
     tool: {
       name: 'axe-core + @playwright/test',
-      version: `${axe?.version ?? 'MISSING'} + 1.61.1`,
+      version: `${axe?.version ?? 'MISSING'} + 1.62.1`,
     },
   });
   const requiredAxeIncompleteReviews = axeIncompleteInventory(automated.axeScans);

@@ -74,6 +74,10 @@ credenciales, datos de pago y PII. El canal CI opcional materializa el JSON sani
 `STAGE6_EXTERNAL_EVIDENCE_B64` en el directorio temporal del runner y expone únicamente su path mediante
 `STAGE6_EXTERNAL_EVIDENCE`.
 
+El workflow de `pull_request` no ingiere esta autoridad versionada: un PR valida el código y conserva el
+gate externo como `NOT_RUN_AUTH_REQUIRED`. La ingestión queda reservada a ejecuciones no-PR sobre el SHA
+exacto, evitando aplicar evidencia persistida de otro candidato al merge commit temporal.
+
 Todos los timestamps usan la forma UTC canónica `YYYY-MM-DDTHH:mm:ss.sssZ`, incluidos milisegundos no
 cero cuando correspondan; fechas inexistentes u offsets se rechazan. Todos los contadores quedan entre
 0 y 100 (o entre 1 y 100 cuando el check requiere actividad). ZAP debe declarar exactamente la versión
