@@ -422,6 +422,18 @@ export class InMemoryCheckoutRepository implements CheckoutRepository {
     });
   }
 
+  public findOldestPendingAcceptedAt(): Promise<Result<string | null, CheckoutRepositoryError>> {
+    let oldest: string | null = null;
+    for (const transaction of this.transactions.values()) {
+      if (transaction.paymentStatus !== 'PENDING') continue;
+      if (!Number.isFinite(Date.parse(transaction.acceptedAt))) {
+        return Promise.resolve(err({ code: 'REPOSITORY_UNAVAILABLE' }));
+      }
+      if (oldest === null || transaction.acceptedAt < oldest) oldest = transaction.acceptedAt;
+    }
+    return Promise.resolve(ok(oldest));
+  }
+
   public claimDue(
     now: string,
     leaseUntil: string,

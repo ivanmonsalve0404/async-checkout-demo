@@ -17,3 +17,6 @@ cdk.out/
 .DS_Store
 Thumbs.db
 output/evidence/runtime/
+output/release/build/
+output/release/publication/
+.stage7/

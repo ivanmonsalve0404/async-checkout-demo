@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ivanmonsalve0404/async-checkout-demo/schemas/stage7/release-successor-cleanup-receipt.schema.json",
+  "title": "Stage 7 hash-bound combined SSM journal cleanup receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "status",
+    "candidateSha",
+    "releaseId",
+    "sourceRunId",
+    "postSuccessRunId",
+    "postSuccessRunAttempt",
+    "sourcePreservationRunAttempt",
+    "sourceArtifactId",
+    "sourceArtifactDigest",
+    "sourceBundleSha256",
+    "preservationReceiptSha256",
+    "finalizationMarkerSha256",
+    "journalLifecycleSha256",
+    "cleanupScopeSha256",
+    "journalCleanupRoleSha256",
+    "journalRoleAuthoritySha256",
+    "callerAttemptAuthoritySha256",
+    "auditEvidenceSha256",
+    "journalSnapshotBinding",
+    "scenarioPrefixes",
+    "reconciliationJournalAuthority",
+    "reconciliationJournalAuthoritySha256",
+    "cleanupTargetSet",
+    "cleanupTargetSetSha256",
+    "preDeleteObservedEntrySetSha256",
+    "preDeleteObservedNameSetSha256",
+    "preDeleteMissingNameSetSha256",
+    "preDeleteMissingCount",
+    "discoveredNameSetSha256",
+    "deletedNameSetSha256",
+    "remainingNameSetSha256",
+    "discoveredCount",
+    "deletedCount",
+    "failedCount",
+    "remainingCount",
+    "listPages",
+    "deleteRequests",
+    "authorityReadRequests",
+    "externalRequests",
+    "idempotent",
+    "startedAtUtc",
+    "completedAtUtc",
+    "containsSensitiveData",
+    "cleanupReceiptSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 7 },
+    "kind": { "const": "RELEASE_SUCCESSOR_SSM_JOURNAL_CLEANUP_RECEIPT" },
+    "status": { "enum": ["PASS", "FAILED_PARTIAL_DELETE", "FAILED_DELETE_ERROR"] },
+    "candidateSha": { "$ref": "#/$defs/sha" },
+    "releaseId": { "$ref": "#/$defs/releaseId" },
+    "sourceRunId": { "$ref": "#/$defs/runId" },
+    "postSuccessRunId": { "$ref": "#/$defs/runId" },
+    "postSuccessRunAttempt": { "$ref": "#/$defs/attempt" },
+    "sourcePreservationRunAttempt": { "$ref": "#/$defs/attempt" },
+    "sourceArtifactId": { "type": "integer", "minimum": 1 },
+    "sourceArtifactDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "sourceBundleSha256": { "$ref": "#/$defs/sha256" },
+    "preservationReceiptSha256": { "$ref": "#/$defs/sha256" },
+    "finalizationMarkerSha256": { "$ref": "#/$defs/sha256" },
+    "journalLifecycleSha256": { "$ref": "#/$defs/sha256" },
+    "cleanupScopeSha256": { "$ref": "#/$defs/sha256" },
+    "journalCleanupRoleSha256": { "$ref": "#/$defs/sha256" },
+    "journalRoleAuthoritySha256": { "$ref": "#/$defs/sha256" },
+    "callerAttemptAuthoritySha256": { "$ref": "#/$defs/sha256" },
+    "auditEvidenceSha256": { "$ref": "#/$defs/sha256" },
+    "journalSnapshotBinding": { "$ref": "#/$defs/journalSnapshotBinding" },
+    "scenarioPrefixes": { "$ref": "#/$defs/scenarioPrefixes" },
+    "reconciliationJournalAuthority": { "$ref": "#/$defs/reconciliationAuthority" },
+    "reconciliationJournalAuthoritySha256": { "$ref": "#/$defs/sha256" },
+    "cleanupTargetSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenarioPrefixes",
+        "reconciliationParameterNames",
+        "parameterNames",
+        "targetNameSetSha256",
+        "parameterCount"
+      ],
+      "properties": {
+        "scenarioPrefixes": { "$ref": "#/$defs/scenarioPrefixes" },
+        "reconciliationParameterNames": { "$ref": "#/$defs/parameterNames" },
+        "parameterNames": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^/checkout/stage7/rollback/" }
+        },
+        "targetNameSetSha256": { "$ref": "#/$defs/sha256" },
+        "parameterCount": { "type": "integer", "minimum": 3 }
+      }
+    },
+    "cleanupTargetSetSha256": { "$ref": "#/$defs/sha256" },
+    "preDeleteObservedEntrySetSha256": { "$ref": "#/$defs/sha256" },
+    "preDeleteObservedNameSetSha256": { "$ref": "#/$defs/sha256" },
+    "preDeleteMissingNameSetSha256": { "$ref": "#/$defs/sha256" },
+    "preDeleteMissingCount": { "$ref": "#/$defs/count" },
+    "discoveredNameSetSha256": { "$ref": "#/$defs/sha256" },
+    "deletedNameSetSha256": { "$ref": "#/$defs/sha256" },
+    "remainingNameSetSha256": { "$ref": "#/$defs/sha256" },
+    "discoveredCount": { "$ref": "#/$defs/count" },
+    "deletedCount": { "$ref": "#/$defs/count" },
+    "failedCount": { "$ref": "#/$defs/count" },
+    "remainingCount": { "$ref": "#/$defs/count" },
+    "listPages": { "$ref": "#/$defs/count" },
+    "deleteRequests": { "$ref": "#/$defs/count" },
+    "authorityReadRequests": { "type": "integer", "minimum": 7 },
+    "externalRequests": { "$ref": "#/$defs/count" },
+    "idempotent": { "type": "boolean" },
+    "startedAtUtc": { "type": "string", "format": "date-time" },
+    "completedAtUtc": { "type": "string", "format": "date-time" },
+    "containsSensitiveData": { "const": false },
+    "cleanupReceiptSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "PASS" } } },
+      "then": {
+        "properties": {
+          "remainingCount": { "const": 0 },
+          "failedCount": { "const": 0 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "FAILED_PARTIAL_DELETE" } } },
+      "then": { "properties": { "remainingCount": { "minimum": 1 } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "FAILED_DELETE_ERROR" } } },
+      "then": {
+        "properties": {
+          "remainingCount": { "const": 0 },
+          "failedCount": { "minimum": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "idempotent": { "const": true } } },
+      "then": {
+        "properties": {
+          "status": { "const": "PASS" },
+          "discoveredCount": { "const": 0 },
+          "deletedCount": { "const": 0 },
+          "failedCount": { "const": 0 },
+          "remainingCount": { "const": 0 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runId": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+    "attempt": { "type": "integer", "minimum": 1, "maximum": 999 },
+    "count": { "type": "integer", "minimum": 0 },
+    "releaseId": {
+      "type": "string",
+      "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$"
+    },
+    "scenarioPrefixes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["RB-E7-06", "RB-E7-08"],
+      "properties": {
+        "RB-E7-06": {
+          "type": "string",
+          "pattern": "^/checkout/stage7/rollback/[0-9a-f]{40}/RB-E7-06$"
+        },
+        "RB-E7-08": {
+          "type": "string",
+          "pattern": "^/checkout/stage7/rollback/[0-9a-f]{40}/RB-E7-08$"
+        }
+      }
+    },
+    "parameterNames": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 155,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^/checkout/stage7/rollback/" }
+    },
+    "reconciliationAuthority": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "source",
+        "cleanupParameterNames",
+        "cleanupParameterCount",
+        "requiredResidualCount",
+        "containsSensitiveData",
+        "journalAuthoritySha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "STAGE7_RELEASE_RECONCILIATION_JOURNAL_AUTHORITY" },
+        "status": { "const": "PRESERVE_THEN_DELETE_EXACT_SET" },
+        "source": { "type": "object" },
+        "cleanupParameterNames": { "$ref": "#/$defs/parameterNames" },
+        "cleanupParameterCount": { "type": "integer", "minimum": 4, "maximum": 155 },
+        "requiredResidualCount": { "const": 0 },
+        "containsSensitiveData": { "const": false },
+        "journalAuthoritySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "journalSnapshotBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "rawSha256",
+        "canonicalSha256",
+        "bytes",
+        "snapshotSha256",
+        "targetNameSetSha256",
+        "entryCount"
+      ],
+      "properties": {
+        "path": { "const": "release-reconciliation-journal-snapshot.json" },
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 2 },
+        "snapshotSha256": { "$ref": "#/$defs/sha256" },
+        "targetNameSetSha256": { "$ref": "#/$defs/sha256" },
+        "entryCount": { "type": "integer", "minimum": 3 }
+      }
+    }
+  }
+}

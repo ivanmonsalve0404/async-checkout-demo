@@ -50,6 +50,10 @@ El archivo externo de evidencia debe cumplir `scripts/stage6/a11y/manual-evidenc
 
 El resumen seguro mezcla las ejecuciones de forma explícita: `sourceManualRunId` conserva el `runId` del JSON humano e `ingestedByRunId` registra la campaña actual. La evidencia manual sólo es reutilizable cuando `commitSha`, schema, protocolo e inventario axe siguen siendo exactos; cambiar cualquiera de ellos invalida la ingestión.
 
+El CI de `pull_request` no materializa la variable versionada de evidencia manual. En esa ruta conserva
+`NOT_RUN_MANUAL_REQUIRED`; la evidencia humana sólo se ingiere en una ejecución no-PR cuyo SHA sea
+exactamente el documentado, para que un merge commit temporal no pueda consumir una revisión de otro candidato.
+
 La ingestión rechaza resultados con PAN-like de 13–19 dígitos, teléfonos, correos, claves privadas, valores etiquetados como token/secreto/clave, CVC/CVV/código de seguridad contextual o expiración contextual. El reporte promovido conserva únicamente estados, IDs seguros, conteos y hashes; nunca copia `actualResult`, la ruta del archivo ni el JSON raw.
 
 ## `A11Y-MAN-01` — Semántica y anuncios con lector

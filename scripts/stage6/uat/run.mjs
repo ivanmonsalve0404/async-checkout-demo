@@ -196,6 +196,30 @@ const privacyStateIsSafe = (value, { exactValues = [], substringValues = [] }) =
     })
   );
 };
+const RAW_CARD_REQUEST_KEY_ALIASES = ['cardnumber', 'cvc', 'cvv', 'expiry', 'pan', 'securitycode'];
+const requestContainsRawCardMaterial = (value, card, depth = 0) => {
+  if (depth > MAX_NESTED_STATE_DEPTH) return true;
+  if (Array.isArray(value)) {
+    return value.some((nested) => requestContainsRawCardMaterial(nested, card, depth + 1));
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.entries(value).some(
+      ([key, nested]) =>
+        RAW_CARD_REQUEST_KEY_ALIASES.some((alias) => normalizedStateKey(key).includes(alias)) ||
+        requestContainsRawCardMaterial(nested, card, depth + 1),
+    );
+  }
+  const scalar = String(value);
+  if (
+    scalar === card.expiry ||
+    scalar === card.securityCode ||
+    (card.number.length >= 12 && scalar.includes(card.number))
+  ) {
+    return true;
+  }
+  const nested = parseNestedState(value);
+  return nested === undefined ? false : requestContainsRawCardMaterial(nested, card, depth + 1);
+};
 const selfTestPrivacyStateOracle = () => {
   const token = 'tok_fake_0123456789abcdef01234567';
   const cardNumber = ['4111', '1111', '1111', '1111'].join('');
@@ -270,6 +294,29 @@ const selfTestPrivacyStateOracle = () => {
       { private_key: 'redacted' },
     ].every((state) => !privacyStateIsSafe(state, { exactValues, substringValues })),
     'PRIVACY_ORACLE_SECRET_KEY_CANARY',
+  );
+  const card = { number: cardNumber, expiry: exactValues[0], securityCode: exactValues[1] };
+  check(
+    !requestContainsRawCardMaterial(
+      {
+        paymentMethodToken: 'tok_fake_safe_cvc_opaque_value',
+        acceptances: { termsAcceptanceToken: 'opaque-CvC-segment-without-card-data' },
+      },
+      card,
+    ),
+    'PRIVACY_REQUEST_OPAQUE_VALUE_CANARY',
+  );
+  check(
+    [
+      { cardNumber },
+      { security_code: exactValues[1] },
+      { expiry: exactValues[0] },
+      { nested: JSON.stringify({ pan: cardNumber }) },
+      { reference: 'prefix-' + cardNumber + '-suffix' },
+      { reference: exactValues[0] },
+      { reference: exactValues[1] },
+    ].every((request) => requestContainsRawCardMaterial(request, card)),
+    'PRIVACY_REQUEST_RAW_CARD_CANARY',
   );
 };
 const manualUat16Decision = (
@@ -1052,9 +1099,10 @@ await execute(
       const session = new ApiSession();
       const docs = await loopbackFetch(API_ORIGIN + '/api/docs');
       check(
-        docs.status === 200 && docs.headers.get('content-type')?.includes('text/html'),
+        docs.status === 200 && docs.headers.get('content-type')?.includes('application/yaml'),
         'OPENAPI_DOCS_HTTP',
       );
+      check((await docs.text()) === contract, 'OPENAPI_DOCS_BODY');
       const missing = await session.request('GET', '/api/v1/products/product_missing_001');
       safeProblem(missing, 404, 'PRODUCT_NOT_FOUND');
       expectStatus(await session.request('GET', '/api/v1/products'), 200, 'OPENAPI_PRODUCTS');
@@ -2006,25 +2054,7 @@ const verifyPrivacySurfaces = async () => {
         'PRIVACY_TOKEN_NOT_TRANSPORTED',
       );
       const token = paymentRequest.paymentMethodToken;
-      const requestText = JSON.stringify(paymentRequest);
-      const requestScalarValues = [];
-      const collectRequestScalars = (value) => {
-        if (Array.isArray(value)) {
-          for (const item of value) collectRequestScalars(item);
-        } else if (value !== null && typeof value === 'object') {
-          for (const item of Object.values(value)) collectRequestScalars(item);
-        } else if (value !== undefined) {
-          requestScalarValues.push(String(value));
-        }
-      };
-      collectRequestScalars(paymentRequest);
-      check(
-        !requestScalarValues.includes(card.number) &&
-          !requestScalarValues.includes(card.expiry) &&
-          !requestScalarValues.includes(card.securityCode) &&
-          !/securityCode|cardNumber|expiry|cvc/iu.test(requestText),
-        'PRIVACY_RAW_CARD_IN_REQUEST',
-      );
+      check(!requestContainsRawCardMaterial(paymentRequest, card), 'PRIVACY_RAW_CARD_IN_REQUEST');
 
       const progress = await readProgress(page);
       check(typeof progress.transactionId === 'string', 'PRIVACY_TRANSACTION_MISSING');
@@ -3364,7 +3394,7 @@ const report = {
     command: COMMAND,
     tool: {
       node: process.version,
-      playwright: '1.61.1',
+      playwright: '1.62.1',
       httpClient: 'node-fetch-native',
       fixtureComposition: '@nestjs/testing-11.2.1',
     },

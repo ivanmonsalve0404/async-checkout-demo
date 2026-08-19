@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ivanmonsalve0404/async-checkout-demo/schemas/stage7/zap-passive-capture.schema.json",
+  "title": "Stage 7 exact passive ZAP capture",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "status",
+    "imageDigest",
+    "zapVersion",
+    "targetOriginSha256",
+    "openApiRawSha256",
+    "inventorySha256",
+    "requestCount",
+    "observations",
+    "observationsSha256",
+    "budgetEnforcement",
+    "callHomeDisabled",
+    "outsideAllowlist",
+    "redirectsFollowed",
+    "activeScanRequests",
+    "mutationsPerformed",
+    "containsSensitiveData",
+    "captureSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 7 },
+    "kind": { "const": "ZAP_PASSIVE_EXACT_CAPTURE" },
+    "status": { "const": "PASS" },
+    "imageDigest": {
+      "const": "zaproxy/zap-stable@sha256:51dbcc578b217ea7563b22a6948f5f41dd2002936fc5148300077f988663b4aa"
+    },
+    "zapVersion": { "const": "2.16.1" },
+    "targetOriginSha256": { "$ref": "#/$defs/sha256" },
+    "openApiRawSha256": { "$ref": "#/$defs/sha256" },
+    "inventorySha256": { "$ref": "#/$defs/sha256" },
+    "requestCount": { "const": 6 },
+    "observations": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": { "$ref": "#/$defs/observation" }
+    },
+    "observationsSha256": { "$ref": "#/$defs/sha256" },
+    "budgetEnforcement": { "const": "BEFORE_EACH_ZAP_EGRESS" },
+    "callHomeDisabled": { "const": true },
+    "outsideAllowlist": { "const": 0 },
+    "redirectsFollowed": { "const": 0 },
+    "activeScanRequests": { "const": 0 },
+    "mutationsPerformed": { "const": 0 },
+    "containsSensitiveData": { "const": false },
+    "captureSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "method",
+        "path",
+        "status",
+        "redirectsFollowed",
+        "responseBodyPersisted"
+      ],
+      "properties": {
+        "requestId": { "type": "string", "pattern": "^ZAP-PASSIVE-0[1-6]$" },
+        "method": { "const": "GET" },
+        "path": { "type": "string", "pattern": "^/" },
+        "status": { "enum": [200, 404] },
+        "redirectsFollowed": { "const": 0 },
+        "responseBodyPersisted": { "const": false }
+      }
+    }
+  }
+}

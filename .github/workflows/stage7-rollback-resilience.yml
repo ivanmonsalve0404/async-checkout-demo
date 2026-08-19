@@ -1,0 +1,346 @@
+name: Stage 7 protected rollback resilience
+
+on:
+  workflow_call:
+    inputs:
+      candidate_sha:
+        description: Exact candidate commit already deployed as N
+        required: true
+        type: string
+      release_id:
+        description: Exact Stage 7 release identifier
+        required: true
+        type: string
+      config_sha256:
+        description: SHA-256 of the approved Stage 7 config
+        required: true
+        type: string
+    outputs:
+      rehearsal_pass:
+        description: True only after RB-E7-06 and RB-E7-08 were observed in AWS
+        value: ${{ jobs.rollback-resilience.outputs.rehearsal_pass }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  AWS_EC2_METADATA_DISABLED: 'true'
+  NODE_VERSION: '24.19.0'
+  PNPM_VERSION: '11.19.0'
+  STAGE7_AWS_ACCOUNT_ID: ${{ vars.STAGE7_AWS_ACCOUNT_ID }}
+  STAGE7_AWS_REGION: ${{ vars.STAGE7_AWS_REGION }}
+  STAGE7_AWS_ROLLBACK_ROLE_ARN: ${{ vars.STAGE7_AWS_ROLLBACK_ROLE_ARN }}
+  STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+  STAGE7_ENVIRONMENT: assessment-release
+  STAGE7_EVIDENCE_ROOT: output/evidence/runtime/stage-7-resilience
+  STAGE7_PROTECTED_ENVIRONMENT: assessment-release-recovery
+  STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN: ${{ vars.STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN }}
+  STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+
+jobs:
+  rollback-resilience:
+    name: RB-E7-06 and RB-E7-08 protected AWS rehearsal
+    environment: assessment-release-recovery
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    outputs:
+      rehearsal_pass: ${{ steps.completion.outputs.rehearsal_pass }}
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable candidate assembly
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate
+          path: .stage7/candidate
+      - name: Download the immutable candidate manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate-manifest
+          path: .stage7/candidate-manifest
+      - name: Download the immutable release identity
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-release-metadata
+          path: .stage7/release-metadata
+      - name: Download the immutable release plan
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-release-plan
+          path: .stage7/release-plan
+      - name: Download the immutable N-1 contract
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-previous-release
+          path: .stage7/previous
+      - name: Download the exact approved infrastructure plan
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-infra-diff
+          path: .stage7/infra-diff
+      - name: Download the exact protected approval
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-approval
+          path: .stage7/approval
+      - name: Download the exact read-only AWS authority evidence
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-aws-auth
+          path: .stage7/aws-auth
+      - name: Download the deployed web checkpoint
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-web
+          path: .stage7/web
+      - name: Download confirmed observability evidence
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-observability
+          path: .stage7/observability
+      - name: Download the sealed activation checkpoint
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-activation
+          path: .stage7/activation
+      - name: Download the base rollback and re-promotion ledger
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-rollback
+          path: .stage7/rollback
+      - name: Download the durable candidate rollback record
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-recovery-probe
+          path: .stage7/recovery-probe
+      - name: Download the exact external authorization authority
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-external-authorization
+          path: .stage7/external-authorization
+      - name: Download the deployed smoke authorization usages
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-smoke
+          path: .stage7/smoke
+      - name: Download the edge authorization usage
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-edge-security
+          path: .stage7/edge
+      - name: Download the quality authorization usage
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-quality
+          path: .stage7/quality
+      - name: Download the sandbox authorization usage
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-sandbox
+          path: .stage7/sandbox
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Materialize and validate the approved Stage 7 config
+        env:
+          EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          [[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          target="${RUNNER_TEMP}/stage7-config.json"
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > "${target}"
+          chmod 600 "${target}"
+          test -s "${target}"
+          test "$(stat -c '%a' "${target}")" = '600'
+          actual="$(sha256sum "${target}" | cut -d ' ' -f 1)"
+          test "${actual}" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${target}" > /dev/null
+          private_root='.stage7/private-rollback-resilience'
+          workspace_target="${private_root}/stage7-config.json"
+          test ! -e "${private_root}"
+          install -d -m 700 "${private_root}"
+          install -m 600 "${target}" "${workspace_target}"
+          test "$(stat -c '%a' "${workspace_target}")" = '600'
+          test "$(sha256sum "${workspace_target}" | cut -d ' ' -f 1)" = "${EXPECTED_STAGE7_CONFIG_SHA256}"
+          node scripts/stage7/cli.mjs config --config "${workspace_target}" > /dev/null
+          printf 'STAGE7_CONFIG=%s\n' "${target}" >> "${GITHUB_ENV}"
+          printf 'STAGE7_RECONCILIATION_CONFIG=%s\n' "${workspace_target}" >> "${GITHUB_ENV}"
+      - name: Reconstruct the exact 23-binding reconciliation intent
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p .stage7/private-rollback-resilience
+          node scripts/stage7/release-reconciliation-cli.mjs create-intent \
+            --config "${STAGE7_RECONCILIATION_CONFIG}" \
+            --release-metadata .stage7/release-metadata/release-metadata.json \
+            --candidate-manifest .stage7/candidate-manifest/candidate-manifest.json \
+            --release-plan .stage7/release-plan/release-plan.json \
+            --approved-diff .stage7/infra-diff/infra-diff.json \
+            --raw-diff .stage7/infra-diff/infra-diff.txt \
+            --github-environment-approval .stage7/approval/github-environment-approval.json \
+            --approval .stage7/approval/approval.json \
+            --aws-auth .stage7/aws-auth/aws-auth.json \
+            --journal-role-effective-permissions .stage7/aws-auth/stage7-release-journal-role-effective-permissions.json \
+            --activation .stage7/activation/activation.json \
+            --web-deployment .stage7/web/web.json \
+            --candidate-record .stage7/recovery-probe/versioned-rollback-candidate.json \
+            --external-authorization .stage7/external-authorization/external-authorization.json \
+            --previous-release-manifest .stage7/previous/previous-release-manifest.json \
+            --previous-source-provenance .stage7/previous/previous-source-provenance.json \
+            --previous-target-compatibility .stage7/previous/previous-target-compatibility.json \
+            --previous-final-disable-provenance .stage7/previous/previous-final-disable-provenance.json \
+            --previous-api-contract-evidence .stage7/previous/previous-api-contract-evidence.json \
+            --previous-pending-evidence .stage7/previous/previous-pending-evidence.json \
+            --previous-smoke-evidence .stage7/previous/previous-smoke-evidence.json \
+            --previous-release-projection-index .stage7/previous/previous-release-projection-index.json \
+            --output .stage7/private-rollback-resilience/release-reconciliation-intent.json
+      - name: Prepare immutable private descriptors and the public source binding
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p .stage7/private-rollback-resilience "${STAGE7_EVIDENCE_ROOT}"
+          node scripts/stage7/rollback-resilience-cli.mjs prepare \
+            --config "${STAGE7_RECONCILIATION_CONFIG}" \
+            --freeze .stage7/candidate-manifest/candidate-manifest.json \
+            --previous .stage7/previous/previous-release-manifest.json \
+            --candidate .stage7/recovery-probe/versioned-rollback-candidate.json \
+            --rollback .stage7/rollback/rollback.json \
+            --aws-auth .stage7/aws-auth/aws-auth.json \
+            --approval .stage7/approval/approval.json \
+            --journal-role-effective-permissions .stage7/aws-auth/stage7-release-journal-role-effective-permissions.json \
+            --reconciliation-recovery-role-effective-permissions .stage7/aws-auth/stage7-release-reconciliation-recovery-role-effective-permissions.json \
+            --plan .stage7/infra-diff/infra-diff.json \
+            --deployment .stage7/web/web.json \
+            --observability .stage7/observability/observability.json \
+            --activation .stage7/activation/activation.json \
+            --external-authorization .stage7/external-authorization/external-authorization.json \
+            --smoke-input .stage7/smoke/smoke-input-preflight.json \
+            --smoke .stage7/smoke/smoke.json \
+            --edge .stage7/edge/edge-security.json \
+            --quality .stage7/quality/quality.json \
+            --sandbox .stage7/sandbox/sandbox-smoke.json \
+            --rollback-smoke-input .stage7/rollback/rollback-smoke-input-preflight.json \
+            --pending-producer .stage7/rollback/rollback-pending-producer.json \
+            --rollback-smoke .stage7/rollback/versioned-rollback-smoke.json \
+            --repromotion-smoke .stage7/rollback/versioned-repromotion-smoke.json \
+            --journal-cleanup-role "${STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN}" \
+            --assembly .stage7/candidate/iac \
+            --max-polls 30 \
+            --inputs-output .stage7/private-rollback-resilience/inputs.json \
+            --rb06-output .stage7/private-rollback-resilience/rb-e7-06.json \
+            --rb08-output .stage7/private-rollback-resilience/rb-e7-08.json \
+            --binding-output "${STAGE7_EVIDENCE_ROOT}/stage7-rollback-resilience-source-binding.json"
+      - name: Seal exact run and evidence hashes into the protected environment
+        env:
+          SOURCE_BINDING_FILE: output/evidence/runtime/stage-7-resilience/stage7-rollback-resilience-source-binding.json
+        run: |
+          set -euo pipefail
+          node --input-type=module -e "import fs from 'node:fs'; const b=JSON.parse(fs.readFileSync(process.env.SOURCE_BINDING_FILE,'utf8')); const pairs={STAGE7_AUTHORIZED_RUN_ID:process.env.GITHUB_RUN_ID,STAGE7_AUTHORIZED_RUN_ATTEMPT:process.env.GITHUB_RUN_ATTEMPT,STAGE7_AUTHORIZED_CANDIDATE_SHA:b.candidateSha,STAGE7_AUTHORIZED_FREEZE_SHA256:JSON.parse(fs.readFileSync('.stage7/candidate-manifest/candidate-manifest.json','utf8')).manifestSha256,STAGE7_AUTHORIZED_APPROVAL_SHA256:b.approvalSha256,STAGE7_AUTHORIZED_AWS_AUTH_SHA256:b.awsAuthEvidenceSha256,STAGE7_AUTHORIZED_PLAN_SHA256:b.approvedPlanSha256,STAGE7_AUTHORIZED_DEPLOYMENT_SHA256:b.deploymentEvidenceSha256,STAGE7_AUTHORIZED_OBSERVABILITY_SHA256:b.observabilityEvidenceSha256,STAGE7_AUTHORIZED_ACTIVATION_SHA256:b.activationEvidenceSha256,STAGE7_AUTHORIZED_EXTERNAL_AUTHORIZATION_SHA256:b.externalAuthorizationEvidenceSha256,STAGE7_AUTHORIZED_AUTHORIZATION_BUDGET_SHA256:b.authorizationBudgetSha256,STAGE7_AUTHORIZED_REHEARSAL_SHA256:b.baseRehearsalSha256,STAGE7_AUTHORIZED_JOURNAL_CLEANUP_ROLE_SHA256:b.journalCleanupRoleSha256}; for(const [key,value] of Object.entries(pairs)){if(typeof value!=='string'||!/^[A-Za-z0-9._-]+$/.test(value)) process.exit(1); fs.appendFileSync(process.env.GITHUB_ENV,key+'='+value+'\n');}"
+          printf 'STAGE7_ROLLBACK_STARTED_AT_UTC=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')" >> "${GITHUB_ENV}"
+      - name: Assume the exact rollback role through OIDC
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 2700
+          role-session-name: e7-rb-resilience-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_ROLLBACK_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Execute RB-E7-06 and RB-E7-08 with durable AWS journaling
+        env:
+          STAGE7_JOB_WORKFLOW_REF: ${{ job.workflow_ref }}
+        run: |
+          set -euo pipefail
+          node scripts/stage7/rollback-resilience-cli.mjs run-protected \
+            --inputs .stage7/private-rollback-resilience/inputs.json \
+            --rb06 .stage7/private-rollback-resilience/rb-e7-06.json \
+            --rb08 .stage7/private-rollback-resilience/rb-e7-08.json \
+            --source-binding "${STAGE7_EVIDENCE_ROOT}/stage7-rollback-resilience-source-binding.json" \
+            --output "${STAGE7_EVIDENCE_ROOT}/stage7-rollback-resilience-protected-run.json" \
+            --completion-output "${STAGE7_EVIDENCE_ROOT}/stage7-rollback-resilience-complete.json" \
+            --intent .stage7/private-rollback-resilience/release-reconciliation-intent.json \
+            --config "${STAGE7_RECONCILIATION_CONFIG}" \
+            --release-metadata .stage7/release-metadata/release-metadata.json \
+            --candidate-manifest .stage7/candidate-manifest/candidate-manifest.json \
+            --release-plan .stage7/release-plan/release-plan.json \
+            --approved-diff .stage7/infra-diff/infra-diff.json \
+            --raw-diff .stage7/infra-diff/infra-diff.txt \
+            --github-environment-approval .stage7/approval/github-environment-approval.json \
+            --approval .stage7/approval/approval.json \
+            --aws-auth .stage7/aws-auth/aws-auth.json \
+            --journal-role-effective-permissions .stage7/aws-auth/stage7-release-journal-role-effective-permissions.json \
+            --activation .stage7/activation/activation.json \
+            --web-deployment .stage7/web/web.json \
+            --candidate-record .stage7/recovery-probe/versioned-rollback-candidate.json \
+            --external-authorization .stage7/external-authorization/external-authorization.json \
+            --previous-release-manifest .stage7/previous/previous-release-manifest.json \
+            --previous-source-provenance .stage7/previous/previous-source-provenance.json \
+            --previous-target-compatibility .stage7/previous/previous-target-compatibility.json \
+            --previous-final-disable-provenance .stage7/previous/previous-final-disable-provenance.json \
+            --previous-api-contract-evidence .stage7/previous/previous-api-contract-evidence.json \
+            --previous-pending-evidence .stage7/previous/previous-pending-evidence.json \
+            --previous-smoke-evidence .stage7/previous/previous-smoke-evidence.json \
+            --previous-release-projection-index .stage7/previous/previous-release-projection-index.json \
+            --rollback .stage7/rollback/rollback.json \
+            --reconciliation-recovery-role-effective-permissions .stage7/aws-auth/stage7-release-reconciliation-recovery-role-effective-permissions.json \
+            --observability .stage7/observability/observability.json \
+            --smoke-input .stage7/smoke/smoke-input-preflight.json \
+            --smoke .stage7/smoke/smoke.json \
+            --edge .stage7/edge/edge-security.json \
+            --quality .stage7/quality/quality.json \
+            --sandbox .stage7/sandbox/sandbox-smoke.json \
+            --rollback-smoke-input .stage7/rollback/rollback-smoke-input-preflight.json \
+            --pending-producer .stage7/rollback/rollback-pending-producer.json \
+            --rollback-smoke .stage7/rollback/versioned-rollback-smoke.json \
+            --repromotion-smoke .stage7/rollback/versioned-repromotion-smoke.json \
+            --journal-cleanup-role "${STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN}" \
+            --assembly .stage7/candidate/iac \
+            --max-polls 30
+      - name: Revalidate the public completion envelope from raw source bytes
+        id: completion
+        run: |
+          set -euo pipefail
+          node scripts/stage7/rollback-resilience-cli.mjs validate-completion --rollback .stage7/rollback/rollback.json --source-binding "${STAGE7_EVIDENCE_ROOT}/stage7-rollback-resilience-source-binding.json" --protected-run "${STAGE7_EVIDENCE_ROOT}/stage7-rollback-resilience-protected-run.json" --completion "${STAGE7_EVIDENCE_ROOT}/stage7-rollback-resilience-complete.json" --inputs .stage7/private-rollback-resilience/inputs.json --rb06 .stage7/private-rollback-resilience/rb-e7-06.json --rb08 .stage7/private-rollback-resilience/rb-e7-08.json > /dev/null
+          printf 'rehearsal_pass=true\n' >> "${GITHUB_OUTPUT}"
+      - name: Scan the exact three-file public resilience artifact
+        run: |
+          set -euo pipefail
+          expected="$(printf '%s\n' stage7-rollback-resilience-complete.json stage7-rollback-resilience-protected-run.json stage7-rollback-resilience-source-binding.json | sort)"
+          actual="$(find "${STAGE7_EVIDENCE_ROOT}" -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort)"
+          test "${actual}" = "${expected}"
+          pnpm release:scan -- --pre-upload "${STAGE7_EVIDENCE_ROOT}/stage7-rollback-resilience-source-binding.json" "${STAGE7_EVIDENCE_ROOT}/stage7-rollback-resilience-protected-run.json" "${STAGE7_EVIDENCE_ROOT}/stage7-rollback-resilience-complete.json"
+      - name: Preserve only the hash-bound resilience evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-rollback-resilience
+          if-no-files-found: error
+          path: |
+            output/evidence/runtime/stage-7-resilience/stage7-rollback-resilience-source-binding.json
+            output/evidence/runtime/stage-7-resilience/stage7-rollback-resilience-protected-run.json
+            output/evidence/runtime/stage-7-resilience/stage7-rollback-resilience-complete.json
+          retention-days: 30

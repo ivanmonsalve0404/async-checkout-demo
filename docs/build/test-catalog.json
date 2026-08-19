@@ -281,7 +281,7 @@
       "evidence": [
         {
           "file": "apps/api/src/interfaces/http/contract/api.contract.spec.ts",
-          "pattern": "serves only sanitized local documentation"
+          "pattern": "serves the frozen sanitized OpenAPI contract publicly"
         },
         {
           "file": "scripts/contracts/contracts.mjs",

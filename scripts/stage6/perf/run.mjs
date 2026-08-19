@@ -182,7 +182,7 @@ const report = {
   ...(await evidenceBase({
     command: 'node scripts/stage6/perf/run.mjs',
     scriptPath: SCRIPT_PATH,
-    tool: { name: 'Lighthouse + Playwright PerformanceObserver', version: '13.4.1 + 1.61.1' },
+    tool: { name: 'Lighthouse + Playwright PerformanceObserver', version: '13.4.1 + 1.62.1' },
   })),
   status,
   budgets: {

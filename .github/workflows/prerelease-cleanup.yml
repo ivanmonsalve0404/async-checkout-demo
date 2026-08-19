@@ -1,0 +1,122 @@
+name: Stage 7 Expired Prerelease Cleanup
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage7-prerelease-expiry-cleanup
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  NODE_VERSION: '24.19.0'
+  STAGE7_AWS_ACCOUNT_ID: ${{ vars.STAGE7_AWS_ACCOUNT_ID }}
+  STAGE7_PRERELEASE_CLEANUP_WATCHDOG_ROLE_ARN: ${{ vars.STAGE7_PRERELEASE_CLEANUP_WATCHDOG_ROLE_ARN }}
+  STAGE7_AWS_REGION: ${{ vars.STAGE7_AWS_REGION }}
+  STAGE7_PRERELEASE_CLEANUP_OIDC_SUBJECT: repo:ivanmonsalve0404/async-checkout-demo:ref:refs/heads/master
+  STAGE7_CLEANUP_CONTRACT_EVIDENCE: output/evidence/runtime/stage-7-prerelease-cleanup/contract-${{ github.run_id }}-${{ github.run_attempt }}.json
+  STAGE7_CLEANUP_EVIDENCE: output/evidence/runtime/stage-7-prerelease-cleanup/cleanup-${{ github.run_id }}-${{ github.run_attempt }}.json
+
+jobs:
+  validate-contract:
+    name: Validate zero-AWS cleanup contract
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the protected default branch
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: refs/heads/master
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Reject an untrusted invocation context
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = 'ivanmonsalve0404/async-checkout-demo'
+          test "${GITHUB_REF}" = 'refs/heads/master'
+      - name: Prove the cleanup contract without AWS access
+        run: |
+          set -euo pipefail
+          node scripts/stage7/prerelease-cleanup-recovery.mjs self-test
+          node scripts/security/validate-prerelease-cleanup-workflow.mjs --self-test
+          node scripts/security/validate-prerelease-cleanup-workflow.mjs --evidence "${STAGE7_CLEANUP_CONTRACT_EVIDENCE}"
+      - name: Preserve the static contract evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-prerelease-cleanup-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          path: ${{ env.STAGE7_CLEANUP_CONTRACT_EVIDENCE }}
+          retention-days: 30
+
+  cleanup-expired-prereleases:
+    name: Unpublish and delete expired prerelease stacks
+    needs: validate-contract
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out the protected default branch
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: refs/heads/master
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Validate the immutable cleanup boundary
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = 'ivanmonsalve0404/async-checkout-demo'
+          test "${GITHUB_REF}" = 'refs/heads/master'
+          [[ "${STAGE7_AWS_ACCOUNT_ID}" =~ ^[0-9]{12}$ ]]
+          [[ "${STAGE7_AWS_REGION}" =~ ^[a-z]{2}(-[a-z0-9]+)+-[0-9]$ ]]
+          test -n "${STAGE7_PRERELEASE_CLEANUP_WATCHDOG_ROLE_ARN}"
+          [[ "${STAGE7_PRERELEASE_CLEANUP_WATCHDOG_ROLE_ARN}" == "arn:aws:iam::${STAGE7_AWS_ACCOUNT_ID}:role/"* ]]
+      - name: Assume the dedicated cleanup role through OIDC
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ vars.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ vars.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          role-duration-seconds: 3600
+          role-session-name: e7-prerelease-cleanup-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_PRERELEASE_CLEANUP_WATCHDOG_ROLE_ARN }}
+      - name: Execute fail-closed expired prerelease recovery
+        env:
+          STAGE7_CLEANUP_OIDC: 'true'
+        run: |
+          set -euo pipefail
+          node scripts/stage7/prerelease-cleanup-recovery.mjs run \
+            --execute \
+            --account "${STAGE7_AWS_ACCOUNT_ID}" \
+            --region "${STAGE7_AWS_REGION}" \
+            --role-arn "${STAGE7_PRERELEASE_CLEANUP_WATCHDOG_ROLE_ARN}" \
+            --evidence "${STAGE7_CLEANUP_EVIDENCE}"
+      - name: Preserve sanitized cleanup evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-prerelease-cleanup-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          path: ${{ env.STAGE7_CLEANUP_EVIDENCE }}
+          retention-days: 30

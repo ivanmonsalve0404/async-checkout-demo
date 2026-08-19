@@ -21,22 +21,69 @@ const sarifFiles = (inputPath) => {
     .sort();
 };
 
-const scoreFor = (run, result) => {
-  const rule =
-    run.tool?.driver?.rules?.find(({ id }) => id === result.ruleId) ??
-    run.tool?.driver?.rules?.[result.rule?.index];
+const toolComponents = (run) => [run.tool?.driver, ...(run.tool?.extensions ?? [])].filter(Boolean);
+
+const ruleFor = (run, result) => {
+  const components = toolComponents(run);
+  const componentIndex = result.rule?.toolComponent?.index;
+  const referencedComponent = Number.isSafeInteger(componentIndex)
+    ? run.tool?.extensions?.[componentIndex]
+    : run.tool?.driver;
+  const ruleIndex = result.ruleIndex ?? result.rule?.index;
+
+  if (typeof result.ruleId === 'string') {
+    const matchingRule = components
+      .flatMap((component) => component.rules ?? [])
+      .find(({ id }) => id === result.ruleId);
+    if (matchingRule !== undefined) return matchingRule;
+  }
+  return Number.isSafeInteger(ruleIndex) ? referencedComponent?.rules?.[ruleIndex] : undefined;
+};
+
+const classificationFor = (run, result) => {
+  const rule = ruleFor(run, result);
   const value = result.properties?.['security-severity'] ?? rule?.properties?.['security-severity'];
-  if (value === 'critical') return 9;
-  if (value === 'high') return 7;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
+  if (value === 'critical') return { kind: 'score', score: 9 };
+  if (value === 'high') return { kind: 'score', score: 7 };
+  if (value !== undefined) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 && parsed <= 10
+      ? { kind: 'score', score: parsed }
+      : { kind: 'security-unclassified' };
+  }
+  if (rule === undefined) return { kind: 'unresolved' };
+
+  const tags = [...(result.properties?.tags ?? []), ...(rule.properties?.tags ?? [])];
+  return tags.some((tag) => tag === 'security' || /^external\/cwe\//u.test(tag))
+    ? { kind: 'security-unclassified' }
+    : { kind: 'non-security' };
+};
+
+const findingReference = (result) => {
+  const location = result.locations?.[0]?.physicalLocation;
+  const uri = location?.artifactLocation?.uri;
+  const line = location?.region?.startLine;
+  const ruleId = result.ruleId ?? 'RULE_ID_MISSING';
+  return typeof uri === 'string'
+    ? `${ruleId}@${uri}${Number.isSafeInteger(line) ? `:${line}` : ''}`
+    : ruleId;
 };
 
 export const summarizeCodeqlSarif = (documents) => {
   if (!Array.isArray(documents) || documents.length === 0) {
     throw new Error('CODEQL_SARIF_MISSING');
   }
-  const counts = { critical: 0, high: 0, medium: 0, low: 0, unclassified: 0, total: 0 };
+  const counts = {
+    critical: 0,
+    high: 0,
+    medium: 0,
+    low: 0,
+    unclassified: 0,
+    securityUnclassified: 0,
+    unresolved: 0,
+    total: 0,
+  };
+  const blockingRuleIds = new Set();
   for (const document of documents) {
     if (
       document?.version !== '2.1.0' ||
@@ -49,11 +96,21 @@ export const summarizeCodeqlSarif = (documents) => {
       if (!Array.isArray(run.results)) throw new Error('CODEQL_SARIF_RESULTS_INVALID');
       for (const result of run.results) {
         counts.total += 1;
-        const score = scoreFor(run, result);
-        if (score === undefined) counts.unclassified += 1;
-        else if (score >= 9) counts.critical += 1;
-        else if (score >= 7) counts.high += 1;
-        else if (score >= 4) counts.medium += 1;
+        const classification = classificationFor(run, result);
+        if (classification.kind === 'non-security') counts.unclassified += 1;
+        else if (classification.kind === 'security-unclassified') {
+          counts.securityUnclassified += 1;
+          blockingRuleIds.add(findingReference(result));
+        } else if (classification.kind === 'unresolved') {
+          counts.unresolved += 1;
+          blockingRuleIds.add(findingReference(result));
+        } else if (classification.score >= 9) {
+          counts.critical += 1;
+          blockingRuleIds.add(findingReference(result));
+        } else if (classification.score >= 7) {
+          counts.high += 1;
+          blockingRuleIds.add(findingReference(result));
+        } else if (classification.score >= 4) counts.medium += 1;
         else counts.low += 1;
       }
     }
@@ -61,9 +118,15 @@ export const summarizeCodeqlSarif = (documents) => {
   return {
     schemaVersion: 1,
     status:
-      counts.critical === 0 && counts.high === 0 && counts.unclassified === 0 ? 'PASS' : 'FAIL',
+      counts.critical === 0 &&
+      counts.high === 0 &&
+      counts.securityUnclassified === 0 &&
+      counts.unresolved === 0
+        ? 'PASS'
+        : 'FAIL',
     threshold: 'security-severity >= 7.0',
     findings: counts,
+    blockingRuleIds: [...blockingRuleIds].sort(),
   };
 };
 
@@ -88,13 +151,13 @@ const argument = (name) => {
 };
 
 const selfTest = () => {
-  const document = (score, includeResult = score !== undefined) => ({
+  const document = (score, includeResult = score !== undefined, tags = []) => ({
     version: '2.1.0',
     runs: [
       {
         tool: {
           driver: {
-            rules: [{ id: 'js/example', properties: { 'security-severity': score } }],
+            rules: [{ id: 'js/example', properties: { 'security-severity': score, tags } }],
           },
         },
         results: includeResult ? [{ ruleId: 'js/example' }] : [],
@@ -102,10 +165,64 @@ const selfTest = () => {
     ],
   });
   assert.equal(summarizeCodeqlSarif([document(undefined)]).status, 'PASS');
-  assert.equal(summarizeCodeqlSarif([document(undefined, true)]).status, 'FAIL');
+  assert.equal(summarizeCodeqlSarif([document(undefined, true)]).status, 'PASS');
+  assert.equal(summarizeCodeqlSarif([document(undefined, true)]).findings.unclassified, 1);
+  assert.equal(summarizeCodeqlSarif([document(undefined, true, ['security'])]).status, 'FAIL');
+  assert.equal(
+    summarizeCodeqlSarif([document(undefined, true, ['external/cwe/cwe-079'])]).findings
+      .securityUnclassified,
+    1,
+  );
   assert.equal(summarizeCodeqlSarif([document('6.9')]).status, 'PASS');
+  assert.equal(summarizeCodeqlSarif([document('0.0')]).status, 'PASS');
   assert.equal(summarizeCodeqlSarif([document('7.0')]).status, 'FAIL');
+  assert.deepEqual(summarizeCodeqlSarif([document('7.0')]).blockingRuleIds, ['js/example']);
   assert.equal(summarizeCodeqlSarif([document('9.0')]).findings.critical, 1);
+  assert.equal(summarizeCodeqlSarif([document('not-a-score')]).status, 'FAIL');
+  assert.equal(
+    summarizeCodeqlSarif([
+      {
+        version: '2.1.0',
+        runs: [
+          {
+            tool: {
+              driver: { rules: [] },
+              extensions: [
+                {
+                  rules: [{ id: 'js/extension-rule', properties: { 'security-severity': '8.1' } }],
+                },
+              ],
+            },
+            results: [{ rule: { index: 0, toolComponent: { index: 0 } } }],
+          },
+        ],
+      },
+    ]).findings.high,
+    1,
+  );
+  assert.equal(
+    summarizeCodeqlSarif([
+      {
+        version: '2.1.0',
+        runs: [
+          {
+            tool: { driver: { rules: [{ id: 'js/indexed', properties: {} }] } },
+            results: [{ ruleIndex: 0 }],
+          },
+        ],
+      },
+    ]).status,
+    'PASS',
+  );
+  assert.equal(
+    summarizeCodeqlSarif([
+      {
+        version: '2.1.0',
+        runs: [{ tool: { driver: { rules: [] } }, results: [{ ruleId: 'js/missing' }] }],
+      },
+    ]).findings.unresolved,
+    1,
+  );
   assert.throws(() => summarizeCodeqlSarif([]), /CODEQL_SARIF_MISSING/u);
   assert.throws(
     () => summarizeCodeqlSarif([{ version: '2.1.0', runs: [] }]),
@@ -129,6 +246,9 @@ if (process.argv.includes('--self-test')) {
         `status=${summary.status}`,
         `critical=${summary.findings.critical}`,
         `high=${summary.findings.high}`,
+        `unclassified=${summary.findings.unclassified}`,
+        `security_unclassified=${summary.findings.securityUnclassified}`,
+        `unresolved=${summary.findings.unresolved}`,
         `total=${summary.findings.total}`,
         `sarif_sha256=${summary.sarifSha256}`,
       ].join('\n') + '\n',
@@ -136,7 +256,20 @@ if (process.argv.includes('--self-test')) {
     );
   }
   process.stdout.write(
-    `codeql-sarif: ${summary.status} (${summary.findings.high} high; ${summary.findings.critical} critical)\n`,
+    `codeql-sarif: ${summary.status} (${summary.findings.high} high; ${summary.findings.critical} critical; ` +
+      `${summary.findings.unclassified} non-security; ${summary.findings.securityUnclassified} security-unclassified; ` +
+      `${summary.findings.unresolved} unresolved)` +
+      (summary.blockingRuleIds.length > 0
+        ? `; blocking rules: ${summary.blockingRuleIds.join(', ')}`
+        : '') +
+      '\n',
   );
-  if (summary.status !== 'PASS') process.exitCode = 1;
+  if (summary.status !== 'PASS') {
+    const diagnostic =
+      `critical=${summary.findings.critical}, high=${summary.findings.high}, ` +
+      `security-unclassified=${summary.findings.securityUnclassified}, unresolved=${summary.findings.unresolved}, ` +
+      `blocking-rules=${summary.blockingRuleIds.join(',') || 'none'}`;
+    process.stderr.write(`::error title=CodeQL SARIF severity gate::${diagnostic}\n`);
+    process.exitCode = 1;
+  }
 }

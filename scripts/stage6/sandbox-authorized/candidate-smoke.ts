@@ -117,6 +117,9 @@ interface ParentExecutionCapability {
   readonly parentPid: number;
   readonly commitSha: string;
   readonly authorizationSha256: string;
+  readonly executionClaimSha256: string;
+  readonly executionBindingSha256: string;
+  readonly deterministicReference: string;
 }
 
 const receiveParentCapability = async (): Promise<ParentExecutionCapability> => {
@@ -124,7 +127,16 @@ const receiveParentCapability = async (): Promise<ParentExecutionCapability> => 
   return new Promise<ParentExecutionCapability>((resolve, reject) => {
     const onMessage = (message: unknown): void => {
       if (
-        !exactKeys(message, ['type', 'nonce', 'parentPid', 'commitSha', 'authorizationSha256']) ||
+        !exactKeys(message, [
+          'type',
+          'nonce',
+          'parentPid',
+          'commitSha',
+          'authorizationSha256',
+          'executionClaimSha256',
+          'executionBindingSha256',
+          'deterministicReference',
+        ]) ||
         message.type !== 'AUTH02_EXECUTE_CAPABILITY' ||
         typeof message.nonce !== 'string' ||
         !/^[A-Za-z0-9_-]{43}$/u.test(message.nonce) ||
@@ -132,7 +144,14 @@ const receiveParentCapability = async (): Promise<ParentExecutionCapability> => 
         typeof message.commitSha !== 'string' ||
         !/^[0-9a-f]{40}$/u.test(message.commitSha) ||
         typeof message.authorizationSha256 !== 'string' ||
-        !/^[0-9a-f]{64}$/u.test(message.authorizationSha256)
+        !/^[0-9a-f]{64}$/u.test(message.authorizationSha256) ||
+        typeof message.executionClaimSha256 !== 'string' ||
+        !/^[0-9a-f]{64}$/u.test(message.executionClaimSha256) ||
+        typeof message.executionBindingSha256 !== 'string' ||
+        !/^[0-9a-f]{64}$/u.test(message.executionBindingSha256) ||
+        typeof message.deterministicReference !== 'string' ||
+        message.deterministicReference.length > 64 ||
+        !/^e6-(?:rel|pre)-[0-9]+-[0-9]+-[0-9a-f]{12}$/u.test(message.deterministicReference)
       ) {
         rejectCapability('PARENT_CAPABILITY_INVALID');
         return;
@@ -654,7 +673,7 @@ const run = async (): Promise<void> => {
   };
   const customerEmail = required('STAGE6_SANDBOX_CUSTOMER_EMAIL');
   const startedAtUtc = authorizationGate().toISOString();
-  const reference = `e6-${runId.slice(3)}-${randomBytes(8).toString('hex')}`;
+  const reference = parentCapability.deterministicReference;
   const transactionId = `transaction_${randomBytes(18).toString('base64url')}`;
   const checkoutId = `checkout_${randomBytes(18).toString('base64url')}`;
   const productId = 'product-e6-sandbox';
@@ -755,6 +774,8 @@ const run = async (): Promise<void> => {
     environment: 'sandbox',
     origin: WOMPI_SANDBOX_ORIGIN,
     publicKey,
+    expiresAtUtc: authorizationContext.authorization.authorization.expiresAtUtc,
+    now: () => authorizationGate().getTime(),
     encrypt: (input) => compactJweEncryptor(encryptionPublicKey, input),
     transport: async (request: SandboxTokenizationRequest) => {
       if (
@@ -789,6 +810,10 @@ const run = async (): Promise<void> => {
     publicKey,
     privateKey,
     integritySecret,
+    providerAcceptances: {
+      terms: acceptances.termsToken,
+      personalData: acceptances.personalDataToken,
+    },
     timeoutMs: 8_000,
     transport: async (request) => {
       const category: RequestCategory =

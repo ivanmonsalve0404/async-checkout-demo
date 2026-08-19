@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-v2-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -88,7 +88,7 @@ jobs:
     name: Verify
     needs: [metadata, codeql]
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Check out the repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -108,7 +108,25 @@ jobs:
       - name: Install from the frozen lockfile
         run: pnpm install --frozen-lockfile
       - name: Install the verification browsers
-        run: pnpm exec playwright install --with-deps chromium firefox webkit
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2; do
+            echo "Playwright browser installation attempt ${attempt}/2"
+            if timeout --signal=TERM --kill-after=30s 10m \
+              pnpm exec playwright install --with-deps chromium firefox webkit; then
+              exit 0
+            else
+              status=$?
+            fi
+            if [ "${attempt}" -eq 2 ]; then
+              exit "${status}"
+            fi
+            timeout --signal=TERM --kill-after=30s 2m \
+              sudo env DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+            timeout --signal=TERM --kill-after=30s 2m \
+              sudo env DEBIAN_FRONTEND=noninteractive apt-get --fix-broken install --yes || true
+          done
       - name: Prepare the pinned DynamoDB Local image
         shell: bash
         env:
@@ -119,7 +137,7 @@ jobs:
           repo_digest="$(docker image inspect "${DYNAMODB_LOCAL_IMAGE}" --format '{{index .RepoDigests 0}}')"
           test "${repo_digest##*@}" = "${DYNAMODB_LOCAL_IMAGE_DIGEST}"
       - name: Materialize optional manual accessibility evidence
-        if: ${{ vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 != '' }}
+        if: ${{ github.event_name != 'pull_request' && vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 != '' }}
         shell: bash
         env:
           STAGE6_A11Y_MANUAL_EVIDENCE_B64: ${{ vars.STAGE6_A11Y_MANUAL_EVIDENCE_B64 }}
@@ -129,7 +147,7 @@ jobs:
           printf '%s' "${STAGE6_A11Y_MANUAL_EVIDENCE_B64}" | base64 --decode > "${target}"
           echo "STAGE6_A11Y_MANUAL_EVIDENCE=${target}" >> "${GITHUB_ENV}"
       - name: Materialize optional authorized external evidence
-        if: ${{ vars.STAGE6_EXTERNAL_EVIDENCE_B64 != '' }}
+        if: ${{ github.event_name != 'pull_request' && vars.STAGE6_EXTERNAL_EVIDENCE_B64 != '' }}
         shell: bash
         env:
           STAGE6_EXTERNAL_EVIDENCE_B64: ${{ vars.STAGE6_EXTERNAL_EVIDENCE_B64 }}

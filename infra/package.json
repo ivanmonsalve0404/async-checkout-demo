@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "build": "tsc --noEmit",
-    "test": "tsx --test test/config.test.ts test/foundation-stack.test.ts",
+    "test": "tsx --test test/config.test.ts test/foundation-stack.test.ts test/release-stacks.test.ts test/release-authority-config.test.ts test/release-authority-stack.test.ts test/release-successor-publication-recovery-authority-config.test.ts test/release-successor-publication-recovery-authority-stack.test.ts",
     "synth": "cdk synth --quiet",
+    "synth:authority": "cdk synth --quiet --app \"pnpm exec tsx bin/authority.ts\"",
+    "synth:publication-recovery-authority": "cdk synth --quiet --app \"pnpm exec tsx bin/publication-recovery-authority.ts\"",
     "typecheck": "tsc --noEmit",
     "verify": "pnpm run build && pnpm run test && pnpm run synth"
   },

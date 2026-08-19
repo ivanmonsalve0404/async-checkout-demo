@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://async-checkout.invalid/schemas/stage9-local-closure-plan-v1.json",
+  "title": "Stage 9 local non-operative closure plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaId",
+    "schemaVersion",
+    "stage",
+    "kind",
+    "entryBindingSha256",
+    "plannedAtUtc",
+    "charterMode",
+    "operationalMode",
+    "requestedState",
+    "route",
+    "authorizations",
+    "action",
+    "sandboxExecution",
+    "artifacts",
+    "evidence",
+    "controls",
+    "retention",
+    "decommission",
+    "containsSensitiveData"
+  ],
+  "properties": {
+    "schemaId": { "const": "async-checkout-stage9-local-closure-plan" },
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 9 },
+    "kind": { "const": "STAGE9_LOCAL_NON_OPERATIVE_PLAN" },
+    "entryBindingSha256": { "$ref": "#/$defs/sha256" },
+    "plannedAtUtc": { "$ref": "#/$defs/utc" },
+    "charterMode": {
+      "enum": ["NOT_SELECTED", "INTERVIEW_HOLD", "LIMITED_OBSERVATION", "FINAL_DECOMMISSION"]
+    },
+    "operationalMode": {
+      "enum": [
+        "NOT_SELECTED",
+        "INTERVIEW_HOLD",
+        "LIMITED_OBSERVATION",
+        "DEMO_ON_DEMAND",
+        "FINAL_DECOMMISSION",
+        "EVIDENCE_ONLY"
+      ]
+    },
+    "requestedState": {
+      "enum": [
+        "NOT_STARTED",
+        "INTERVIEW_HOLD",
+        "CLOSED_RETAINED",
+        "CLOSED_DECOMMISSIONED",
+        "BLOCKED_AUTH",
+        "BLOCKED_EXTERNAL",
+        "RETURN_TO_STAGE",
+        "FAILED"
+      ]
+    },
+    "route": { "enum": ["NONE", "RETAINED", "DECOMMISSIONED"] },
+    "authorizations": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": { "$ref": "#/$defs/authorization" }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "authorizationId", "rationaleSha256"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "NONE",
+            "OBSERVE",
+            "SANDBOX_RECONCILIATION",
+            "REVOKE_ACCESS",
+            "DATA_TREATMENT",
+            "DESTROY",
+            "ARCHIVE_REPOSITORY",
+            "RESTORE"
+          ]
+        },
+        "authorizationId": {
+          "type": "string",
+          "pattern": "^(?:NOT_APPLICABLE|AUTH-E9-(?:OBSERVE|SANDBOX|ACCESS|DATA|DESTROY|ARCHIVE|RESTORE))$"
+        },
+        "rationaleSha256": {
+          "type": "string",
+          "pattern": "^(?:NOT_APPLICABLE|[0-9a-f]{64})$"
+        }
+      }
+    },
+    "sandboxExecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "authorizationId", "rationaleSha256", "evidenceIds", "controlIds"],
+      "properties": {
+        "mode": {
+          "enum": ["NOT_EXECUTED", "READ_ONLY_VERIFICATION", "MUTATING_SMOKE_OR_RECONCILIATION"]
+        },
+        "authorizationId": {
+          "type": "string",
+          "pattern": "^(?:NOT_APPLICABLE|AUTH-E9-SANDBOX)$"
+        },
+        "rationaleSha256": {
+          "type": "string",
+          "pattern": "^(?:NOT_APPLICABLE|[0-9a-f]{64})$"
+        },
+        "evidenceIds": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["EVD-OPS-12", "EVD-OPS-14"] }
+        },
+        "controlIds": {
+          "type": "array",
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": { "const": "OPSAUD-30" }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 18,
+      "maxItems": 18,
+      "items": { "$ref": "#/$defs/artifactResult" }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 44,
+      "maxItems": 44,
+      "items": { "$ref": "#/$defs/evidenceResult" }
+    },
+    "controls": {
+      "type": "array",
+      "minItems": 60,
+      "maxItems": 60,
+      "items": { "$ref": "#/$defs/controlResult" }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ownerAlias", "budgetId", "expiresAtUtc", "futureDecommissionPlanId"],
+      "properties": {
+        "ownerAlias": { "$ref": "#/$defs/aliasOrNa" },
+        "budgetId": { "$ref": "#/$defs/referenceOrNa" },
+        "expiresAtUtc": { "$ref": "#/$defs/utcOrNa" },
+        "futureDecommissionPlanId": { "$ref": "#/$defs/referenceOrNa" }
+      }
+    },
+    "decommission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "changeId",
+        "rehearsalStatus",
+        "cleanupStatus",
+        "residualResourceCount",
+        "costResidualDocumented",
+        "accessTreated",
+        "dataTreated",
+        "evidencePreserved"
+      ],
+      "properties": {
+        "changeId": { "$ref": "#/$defs/referenceOrNa" },
+        "rehearsalStatus": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_EVALUATED"] },
+        "cleanupStatus": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_EVALUATED"] },
+        "residualResourceCount": { "type": "integer", "minimum": -1 },
+        "costResidualDocumented": { "type": "boolean" },
+        "accessTreated": { "type": "boolean" },
+        "dataTreated": { "type": "boolean" },
+        "evidencePreserved": { "type": "boolean" }
+      }
+    },
+    "containsSensitiveData": { "const": false }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "utc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "utcOrNa": {
+      "type": "string",
+      "pattern": "^(?:NOT_APPLICABLE|[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z)$"
+    },
+    "aliasOrNa": {
+      "type": "string",
+      "pattern": "^(?:NOT_APPLICABLE|[A-Za-z0-9][A-Za-z0-9._-]{1,63})$"
+    },
+    "referenceOrNa": {
+      "type": "string",
+      "pattern": "^(?:NOT_APPLICABLE|[A-Za-z0-9][A-Za-z0-9_.:/-]{2,127})$"
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "authorityRef", "approvedAtUtc"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^AUTH-E9-(?:OBSERVE|SANDBOX|ACCESS|DATA|DESTROY|ARCHIVE|RESTORE)$"
+        },
+        "status": { "enum": ["APPROVED", "PENDING", "DENIED", "DENIED_BY_DEFAULT"] },
+        "authorityRef": { "$ref": "#/$defs/referenceOrNa" },
+        "approvedAtUtc": { "$ref": "#/$defs/utcOrNa" }
+      }
+    },
+    "artifactResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "result", "rawSha256"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^ART-OPS-(?:0[1-9]|1[0-8])$" },
+        "result": { "enum": ["PRESENT", "MISSING", "NOT_EVALUATED"] },
+        "rawSha256": {
+          "type": "string",
+          "pattern": "^(?:NOT_APPLICABLE|[0-9a-f]{64})$"
+        }
+      }
+    },
+    "evidenceResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "result", "rawSha256"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^EVD-OPS-(?:0[1-9]|[1-3][0-9]|4[0-4])$" },
+        "result": { "enum": ["PRESENT", "MISSING", "NOT_EVALUATED"] },
+        "rawSha256": {
+          "type": "string",
+          "pattern": "^(?:NOT_APPLICABLE|[0-9a-f]{64})$"
+        }
+      }
+    },
+    "controlResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "result", "reason", "approvalRef"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^OPSAUD-(?:0[1-9]|[1-5][0-9]|60)$" },
+        "result": { "enum": ["PASS", "FAIL", "ZERO", "N-A", "NOT_EVALUATED"] },
+        "reason": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.:/-]{2,255}$" },
+        "approvalRef": { "$ref": "#/$defs/referenceOrNa" }
+      }
+    }
+  }
+}

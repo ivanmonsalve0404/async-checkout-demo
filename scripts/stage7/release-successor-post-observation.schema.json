@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ivanmonsalve0404/async-checkout-demo/schemas/stage7/release-successor-post-observation.schema.json",
+  "title": "Stage 7 post-success workflow and immutable artifact inventory observation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "status",
+    "repository",
+    "workflowId",
+    "workflowName",
+    "workflowPath",
+    "event",
+    "ref",
+    "headSha",
+    "sourceRunId",
+    "postSuccessRunId",
+    "postSuccessRunAttempt",
+    "sourcePreservationRunAttempt",
+    "runStatus",
+    "conclusion",
+    "runResponseRawSha256",
+    "runResponseCanonicalSha256",
+    "workflowResponseRawSha256",
+    "workflowResponseCanonicalSha256",
+    "artifactsResponseRawSha256",
+    "artifactsResponseCanonicalSha256",
+    "artifactListRequests",
+    "artifactInventoryCount",
+    "artifactInventory",
+    "artifactInventorySha256",
+    "artifacts",
+    "observedAtUtc",
+    "externalRequests",
+    "mutationsPerformed",
+    "containsSensitiveData",
+    "observationSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 7 },
+    "kind": { "const": "RELEASE_SUCCESSOR_POST_SUCCESS_WORKFLOW_OBSERVATION" },
+    "status": { "const": "PASS" },
+    "repository": { "const": "ivanmonsalve0404/async-checkout-demo" },
+    "workflowId": { "type": "integer", "minimum": 1 },
+    "workflowName": { "const": "Stage 7 Release Successor Post-Success" },
+    "workflowPath": { "const": ".github/workflows/stage7-release-successor-post-success.yml" },
+    "event": { "const": "workflow_run" },
+    "ref": { "const": "refs/heads/master" },
+    "headSha": { "$ref": "#/$defs/sha" },
+    "sourceRunId": { "$ref": "#/$defs/runId" },
+    "postSuccessRunId": { "$ref": "#/$defs/runId" },
+    "postSuccessRunAttempt": { "type": "integer", "minimum": 1, "maximum": 999 },
+    "sourcePreservationRunAttempt": { "type": "integer", "minimum": 1, "maximum": 999 },
+    "runStatus": { "const": "completed" },
+    "conclusion": { "const": "success" },
+    "runResponseRawSha256": { "$ref": "#/$defs/sha256" },
+    "runResponseCanonicalSha256": { "$ref": "#/$defs/sha256" },
+    "workflowResponseRawSha256": { "$ref": "#/$defs/sha256" },
+    "workflowResponseCanonicalSha256": { "$ref": "#/$defs/sha256" },
+    "artifactsResponseRawSha256": { "$ref": "#/$defs/sha256" },
+    "artifactsResponseCanonicalSha256": { "$ref": "#/$defs/sha256" },
+    "artifactListRequests": { "type": "integer", "minimum": 1 },
+    "artifactInventoryCount": { "type": "integer", "minimum": 3 },
+    "artifactInventory": {
+      "type": "array",
+      "minItems": 3,
+      "items": { "$ref": "#/$defs/inventoryArtifact" }
+    },
+    "artifactInventorySha256": { "$ref": "#/$defs/sha256" },
+    "artifacts": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {
+          "allOf": [
+            { "$ref": "#/$defs/selectedArtifact" },
+            { "properties": { "logicalName": { "const": "source" } } }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/selectedArtifact" },
+            { "properties": { "logicalName": { "const": "preservation" } } }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/selectedArtifact" },
+            { "properties": { "logicalName": { "const": "cleanup" } } }
+          ]
+        }
+      ],
+      "items": false
+    },
+    "observedAtUtc": { "type": "string", "format": "date-time" },
+    "externalRequests": { "type": "integer", "minimum": 6 },
+    "mutationsPerformed": { "const": 0 },
+    "containsSensitiveData": { "const": false },
+    "observationSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runId": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "logicalName": { "enum": ["source", "preservation", "cleanup"] },
+    "inventoryArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logicalName", "attempt", "name", "id", "digest", "expired", "workflowRunId"],
+      "properties": {
+        "logicalName": { "$ref": "#/$defs/logicalName" },
+        "attempt": { "type": "integer", "minimum": 1, "maximum": 999 },
+        "name": { "type": "string", "minLength": 1 },
+        "id": { "type": "integer", "minimum": 1 },
+        "digest": { "$ref": "#/$defs/digest" },
+        "expired": { "const": false },
+        "workflowRunId": { "$ref": "#/$defs/runId" }
+      }
+    },
+    "rawJson": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "rawSha256", "canonicalSha256", "bytes"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 2 }
+      }
+    },
+    "selectedArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "logicalName",
+        "attempt",
+        "name",
+        "id",
+        "digest",
+        "archiveRawSha256",
+        "archiveBytes",
+        "payload",
+        "workflowRunId",
+        "expired"
+      ],
+      "properties": {
+        "logicalName": { "$ref": "#/$defs/logicalName" },
+        "attempt": { "type": "integer", "minimum": 1, "maximum": 999 },
+        "name": { "type": "string", "minLength": 1 },
+        "id": { "type": "integer", "minimum": 1 },
+        "digest": { "$ref": "#/$defs/digest" },
+        "archiveRawSha256": { "$ref": "#/$defs/sha256" },
+        "archiveBytes": { "type": "integer", "minimum": 1 },
+        "payload": { "$ref": "#/$defs/rawJson" },
+        "workflowRunId": { "$ref": "#/$defs/runId" },
+        "expired": { "const": false }
+      }
+    }
+  }
+}

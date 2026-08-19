@@ -36,6 +36,11 @@ const enabled = (transport: SandboxTransport): SandboxPaymentProvider =>
     publicKey: 'pub_test_not-a-real',
     privateKey: 'prv_test_not-a-real',
     integritySecret: 'integrity-secret',
+    providerAcceptances: {
+      terms: 'provider-terms-synthetic',
+      personalData: 'provider-personal-synthetic',
+    },
+    authorizedUntilUtc: '2099-01-01T00:00:00.000Z',
     transport,
     timeoutMs: 1234,
   });
@@ -66,6 +71,46 @@ describe('SandboxPaymentProvider pure adapter', () => {
     await expect(enabled(transport).getByReference(command.reference)).resolves.toEqual({
       ok: false,
       error: { code: 'REFERENCE_LOOKUP_UNSUPPORTED' },
+    });
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('blocks configuration and provider traffic at the authorization boundary', async () => {
+    const transport = transportMock();
+    const provider = new SandboxPaymentProvider({
+      enabled: true,
+      publicKey: 'pub_test_not-a-real',
+      privateKey: 'prv_test_not-a-real',
+      integritySecret: 'integrity-secret',
+      providerAcceptances: {
+        terms: 'provider-terms-synthetic',
+        personalData: 'provider-personal-synthetic',
+      },
+      authorizedUntilUtc: '2026-08-17T12:00:00.000Z',
+      now: () => new Date('2026-08-17T12:00:00.000Z'),
+      transport,
+    });
+    expect(provider.getPublicConfiguration()).toMatchObject({
+      error: { code: 'ENVIRONMENT_DISABLED' },
+    });
+    await expect(provider.createOnce(command)).resolves.toMatchObject({
+      error: { code: 'ENVIRONMENT_DISABLED' },
+    });
+
+    const impossibleDate = new SandboxPaymentProvider({
+      enabled: true,
+      publicKey: 'pub_test_not-a-real',
+      privateKey: 'prv_test_not-a-real',
+      integritySecret: 'integrity-secret',
+      providerAcceptances: {
+        terms: 'provider-terms-synthetic',
+        personalData: 'provider-personal-synthetic',
+      },
+      authorizedUntilUtc: '2099-02-31T00:00:00.000Z',
+      transport,
+    });
+    expect(impossibleDate.getPublicConfiguration()).toMatchObject({
+      error: { code: 'ENVIRONMENT_DISABLED' },
     });
     expect(transport).not.toHaveBeenCalled();
   });
@@ -101,8 +146,8 @@ describe('SandboxPaymentProvider pure adapter', () => {
       },
       timeoutMs: 1234,
       body: {
-        acceptance_token: 'terms_synthetic',
-        accept_personal_auth: 'personal_synthetic',
+        acceptance_token: 'provider-terms-synthetic',
+        accept_personal_auth: 'provider-personal-synthetic',
         amount_in_cents: 3_200_000,
         currency: 'COP',
         customer_email: 'buyer@example.invalid',

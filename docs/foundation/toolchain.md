@@ -12,7 +12,7 @@ Fecha de verificación: 2026-08-14.
 | Redux Toolkit         |               `2.12.0` | manifest web                                   |
 | NestJS                |               `11.2.1` | manifest API                                   |
 | Jest                  |               `30.4.2` | manifests web/API                              |
-| Playwright Test       |               `1.61.1` | manifest raíz; browser smoke                   |
+| Playwright Test       |               `1.62.1` | manifest raíz; browser smoke                   |
 | OpenAPI TypeScript    |               `7.13.0` | manifest contracts                             |
 | AWS CDK library / CLI | `2.265.0` / `2.1136.0` | manifest infra                                 |
 

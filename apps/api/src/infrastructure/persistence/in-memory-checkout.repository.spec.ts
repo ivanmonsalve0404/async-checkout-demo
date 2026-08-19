@@ -659,6 +659,47 @@ describe('InMemoryCheckoutRepository', () => {
     await expect(repository.findTransaction('missing')).resolves.toMatchObject({ value: null });
   });
 
+  it('keeps future pending work in the global age view until finalization', async () => {
+    const repository = new InMemoryCheckoutRepository(new InMemoryCatalogRepository([product]));
+    const checkoutValue = checkout('checkout-pending-age');
+    const transactionValue = transaction('transaction-pending-age', checkoutValue.checkoutId, {
+      nextCheckAt: lease,
+    });
+    valueOf(await prepare(repository, checkoutValue, transactionValue));
+    valueOf(await repository.claimDispatch(transactionValue.transactionId, now, later));
+    valueOf(
+      await repository.acknowledgeProvider(
+        transactionValue.transactionId,
+        'provider-pending-age',
+        'PENDING',
+        later,
+        reconciliationCheck(lease),
+      ),
+    );
+
+    expect(valueOf(await repository.claimDue(later, lease, 10))).toEqual([]);
+    expect(valueOf(await repository.findOldestPendingAcceptedAt())).toBe(now);
+    valueOf(
+      await repository.acknowledgeProvider(
+        transactionValue.transactionId,
+        'provider-pending-age',
+        'DECLINED',
+        later,
+        reconciliationCheck(lease),
+      ),
+    );
+    valueOf(
+      await repository.finalize(
+        transactionValue.transactionId,
+        'DECLINED',
+        'DECLINED',
+        undefined,
+        lease,
+      ),
+    );
+    expect(valueOf(await repository.findOldestPendingAcceptedAt())).toBeNull();
+  });
+
   it('atomically turns a due NOT_SENT into NOT_SENT_FAILED before dispatch can claim', async () => {
     const repository = new InMemoryCheckoutRepository(new InMemoryCatalogRepository([product]));
     const checkoutValue = checkout('checkout-not-sent');

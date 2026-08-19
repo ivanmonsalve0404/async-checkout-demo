@@ -2000,7 +2000,7 @@ const manifest = {
     tool: {
       node: process.version,
       packageManager: 'pnpm@11.19.0',
-      playwright: '1.61.1',
+      playwright: '1.62.1',
       lighthouse: '13.4.1',
     },
     runId,

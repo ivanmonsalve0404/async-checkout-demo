@@ -1,0 +1,796 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ivanmonsalve0404/async-checkout-demo/blob/master/scripts/stage7/release-successor-publication-recovery.schema.json",
+  "title": "Stage 7 release-successor publication recovery contracts",
+  "oneOf": [
+    { "$ref": "#/$defs/authority" },
+    { "$ref": "#/$defs/plan" },
+    { "$ref": "#/$defs/receipt" },
+    { "$ref": "#/$defs/postSuccessIntake" }
+  ],
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runId": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+    "releaseId": {
+      "type": "string",
+      "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$"
+    },
+    "releaseTag": {
+      "type": "string",
+      "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-rc\\.[1-9][0-9]*)?$"
+    },
+    "timestamp": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "crashWindow": {
+      "enum": [
+        "FENCE_DURABLE_SOURCE_ARTIFACT_MISSING",
+        "SOURCE_FENCE_PRESENT_PUBLICATION_INCOMPLETE",
+        "SOURCE_PUBLICATION_PRESENT_SUMMARY_INCOMPLETE"
+      ]
+    },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "artifactBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "artifactId", "digest"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "artifactId": { "$ref": "#/$defs/runId" },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "fileBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "bytes", "rawSha256", "canonicalSha256"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "bytes": { "type": "integer", "minimum": 2 },
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "hashBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "rawSha256", "canonicalSha256"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "routeArtifactBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "artifactId", "digest", "workflowRunId", "files"],
+      "properties": {
+        "name": {
+          "enum": ["stage7-release-successor-fence", "stage7-publication"]
+        },
+        "artifactId": { "$ref": "#/$defs/runId" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "workflowRunId": { "$ref": "#/$defs/runId" },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/fileBinding" }
+        }
+      }
+    },
+    "allowedActions": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "READ_EXACT_IMMUTABLE_FENCE" },
+        { "const": "REHYDRATE_EXACT_FENCE_EVIDENCE" },
+        { "const": "PRESERVE_RECOVERY_EVIDENCE" },
+        { "const": "VERIFY_OR_CREATE_MISSING_GITHUB_PUBLICATION" },
+        { "const": "VERIFY_EXACT_GITHUB_PUBLICATION" },
+        { "const": "EMIT_RECOVERY_RECEIPT" }
+      ],
+      "items": false,
+      "minItems": 6,
+      "maxItems": 6
+    },
+    "verifyOnlyAllowedActions": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "READ_EXACT_IMMUTABLE_FENCE" },
+        { "const": "REHYDRATE_EXACT_FENCE_EVIDENCE" },
+        { "const": "PRESERVE_RECOVERY_EVIDENCE" },
+        { "const": "VERIFY_EXACT_GITHUB_PUBLICATION" },
+        { "const": "EMIT_RECOVERY_RECEIPT" }
+      ],
+      "items": false,
+      "minItems": 5,
+      "maxItems": 5
+    },
+    "forbiddenActions": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "DELETE_ANY_AWS_RESOURCE" },
+        { "const": "DELETE_OR_OVERWRITE_IMMUTABLE_FENCE" },
+        { "const": "DEPLOY_OR_ROLL_BACK_AWS" },
+        { "const": "FABRICATE_SOURCE_RUN_SUCCESS" },
+        { "const": "MUTATE_RELEASE_IDENTITY" },
+        { "const": "WRITE_ANY_AWS_RESOURCE" }
+      ],
+      "items": false,
+      "minItems": 6,
+      "maxItems": 6
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "repository",
+        "recoveryWorkflowPath",
+        "protectedEnvironment",
+        "sourceRunId",
+        "sourceRunAttempt",
+        "candidateSha",
+        "releaseId",
+        "releaseTag",
+        "crashWindow",
+        "fenceSha256",
+        "journalCleanupRoleSha256",
+        "journalRoleAuthoritySha256",
+        "recoveryRoleArnSha256",
+        "permissionsBoundaryArnSha256",
+        "allowedActions",
+        "forbiddenActions",
+        "approvedByAlias",
+        "approvalReferenceSha256",
+        "approvedAtUtc",
+        "expiresAtUtc",
+        "containsSensitiveData",
+        "authoritySha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_AUTHORITY" },
+        "status": { "const": "APPROVED" },
+        "repository": { "const": "ivanmonsalve0404/async-checkout-demo" },
+        "recoveryWorkflowPath": {
+          "const": ".github/workflows/stage7-release-successor-publication-recovery.yml"
+        },
+        "protectedEnvironment": {
+          "const": "assessment-release-successor-publication-recovery"
+        },
+        "sourceRunId": { "$ref": "#/$defs/runId" },
+        "sourceRunAttempt": { "const": 1 },
+        "candidateSha": { "$ref": "#/$defs/sha" },
+        "releaseId": { "$ref": "#/$defs/releaseId" },
+        "releaseTag": { "$ref": "#/$defs/releaseTag" },
+        "crashWindow": { "$ref": "#/$defs/crashWindow" },
+        "fenceSha256": { "$ref": "#/$defs/sha256" },
+        "journalCleanupRoleSha256": { "$ref": "#/$defs/sha256" },
+        "journalRoleAuthoritySha256": { "$ref": "#/$defs/sha256" },
+        "recoveryRoleArnSha256": { "$ref": "#/$defs/sha256" },
+        "permissionsBoundaryArnSha256": { "$ref": "#/$defs/sha256" },
+        "allowedActions": {
+          "oneOf": [
+            { "$ref": "#/$defs/allowedActions" },
+            { "$ref": "#/$defs/verifyOnlyAllowedActions" }
+          ]
+        },
+        "forbiddenActions": { "$ref": "#/$defs/forbiddenActions" },
+        "approvedByAlias": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$"
+        },
+        "approvalReferenceSha256": { "$ref": "#/$defs/sha256" },
+        "approvedAtUtc": { "$ref": "#/$defs/timestamp" },
+        "expiresAtUtc": { "$ref": "#/$defs/timestamp" },
+        "containsSensitiveData": { "const": false },
+        "authoritySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "blockerId",
+        "repository",
+        "recoveryWorkflowPath",
+        "protectedEnvironment",
+        "observedAtUtc",
+        "source",
+        "owner",
+        "fence",
+        "iam",
+        "authority",
+        "artifactInventory",
+        "route",
+        "sharedIntegration",
+        "containsSensitiveData",
+        "planSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_PLAN" },
+        "status": { "const": "READY_FOR_AUTHORIZED_RECOVERY_ROUTE" },
+        "blockerId": { "const": "BLK-E7-RELEASE-SUCCESSOR-PUBLICATION-ATOMICITY" },
+        "repository": { "const": "ivanmonsalve0404/async-checkout-demo" },
+        "recoveryWorkflowPath": {
+          "const": ".github/workflows/stage7-release-successor-publication-recovery.yml"
+        },
+        "protectedEnvironment": {
+          "const": "assessment-release-successor-publication-recovery"
+        },
+        "observedAtUtc": { "$ref": "#/$defs/timestamp" },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "workflowPath",
+            "workflowName",
+            "runId",
+            "runAttempt",
+            "conclusion",
+            "candidateSha",
+            "releaseId",
+            "releaseTag",
+            "crashWindow",
+            "fenceJob",
+            "publicationJob",
+            "summaryJob"
+          ],
+          "properties": {
+            "workflowPath": { "const": ".github/workflows/release.yml" },
+            "workflowName": { "const": "Stage 7 Release" },
+            "runId": { "$ref": "#/$defs/runId" },
+            "runAttempt": { "const": 1 },
+            "conclusion": { "enum": ["failure", "cancelled", "timed_out"] },
+            "candidateSha": { "$ref": "#/$defs/sha" },
+            "releaseId": { "$ref": "#/$defs/releaseId" },
+            "releaseTag": { "$ref": "#/$defs/releaseTag" },
+            "crashWindow": { "$ref": "#/$defs/crashWindow" },
+            "fenceJob": { "$ref": "#/$defs/job" },
+            "publicationJob": { "$ref": "#/$defs/job" },
+            "summaryJob": { "$ref": "#/$defs/job" }
+          }
+        },
+        "owner": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "journalCleanupRoleSha256",
+            "journalRoleAuthoritySha256",
+            "recoveryRunId",
+            "recoveryRunAttempt"
+          ],
+          "properties": {
+            "journalCleanupRoleSha256": { "$ref": "#/$defs/sha256" },
+            "journalRoleAuthoritySha256": { "$ref": "#/$defs/sha256" },
+            "recoveryRunId": { "$ref": "#/$defs/runId" },
+            "recoveryRunAttempt": { "const": 1 }
+          }
+        },
+        "fence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "parameterName",
+            "parameterArn",
+            "parameterVersion",
+            "parameterValueRawSha256",
+            "fenceSha256"
+          ],
+          "properties": {
+            "parameterName": { "type": "string", "pattern": "^/checkout/stage7/release-fence/" },
+            "parameterArn": { "type": "string", "pattern": "^arn:aws:ssm:" },
+            "parameterVersion": { "const": 1 },
+            "parameterValueRawSha256": { "$ref": "#/$defs/sha256" },
+            "fenceSha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "iam": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "awsAccountId",
+            "awsRegion",
+            "callerArnSha256",
+            "recoveryRoleArnSha256",
+            "permissionsBoundaryArnSha256",
+            "trustPolicySha256",
+            "roleBasePolicySha256",
+            "boundaryPolicySha256",
+            "sessionPolicySha256"
+          ],
+          "properties": {
+            "awsAccountId": { "type": "string", "pattern": "^[0-9]{12}$" },
+            "awsRegion": { "type": "string", "minLength": 9 },
+            "callerArnSha256": { "$ref": "#/$defs/sha256" },
+            "recoveryRoleArnSha256": { "$ref": "#/$defs/sha256" },
+            "permissionsBoundaryArnSha256": { "$ref": "#/$defs/sha256" },
+            "trustPolicySha256": { "$ref": "#/$defs/sha256" },
+            "roleBasePolicySha256": { "$ref": "#/$defs/sha256" },
+            "boundaryPolicySha256": { "$ref": "#/$defs/sha256" },
+            "sessionPolicySha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "authority": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "approvedByAlias",
+            "approvedAtUtc",
+            "expiresAtUtc",
+            "authoritySha256"
+          ],
+          "properties": {
+            "status": { "const": "APPROVED" },
+            "approvedByAlias": { "type": "string" },
+            "approvedAtUtc": { "$ref": "#/$defs/timestamp" },
+            "expiresAtUtc": { "$ref": "#/$defs/timestamp" },
+            "authoritySha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "artifactInventory": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "requiredCount",
+            "internalCount",
+            "optionalIncompleteSummaryCount",
+            "observedCount",
+            "sourceFenceArtifactCount",
+            "sourcePublicationArtifactCount",
+            "downloadManifest",
+            "internalManifest",
+            "incompleteSummaryManifest",
+            "sourceFenceManifest",
+            "sourcePublicationManifest",
+            "inventoryMetadataSha256",
+            "inventorySha256"
+          ],
+          "properties": {
+            "requiredCount": { "const": 27 },
+            "internalCount": { "const": 3 },
+            "optionalIncompleteSummaryCount": { "type": "integer", "minimum": 0, "maximum": 2 },
+            "observedCount": { "type": "integer", "minimum": 30, "maximum": 34 },
+            "sourceFenceArtifactCount": { "type": "integer", "minimum": 0, "maximum": 1 },
+            "sourcePublicationArtifactCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "downloadManifest": {
+              "type": "array",
+              "minItems": 27,
+              "maxItems": 27,
+              "items": { "$ref": "#/$defs/artifactBinding" }
+            },
+            "internalManifest": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": { "$ref": "#/$defs/artifactBinding" }
+            },
+            "incompleteSummaryManifest": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 2,
+              "items": { "$ref": "#/$defs/artifactBinding" }
+            },
+            "sourceFenceManifest": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 1,
+              "items": { "$ref": "#/$defs/routeArtifactBinding" }
+            },
+            "sourcePublicationManifest": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 1,
+              "items": { "$ref": "#/$defs/routeArtifactBinding" }
+            },
+            "inventoryMetadataSha256": { "$ref": "#/$defs/sha256" },
+            "inventorySha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "route": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "crashWindow",
+            "mode",
+            "githubPublicationPolicy",
+            "fenceEvidenceOrigin",
+            "publicationEvidenceOrigin",
+            "canonicalSupplementPolicy",
+            "idempotencyKey",
+            "steps",
+            "allowedActions",
+            "forbiddenActions"
+          ],
+          "properties": {
+            "crashWindow": { "$ref": "#/$defs/crashWindow" },
+            "mode": { "enum": ["FORWARD_ONLY_IDEMPOTENT", "VERIFY_EXACT_NOOP"] },
+            "githubPublicationPolicy": {
+              "enum": ["VERIFY_EXACT_OR_CREATE_MISSING", "VERIFY_EXACT_NO_MUTATION"]
+            },
+            "fenceEvidenceOrigin": {
+              "enum": ["SSM_REHYDRATED", "SOURCE_ARTIFACT_BYTE_EQUAL_SSM"]
+            },
+            "publicationEvidenceOrigin": {
+              "enum": ["RECOVERY_VERIFIED_OUTPUT", "SOURCE_ARTIFACT_LIVE_VERIFIED"]
+            },
+            "canonicalSupplementPolicy": {
+              "const": "COPY_EXACT_WITHOUT_SOURCE_DUPLICATION"
+            },
+            "idempotencyKey": { "$ref": "#/$defs/sha256" },
+            "steps": { "type": "array", "minItems": 13, "maxItems": 13 },
+            "allowedActions": {
+              "oneOf": [
+                { "$ref": "#/$defs/allowedActions" },
+                { "$ref": "#/$defs/verifyOnlyAllowedActions" }
+              ]
+            },
+            "forbiddenActions": { "$ref": "#/$defs/forbiddenActions" }
+          }
+        },
+        "sharedIntegration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "catalog",
+            "postSuccessConsumer",
+            "sourceRunConclusionMutable",
+            "stage7GateClaimed",
+            "closureStatus"
+          ],
+          "properties": {
+            "catalog": { "const": "RECOVERY_SUPPLEMENT_CATALOG_V1" },
+            "postSuccessConsumer": { "const": "WIRED_CONTRACT" },
+            "sourceRunConclusionMutable": { "const": false },
+            "stage7GateClaimed": { "const": false },
+            "closureStatus": { "const": "POST_SUCCESS_COMPOSITE_REQUIRED" }
+          }
+        },
+        "containsSensitiveData": { "const": false },
+        "planSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "conclusion"],
+      "properties": {
+        "id": { "$ref": "#/$defs/runId" },
+        "conclusion": {
+          "enum": ["success", "failure", "cancelled", "timed_out", "skipped"]
+        }
+      }
+    },
+    "postSuccessIntake": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "blockerId",
+        "repository",
+        "recoveryWorkflowPath",
+        "protectedEnvironment",
+        "observedAtUtc",
+        "source",
+        "recovery",
+        "bindings",
+        "closeoutAuthority",
+        "sourceRunConclusionUnchanged",
+        "compositeGateClaimed",
+        "awsMutationsPerformed",
+        "githubMutationsPerformed",
+        "containsSensitiveData",
+        "intakeSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": {
+          "const": "RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_POST_SUCCESS_INTAKE"
+        },
+        "status": { "const": "BLOCKED_CLOSEOUT_AUTHORITY" },
+        "blockerId": {
+          "const": "BLK-E7-RELEASE-SUCCESSOR-RECOVERY-CLOSEOUT-AUTHORITY"
+        },
+        "repository": { "const": "ivanmonsalve0404/async-checkout-demo" },
+        "recoveryWorkflowPath": {
+          "const": ".github/workflows/stage7-release-successor-publication-recovery.yml"
+        },
+        "protectedEnvironment": {
+          "const": "assessment-release-successor-publication-recovery"
+        },
+        "observedAtUtc": { "$ref": "#/$defs/timestamp" },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "runId",
+            "runAttempt",
+            "conclusion",
+            "candidateSha",
+            "releaseId",
+            "releaseTag",
+            "crashWindow"
+          ],
+          "properties": {
+            "runId": { "$ref": "#/$defs/runId" },
+            "runAttempt": { "const": 1 },
+            "conclusion": { "enum": ["failure", "cancelled", "timed_out"] },
+            "candidateSha": { "$ref": "#/$defs/sha" },
+            "releaseId": { "$ref": "#/$defs/releaseId" },
+            "releaseTag": { "$ref": "#/$defs/releaseTag" },
+            "crashWindow": { "$ref": "#/$defs/crashWindow" }
+          }
+        },
+        "recovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "runId",
+            "runAttempt",
+            "conclusion",
+            "planArtifactId",
+            "planArtifactName",
+            "planArtifactDigest",
+            "planArchiveRawSha256",
+            "resultArtifactId",
+            "resultArtifactName",
+            "resultArtifactDigest",
+            "resultArchiveRawSha256",
+            "executionMode",
+            "githubPublicationPolicy",
+            "recoveryGithubWritesPerformed"
+          ],
+          "properties": {
+            "runId": { "$ref": "#/$defs/runId" },
+            "runAttempt": { "const": 1 },
+            "conclusion": { "const": "success" },
+            "planArtifactId": { "$ref": "#/$defs/runId" },
+            "planArtifactName": {
+              "type": "string",
+              "pattern": "^stage7-release-successor-publication-recovery-plan-s[1-9][0-9]{0,19}-r[1-9][0-9]{0,19}-a1$"
+            },
+            "planArtifactDigest": { "$ref": "#/$defs/digest" },
+            "planArchiveRawSha256": { "$ref": "#/$defs/sha256" },
+            "resultArtifactId": { "$ref": "#/$defs/runId" },
+            "resultArtifactName": {
+              "type": "string",
+              "pattern": "^stage7-release-successor-publication-recovery-result-"
+            },
+            "resultArtifactDigest": {
+              "$ref": "#/$defs/digest"
+            },
+            "resultArchiveRawSha256": { "$ref": "#/$defs/sha256" },
+            "executionMode": {
+              "enum": ["FORWARD_ONLY_IDEMPOTENT", "VERIFY_EXACT_NOOP"]
+            },
+            "githubPublicationPolicy": {
+              "enum": ["VERIFY_EXACT_OR_CREATE_MISSING", "VERIFY_EXACT_NO_MUTATION"]
+            },
+            "recoveryGithubWritesPerformed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2
+            }
+          }
+        },
+        "bindings": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fenceSha256",
+            "planSha256",
+            "receiptSha256",
+            "authoritySha256",
+            "idempotencyKey",
+            "sourceInventoryMetadataSha256",
+            "sourceInventorySha256"
+          ],
+          "properties": {
+            "fenceSha256": { "$ref": "#/$defs/sha256" },
+            "planSha256": { "$ref": "#/$defs/sha256" },
+            "receiptSha256": { "$ref": "#/$defs/sha256" },
+            "authoritySha256": { "$ref": "#/$defs/sha256" },
+            "idempotencyKey": { "$ref": "#/$defs/sha256" },
+            "sourceInventoryMetadataSha256": { "$ref": "#/$defs/sha256" },
+            "sourceInventorySha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "closeoutAuthority": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "requiredKind",
+            "present",
+            "derivableFromPublicationAuthority",
+            "requiredAction"
+          ],
+          "properties": {
+            "requiredKind": {
+              "const": "RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_CLOSEOUT_AUTHORITY"
+            },
+            "present": { "const": false },
+            "derivableFromPublicationAuthority": { "const": false },
+            "requiredAction": {
+              "const": "AUTHORIZE_COMPOSITE_STAGE7_CLOSEOUT_AND_POST_SUCCESS"
+            }
+          }
+        },
+        "sourceRunConclusionUnchanged": { "const": true },
+        "compositeGateClaimed": { "const": false },
+        "awsMutationsPerformed": { "const": 0 },
+        "githubMutationsPerformed": { "const": 0 },
+        "containsSensitiveData": { "const": false },
+        "intakeSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "blockerId",
+        "repository",
+        "sourceRunId",
+        "sourceRunAttempt",
+        "recoveryRunId",
+        "recoveryRunAttempt",
+        "candidateSha",
+        "releaseId",
+        "releaseTag",
+        "fenceSha256",
+        "planSha256",
+        "authoritySha256",
+        "idempotencyKey",
+        "crashWindow",
+        "executionMode",
+        "githubPublicationPolicy",
+        "fenceEvidenceOrigin",
+        "publicationEvidenceOrigin",
+        "canonicalSupplementPolicy",
+        "publicationFiles",
+        "recoveryOperation",
+        "artifactExpectations",
+        "completedAtUtc",
+        "sourceRunConclusionUnchanged",
+        "recoveryIntakeWired",
+        "closeoutAuthorityRequired",
+        "stage7GateClaimed",
+        "containsSensitiveData",
+        "receiptSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_RECEIPT" },
+        "status": { "const": "PUBLICATION_RECOVERED_PENDING_CLOSEOUT_AUTHORITY" },
+        "blockerId": { "const": "BLK-E7-RELEASE-SUCCESSOR-PUBLICATION-ATOMICITY" },
+        "repository": { "const": "ivanmonsalve0404/async-checkout-demo" },
+        "sourceRunId": { "$ref": "#/$defs/runId" },
+        "sourceRunAttempt": { "const": 1 },
+        "recoveryRunId": { "$ref": "#/$defs/runId" },
+        "recoveryRunAttempt": { "const": 1 },
+        "candidateSha": { "$ref": "#/$defs/sha" },
+        "releaseId": { "$ref": "#/$defs/releaseId" },
+        "releaseTag": { "$ref": "#/$defs/releaseTag" },
+        "fenceSha256": { "$ref": "#/$defs/sha256" },
+        "planSha256": { "$ref": "#/$defs/sha256" },
+        "authoritySha256": { "$ref": "#/$defs/sha256" },
+        "idempotencyKey": { "$ref": "#/$defs/sha256" },
+        "crashWindow": { "$ref": "#/$defs/crashWindow" },
+        "executionMode": {
+          "enum": ["FORWARD_ONLY_IDEMPOTENT", "VERIFY_EXACT_NOOP"]
+        },
+        "githubPublicationPolicy": {
+          "enum": ["VERIFY_EXACT_OR_CREATE_MISSING", "VERIFY_EXACT_NO_MUTATION"]
+        },
+        "fenceEvidenceOrigin": {
+          "enum": ["SSM_REHYDRATED", "SOURCE_ARTIFACT_BYTE_EQUAL_SSM"]
+        },
+        "publicationEvidenceOrigin": {
+          "enum": ["RECOVERY_VERIFIED_OUTPUT", "SOURCE_ARTIFACT_LIVE_VERIFIED"]
+        },
+        "canonicalSupplementPolicy": {
+          "const": "COPY_EXACT_WITHOUT_SOURCE_DUPLICATION"
+        },
+        "publicationFiles": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/fileBinding" }
+        },
+        "recoveryOperation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "status",
+            "rawSha256",
+            "canonicalSha256",
+            "externalRequests",
+            "externalWritesPerformed",
+            "writeCapability"
+          ],
+          "properties": {
+            "kind": {
+              "enum": ["GITHUB_PUBLICATION_OPERATION", "PUBLICATION_RECOVERY_VERIFY_ONLY_OPERATION"]
+            },
+            "status": { "const": "PASS" },
+            "rawSha256": { "$ref": "#/$defs/sha256" },
+            "canonicalSha256": { "$ref": "#/$defs/sha256" },
+            "externalRequests": { "type": "integer", "minimum": 1 },
+            "externalWritesPerformed": { "type": "integer", "minimum": 0, "maximum": 2 },
+            "writeCapability": {
+              "enum": ["PROTECTED_CONTENTS_WRITE_JOB", "ABSENT_CONTENTS_READ_JOB"]
+            }
+          }
+        },
+        "artifactExpectations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "planArtifactName",
+            "resultArtifactName",
+            "preMutationFiles",
+            "preMutationFilesSha256",
+            "resultPayloadFiles",
+            "resultPayloadFilesSha256"
+          ],
+          "properties": {
+            "planArtifactName": {
+              "type": "string",
+              "pattern": "^stage7-release-successor-publication-recovery-plan-s[1-9][0-9]{0,19}-r[1-9][0-9]{0,19}-a1$"
+            },
+            "resultArtifactName": {
+              "type": "string",
+              "pattern": "^stage7-release-successor-publication-recovery-result-s[1-9][0-9]{0,19}-r[1-9][0-9]{0,19}-a1$"
+            },
+            "preMutationFiles": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": { "$ref": "#/$defs/hashBinding" }
+            },
+            "preMutationFilesSha256": { "$ref": "#/$defs/sha256" },
+            "resultPayloadFiles": {
+              "type": "array",
+              "minItems": 7,
+              "maxItems": 7,
+              "items": { "$ref": "#/$defs/hashBinding" }
+            },
+            "resultPayloadFilesSha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "completedAtUtc": { "$ref": "#/$defs/timestamp" },
+        "sourceRunConclusionUnchanged": { "const": true },
+        "recoveryIntakeWired": { "const": true },
+        "closeoutAuthorityRequired": { "const": true },
+        "stage7GateClaimed": { "const": false },
+        "containsSensitiveData": { "const": false },
+        "receiptSha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

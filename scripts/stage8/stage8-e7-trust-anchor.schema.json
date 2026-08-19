@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checkout.example.invalid/schemas/stage8-e7-trust-anchor.schema.json",
+  "title": "Stage 8 trusted Stage 7 intake anchor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "releaseManifestRawSha256",
+    "closeoutRawSha256",
+    "releaseId",
+    "runtimeSha",
+    "submissionSha",
+    "documentationAuthorityRawSha256",
+    "documentationAuthoritySha256",
+    "tag",
+    "urls",
+    "containsSensitiveData"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 8 },
+    "kind": { "const": "STAGE8_E7_TRUST_ANCHOR" },
+    "releaseManifestRawSha256": { "$ref": "#/$defs/sha256" },
+    "closeoutRawSha256": { "$ref": "#/$defs/sha256" },
+    "releaseId": {
+      "type": "string",
+      "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$"
+    },
+    "runtimeSha": { "$ref": "#/$defs/sha" },
+    "submissionSha": { "$ref": "#/$defs/sha" },
+    "documentationAuthorityRawSha256": {
+      "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+    },
+    "documentationAuthoritySha256": {
+      "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+    },
+    "tag": {
+      "type": "string",
+      "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-rc\\.[1-9][0-9]*)?$"
+    },
+    "urls": { "$ref": "#/$defs/urls" },
+    "containsSensitiveData": { "const": false }
+  },
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "httpsUrl": { "type": "string", "pattern": "^https://[^\\s]+$" },
+    "urls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["application", "api", "docs", "health", "repository"],
+      "properties": {
+        "application": { "$ref": "#/$defs/httpsUrl" },
+        "api": { "$ref": "#/$defs/httpsUrl" },
+        "docs": { "$ref": "#/$defs/httpsUrl" },
+        "health": { "$ref": "#/$defs/httpsUrl" },
+        "repository": { "$ref": "#/$defs/httpsUrl" }
+      }
+    }
+  }
+}

@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ivanmonsalve0404/async-checkout-demo/schemas/stage7/release-successor-journal-snapshot.schema.json",
+  "title": "Stage 7 exact combined rollback and reconciliation journal snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "status",
+    "source",
+    "scenarioPrefixes",
+    "reconciliationRootPrefix",
+    "reconciliationJournalAuthoritySha256",
+    "entries",
+    "entryCount",
+    "targetNameSetSha256",
+    "rbJournalEvidence",
+    "reconciliationJournalEvidence",
+    "containsSensitiveData",
+    "snapshotSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 7 },
+    "kind": { "const": "RELEASE_SUCCESSOR_COMBINED_JOURNAL_SNAPSHOT" },
+    "status": { "const": "EXACT_VALUES_SEMANTICALLY_VALIDATED" },
+    "source": { "type": "object" },
+    "scenarioPrefixes": { "$ref": "#/$defs/scenarioPrefixes" },
+    "reconciliationRootPrefix": { "$ref": "#/$defs/reconciliationRoot" },
+    "reconciliationJournalAuthoritySha256": { "$ref": "#/$defs/sha256" },
+    "entries": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 2048,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/entry" }
+    },
+    "entryCount": { "type": "integer", "minimum": 3, "maximum": 2048 },
+    "targetNameSetSha256": { "$ref": "#/$defs/sha256" },
+    "rbJournalEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["RB-E7-06", "RB-E7-08"],
+      "properties": {
+        "RB-E7-06": { "$ref": "#/$defs/rbEvidence" },
+        "RB-E7-08": { "$ref": "#/$defs/rbEvidence" }
+      }
+    },
+    "reconciliationJournalEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entryCount",
+        "entrySetSha256",
+        "ownerSha256",
+        "intentSha256",
+        "runtimeProofParameterSetSha256",
+        "terminalSetSha256"
+      ],
+      "properties": {
+        "entryCount": { "type": "integer", "minimum": 3, "maximum": 155 },
+        "entrySetSha256": { "$ref": "#/$defs/sha256" },
+        "ownerSha256": { "$ref": "#/$defs/sha256" },
+        "intentSha256": { "$ref": "#/$defs/sha256" },
+        "runtimeProofParameterSetSha256": { "$ref": "#/$defs/sha256" },
+        "terminalSetSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "containsSensitiveData": { "const": false },
+    "snapshotSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "scenarioPrefixes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["RB-E7-06", "RB-E7-08"],
+      "properties": {
+        "RB-E7-06": {
+          "type": "string",
+          "pattern": "^/checkout/stage7/rollback/[0-9a-f]{40}/RB-E7-06$"
+        },
+        "RB-E7-08": {
+          "type": "string",
+          "pattern": "^/checkout/stage7/rollback/[0-9a-f]{40}/RB-E7-08$"
+        }
+      }
+    },
+    "reconciliationRoot": {
+      "type": "string",
+      "pattern": "^/checkout/stage7/rollback/[0-9a-f]{40}/release-reconciliation/[1-9][0-9]{0,19}$"
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "value",
+        "version",
+        "lastModifiedAtUtc",
+        "arn",
+        "dataType",
+        "rawSha256",
+        "bytes"
+      ],
+      "properties": {
+        "name": { "type": "string", "pattern": "^/checkout/stage7/rollback/" },
+        "type": { "const": "String" },
+        "value": { "type": "string", "minLength": 1 },
+        "version": { "const": 1 },
+        "lastModifiedAtUtc": { "type": "string", "format": "date-time" },
+        "arn": {
+          "type": "string",
+          "pattern": "^arn:aws:ssm:[a-z0-9-]+:[0-9]{12}:parameter/checkout/stage7/rollback/"
+        },
+        "dataType": { "const": "text" },
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 3900 }
+      }
+    },
+    "rbEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenarioId",
+        "prefix",
+        "entryCount",
+        "entrySetSha256",
+        "ownerSha256",
+        "premutationAuthoritySha256",
+        "finalStateSha256",
+        "finalCheckpointSha256",
+        "bindingSha256"
+      ],
+      "properties": {
+        "scenarioId": { "enum": ["RB-E7-06", "RB-E7-08"] },
+        "prefix": { "type": "string", "pattern": "^/checkout/stage7/rollback/" },
+        "entryCount": { "type": "integer", "minimum": 1 },
+        "entrySetSha256": { "$ref": "#/$defs/sha256" },
+        "ownerSha256": { "$ref": "#/$defs/sha256" },
+        "premutationAuthoritySha256": { "$ref": "#/$defs/sha256" },
+        "finalStateSha256": { "$ref": "#/$defs/sha256" },
+        "finalCheckpointSha256": { "$ref": "#/$defs/sha256" },
+        "bindingSha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

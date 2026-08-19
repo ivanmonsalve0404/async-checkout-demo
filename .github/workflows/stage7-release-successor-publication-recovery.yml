@@ -1,0 +1,714 @@
+name: Stage 7 Release Successor Publication Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact candidate SHA owned by the failed attempt-1 release
+        required: true
+        type: string
+      release_id:
+        description: Exact immutable release identifier
+        required: true
+        type: string
+      release_tag:
+        description: Exact immutable release tag
+        required: true
+        type: string
+      source_run_id:
+        description: Exact failed Stage 7 Release run whose attempt 1 wrote the fence
+        required: true
+        type: string
+      config_sha256:
+        description: Raw SHA-256 of the approved Stage 7 configuration
+        required: true
+        type: string
+      fence_sha256:
+        description: Canonical SHA-256 declared by the immutable SSM fence
+        required: true
+        type: string
+      journal_cleanup_role_sha256:
+        description: Fence-bound SHA-256 of the original journal role ARN
+        required: true
+        type: string
+      journal_role_authority_sha256:
+        description: Fence-bound SHA-256 of the original live journal authority
+        required: true
+        type: string
+      recovery_authority_sha256:
+        description: Canonical SHA-256 of the separate recovery authority
+        required: true
+        type: string
+      confirm_forward_publication:
+        description: Confirm verify-exact-or-create-missing GitHub publication
+        required: true
+        default: false
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: stage7-assessment-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  AWS_EC2_METADATA_DISABLED: 'true'
+  NODE_VERSION: '24.19.0'
+  PNPM_VERSION: '11.19.0'
+  STAGE7_AWS_ACCOUNT_ID: ${{ vars.STAGE7_AWS_ACCOUNT_ID }}
+  STAGE7_AWS_REGION: ${{ vars.STAGE7_AWS_REGION }}
+  AWS_REGION: ${{ vars.STAGE7_AWS_REGION }}
+  AWS_DEFAULT_REGION: ${{ vars.STAGE7_AWS_REGION }}
+  STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_ROLE_ARN: ${{ vars.STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_ROLE_ARN }}
+  STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_PERMISSIONS_BOUNDARY_ARN: ${{ vars.STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_PERMISSIONS_BOUNDARY_ARN }}
+  STAGE7_PROTECTED_ENVIRONMENT: assessment-release-successor-publication-recovery
+  STAGE7_EVIDENCE_ROOT: output/evidence/runtime/stage-7-publication-recovery
+
+jobs:
+  validate-contract:
+    name: Validate isolated publication recovery contract
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact recovery control revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Run the zero-network contract and workflow tamper battery
+        run: |
+          set -euo pipefail
+          node scripts/stage7/release-successor-publication-recovery-self-test.mjs
+          node scripts/security/validate-release-successor-publication-recovery-workflow.mjs
+
+  preflight-read-only:
+    name: Preflight exact crash window under read-only GitHub authority
+    if: >-
+      github.run_attempt == 1 &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/master' &&
+      github.repository == 'ivanmonsalve0404/async-checkout-demo' &&
+      inputs.confirm_forward_publication == true
+    needs: validate-contract
+    environment: assessment-release-successor-publication-recovery
+    outputs:
+      crash-window: ${{ steps.route.outputs.crash-window }}
+      github-publication-policy: ${{ steps.route.outputs.github-publication-policy }}
+      plan-artifact-name: ${{ steps.route.outputs.plan-artifact-name }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out the exact recovery control revision without stored credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          path: recovery-control
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Check out the exact failed release candidate without stored credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          path: candidate
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Fail closed on missing protected authority, IAM, environment or identity
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          FENCE_SHA256: ${{ inputs.fence_sha256 }}
+          JOURNAL_CLEANUP_ROLE_SHA256: ${{ inputs.journal_cleanup_role_sha256 }}
+          JOURNAL_ROLE_AUTHORITY_SHA256: ${{ inputs.journal_role_authority_sha256 }}
+          RECOVERY_AUTHORITY_SHA256: ${{ inputs.recovery_authority_sha256 }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+          STAGE7_EXTERNAL_AUTHORIZATIONS_B64: ${{ vars.STAGE7_EXTERNAL_AUTHORIZATIONS_B64 }}
+          STAGE7_PUBLICATION_RECOVERY_AUTHORITY_B64: ${{ vars.STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_AUTHORITY_B64 }}
+        run: |
+          set -euo pipefail
+          test "${STAGE7_PROTECTED_ENVIRONMENT}" = 'assessment-release-successor-publication-recovery'
+          test -n "${STAGE7_AWS_ACCOUNT_ID}"
+          test -n "${STAGE7_AWS_REGION}"
+          test -n "${STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_ROLE_ARN}"
+          test -n "${STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_PERMISSIONS_BOUNDARY_ARN}"
+          test -n "${STAGE7_CONFIG_B64}"
+          test -n "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}"
+          test -n "${STAGE7_PUBLICATION_RECOVERY_AUTHORITY_B64}"
+          [[ "${STAGE7_AWS_ACCOUNT_ID}" =~ ^[0-9]{12}$ ]]
+          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${FENCE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${JOURNAL_CLEANUP_ROLE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${JOURNAL_ROLE_AUTHORITY_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${RECOVERY_AUTHORITY_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${SOURCE_RUN_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "${RELEASE_ID}" =~ ^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$ ]]
+          [[ "${RELEASE_TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?$ ]]
+          test "$(git -C candidate rev-parse HEAD)" = "${CANDIDATE_SHA}"
+          install -d -m 700 recovery-private recovery-public
+          umask 077
+          printf '%s' "${STAGE7_PUBLICATION_RECOVERY_AUTHORITY_B64}" | base64 --decode > recovery-private/authority.json
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > recovery-private/stage7-config.json
+          printf '%s' "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}" | base64 --decode > recovery-private/external-authorizations.json
+          chmod 600 recovery-private/*.json
+          test -s recovery-private/authority.json
+          test -s recovery-private/stage7-config.json
+          test -s recovery-private/external-authorizations.json
+          test "$(sha256sum recovery-private/stage7-config.json | cut -d ' ' -f 1)" = "${CONFIG_SHA256}"
+          node candidate/scripts/stage7/cli.mjs config --config recovery-private/stage7-config.json > /dev/null
+          export CANDIDATE_SHA FENCE_SHA256 JOURNAL_CLEANUP_ROLE_SHA256 JOURNAL_ROLE_AUTHORITY_SHA256 RECOVERY_AUTHORITY_SHA256 RELEASE_ID RELEASE_TAG SOURCE_RUN_ID
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          const value = {
+            sourceRunId: process.env.SOURCE_RUN_ID,
+            sourceRunAttempt: 1,
+            recoveryRunId: process.env.GITHUB_RUN_ID,
+            recoveryRunAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+            candidateSha: process.env.CANDIDATE_SHA,
+            releaseId: process.env.RELEASE_ID,
+            releaseTag: process.env.RELEASE_TAG,
+            expectedFenceSha256: process.env.FENCE_SHA256,
+            expectedAuthoritySha256: process.env.RECOVERY_AUTHORITY_SHA256,
+            journalCleanupRoleSha256: process.env.JOURNAL_CLEANUP_ROLE_SHA256,
+            journalRoleAuthoritySha256: process.env.JOURNAL_ROLE_AUTHORITY_SHA256,
+            awsAccountId: process.env.STAGE7_AWS_ACCOUNT_ID,
+            awsRegion: process.env.STAGE7_AWS_REGION,
+            recoveryRoleArn: process.env.STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_ROLE_ARN,
+            permissionsBoundaryArn: process.env.STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_PERMISSIONS_BOUNDARY_ARN,
+          };
+          fs.writeFileSync('recovery-private/expected.json', `${JSON.stringify(value)}\n`, { mode: 0o600 });
+          NODE
+          authority_observed_at="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
+          node recovery-control/scripts/stage7/release-successor-publication-recovery-cli.mjs validate-authority \
+            --authority recovery-private/authority.json \
+            --expected recovery-private/expected.json \
+            --observed-at "${authority_observed_at}"
+      - name: Activate the pinned package manager for the exact candidate
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Observe the exact failed attempt-1 source, jobs and artifact inventory
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" > recovery-private/source-run.json
+          workflow_id="$(node -e "const v=require('./recovery-private/source-run.json'); if(!Number.isSafeInteger(v.workflow_id)) process.exit(1); process.stdout.write(String(v.workflow_id))")"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow_id}" > recovery-private/source-workflow.json
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/jobs?filter=all&per_page=100" > recovery-private/source-jobs.json
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?per_page=100" > recovery-private/source-artifacts.json
+      - name: Classify A B or C and download only route-specific validation evidence
+        id: route
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cli='recovery-control/scripts/stage7/release-successor-publication-recovery-cli.mjs'
+          common=(
+            --expected recovery-private/expected.json
+            --run recovery-private/source-run.json
+            --workflow recovery-private/source-workflow.json
+            --jobs recovery-private/source-jobs.json
+            --artifacts recovery-private/source-artifacts.json
+          )
+          crash_window="$(node "${cli}" crash-window "${common[@]}")"
+          case "${crash_window}" in
+            FENCE_DURABLE_SOURCE_ARTIFACT_MISSING|SOURCE_FENCE_PRESENT_PUBLICATION_INCOMPLETE)
+              github_publication_policy='VERIFY_EXACT_OR_CREATE_MISSING'
+              ;;
+            SOURCE_PUBLICATION_PRESENT_SUMMARY_INCOMPLETE)
+              github_publication_policy='VERIFY_EXACT_NO_MUTATION'
+              ;;
+            *) exit 1 ;;
+          esac
+          install -d -m 700 recovery-private/route-archives
+          node "${cli}" route-manifest "${common[@]}" > recovery-private/route-manifest.tsv
+          while IFS=$'\t' read -r artifact_name artifact_id artifact_digest; do
+            test -n "${artifact_name}" || continue
+            [[ "${artifact_name}" =~ ^stage7-(release-successor-fence|publication)$ ]]
+            target="recovery-private/route-archives/${artifact_name}.zip"
+            test ! -e "${target}"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > "${target}"
+            test "sha256:$(sha256sum "${target}" | cut -d ' ' -f 1)" = "${artifact_digest}"
+          done < recovery-private/route-manifest.tsv
+          plan_artifact_name="stage7-release-successor-publication-recovery-plan-s${{ inputs.source_run_id }}-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
+          {
+            echo "crash-window=${crash_window}"
+            echo "github-publication-policy=${github_publication_policy}"
+            echo "plan-artifact-name=${plan_artifact_name}"
+          } >> "${GITHUB_OUTPUT}"
+      - name: Assume only the dedicated read-only publication recovery role
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          inline-session-policy: >-
+            {"Version":"2012-10-17","Statement":[{"Sid":"ReadCallerIdentity","Effect":"Allow","Action":"sts:GetCallerIdentity","Resource":"*"},{"Sid":"ReadOwnRecoveryRole","Effect":"Allow","Action":["iam:GetRole","iam:GetRolePolicy","iam:ListAttachedRolePolicies","iam:ListRolePolicies"],"Resource":"${{ env.STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_ROLE_ARN }}"},{"Sid":"ReadExactRecoveryBoundary","Effect":"Allow","Action":["iam:GetPolicy","iam:GetPolicyVersion"],"Resource":"${{ env.STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_PERMISSIONS_BOUNDARY_ARN }}"},{"Sid":"ReadExactImmutableFence","Effect":"Allow","Action":"ssm:GetParameter","Resource":"arn:aws:ssm:${{ env.STAGE7_AWS_REGION }}:${{ env.STAGE7_AWS_ACCOUNT_ID }}:parameter/checkout/stage7/release-fence/${{ inputs.candidate_sha }}/${{ inputs.source_run_id }}"}]}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 900
+          role-session-name: e7-pub-recovery-${{ github.run_id }}-a${{ github.run_attempt }}
+          role-to-assume: ${{ env.STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Observe exact live caller, trust, boundary and immutable fence version 1
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          role_name="${STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_ROLE_ARN##*/}"
+          aws sts get-caller-identity --output json --no-cli-pager > recovery-private/caller.json
+          aws iam get-role --role-name "${role_name}" --output json --no-cli-pager > recovery-private/role.json
+          aws iam list-role-policies --role-name "${role_name}" --no-paginate --output json --no-cli-pager > recovery-private/role-policies.json
+          aws iam get-role-policy --role-name "${role_name}" --policy-name 'stage7-release-successor-publication-recovery-base' --output json --no-cli-pager > recovery-private/role-policy.json
+          aws iam list-attached-role-policies --role-name "${role_name}" --no-paginate --output json --no-cli-pager > recovery-private/attached-policies.json
+          aws iam get-policy --policy-arn "${STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_PERMISSIONS_BOUNDARY_ARN}" --output json --no-cli-pager > recovery-private/boundary-metadata.json
+          boundary_version="$(node -e "const v=require('./recovery-private/boundary-metadata.json'); if(typeof v?.Policy?.DefaultVersionId!=='string') process.exit(1); process.stdout.write(v.Policy.DefaultVersionId)")"
+          aws iam get-policy-version --policy-arn "${STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_PERMISSIONS_BOUNDARY_ARN}" --version-id "${boundary_version}" --output json --no-cli-pager > recovery-private/boundary.json
+          aws ssm get-parameter --name "/checkout/stage7/release-fence/${CANDIDATE_SHA}/${SOURCE_RUN_ID}" --no-with-decryption --output json --no-cli-pager > recovery-private/fence-parameter.json
+      - name: Build and authorize the deterministic forward-only recovery plan
+        run: |
+          set -euo pipefail
+          observed_at="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
+          node recovery-control/scripts/stage7/release-successor-publication-recovery-cli.mjs assess \
+            --expected recovery-private/expected.json \
+            --run recovery-private/source-run.json \
+            --workflow recovery-private/source-workflow.json \
+            --jobs recovery-private/source-jobs.json \
+            --artifacts recovery-private/source-artifacts.json \
+            --caller recovery-private/caller.json \
+            --role recovery-private/role.json \
+            --role-policies recovery-private/role-policies.json \
+            --role-policy recovery-private/role-policy.json \
+            --attached-policies recovery-private/attached-policies.json \
+            --boundary-metadata recovery-private/boundary-metadata.json \
+            --boundary recovery-private/boundary.json \
+            --parameter recovery-private/fence-parameter.json \
+            --authority recovery-private/authority.json \
+            --route-archives recovery-private/route-archives \
+            --observed-at "${observed_at}" \
+            --plan-output recovery-public/release-successor-publication-recovery-plan.json \
+            --fence-output recovery-public/release-successor-completion-fence.json
+          node recovery-control/scripts/stage7/release-successor-publication-recovery-cli.mjs assert-ready \
+            --plan recovery-public/release-successor-publication-recovery-plan.json \
+            --observed-at "${observed_at}" \
+            --expected-policy '${{ steps.route.outputs.github-publication-policy }}'
+          node recovery-control/scripts/stage7/release-successor-publication-recovery-cli.mjs extract-route \
+            --plan recovery-public/release-successor-publication-recovery-plan.json \
+            --archives recovery-private/route-archives \
+            --output-directory recovery-private/route-evidence
+          cd candidate
+          pnpm release:scan -- --pre-upload \
+            ../recovery-public/release-successor-publication-recovery-plan.json \
+            ../recovery-public/release-successor-completion-fence.json
+      - name: Stage the exact two root basenames for the pre-mutation plan artifact
+        run: |
+          set -euo pipefail
+          install -d -m 700 recovery-upload/plan
+          install -m 600 recovery-public/release-successor-completion-fence.json recovery-upload/plan/
+          install -m 600 recovery-public/release-successor-publication-recovery-plan.json recovery-upload/plan/
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          const expected = [
+            'release-successor-completion-fence.json',
+            'release-successor-publication-recovery-plan.json',
+          ].sort();
+          const actual = fs.readdirSync('recovery-upload/plan', { withFileTypes: true });
+          if (actual.some((entry) => !entry.isFile())) process.exit(1);
+          if (JSON.stringify(actual.map(({ name }) => name).sort()) !== JSON.stringify(expected)) {
+            process.exit(1);
+          }
+          NODE
+      - name: Preserve the authorized plan before any GitHub publication
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-release-successor-publication-recovery-plan-s${{ inputs.source_run_id }}-r${{ github.run_id }}-a${{ github.run_attempt }}
+          if-no-files-found: error
+          path: recovery-upload/plan/
+          retention-days: 30
+      - name: Redownload every exact source artifact and verify raw GitHub digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 recovery-private/archives
+          node recovery-control/scripts/stage7/release-successor-publication-recovery-cli.mjs manifest \
+            --plan recovery-public/release-successor-publication-recovery-plan.json |
+          while IFS=$'\t' read -r artifact_name artifact_id artifact_digest; do
+            [[ "${artifact_name}" =~ ^stage7-[a-z0-9-]+$ ]]
+            [[ "${artifact_id}" =~ ^[1-9][0-9]{0,19}$ ]]
+            [[ "${artifact_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+            target="recovery-private/archives/${artifact_name}.zip"
+            test ! -e "${target}"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > "${target}"
+            test -s "${target}"
+            test "sha256:$(sha256sum "${target}" | cut -d ' ' -f 1)" = "${artifact_digest}"
+          done
+          node recovery-control/scripts/stage7/release-successor-publication-recovery-cli.mjs extract \
+            --plan recovery-public/release-successor-publication-recovery-plan.json \
+            --archives recovery-private/archives \
+            --output-directory candidate/.stage7/evidence
+          install -d -m 700 candidate/.stage7/evidence/stage7-release-successor-fence
+          install -m 600 recovery-public/release-successor-completion-fence.json \
+            candidate/.stage7/evidence/stage7-release-successor-fence/release-successor-completion-fence.json
+      - name: Revalidate the exact immutable fence and publication contract without mutation
+        run: |
+          set -euo pipefail
+          cd candidate
+          node scripts/stage7/control.mjs verify-successor-fence \
+            --fence .stage7/evidence/stage7-release-successor-fence/release-successor-completion-fence.json \
+            --release-metadata .stage7/evidence/stage7-release-metadata/release-metadata.json \
+            --approval .stage7/evidence/stage7-approval/approval.json \
+            --activation .stage7/evidence/stage7-activation/activation.json \
+            --drift .stage7/evidence/stage7-rollback/drift.json \
+            --protected-run .stage7/evidence/stage7-rollback-resilience/stage7-rollback-resilience-protected-run.json \
+            --completion .stage7/evidence/stage7-rollback-resilience/stage7-rollback-resilience-complete.json \
+            --pre-fence-gate .stage7/evidence/stage7-release-reconciliation/stage7-release-pre-fence-gate.json
+          STAGE7_CANDIDATE_SHA='${{ inputs.candidate_sha }}' \
+          STAGE7_RELEASE_ID='${{ inputs.release_id }}' \
+          STAGE7_RELEASE_TAG='${{ inputs.release_tag }}' \
+            pnpm release:github-publication:self-test
+      - name: Rebind fresh protected authorization before deployed URL verification
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          cd candidate
+          export STAGE7_EXTERNAL_AUTHORIZATIONS="${GITHUB_WORKSPACE}/recovery-private/external-authorizations.json"
+          pnpm release:preflight -- \
+            --scope full \
+            --external-authorization .stage7/evidence/stage7-web \
+            --approved-environment
+      - name: Verify C source publication exactly with no write-capable token path
+        if: steps.route.outputs.github-publication-policy == 'VERIFY_EXACT_NO_MUTATION'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          cd candidate
+          test "${GITHUB_REPOSITORY}" = 'ivanmonsalve0404/async-checkout-demo'
+          test "${GITHUB_REF}" = 'refs/heads/master'
+          test "$(git rev-parse HEAD)" = "${STAGE7_CANDIDATE_SHA}"
+          source_publication="${GITHUB_WORKSPACE}/recovery-private/route-evidence/stage7-publication"
+          publication_root='output/evidence/stage7-publication'
+          test ! -e "${publication_root}"
+          install -d -m 700 "${publication_root}"
+          for name in publication.json publication-operation.json publication-plan.json publication-proof.json publication-target-proof.json; do
+            install -m 600 "${source_publication}/${name}" "${publication_root}/${name}"
+          done
+          live_proof="${GITHUB_WORKSPACE}/recovery-private/live-publication-proof.json"
+          pnpm release:verify -- \
+            --publication-native "${publication_root}/publication-plan.json" \
+            --publication-target-proof "${publication_root}/publication-target-proof.json" \
+            --publication-operation "${publication_root}/publication-operation.json" \
+            --evidence "${live_proof}"
+          node "${GITHUB_WORKSPACE}/recovery-control/scripts/stage7/release-successor-publication-recovery-cli.mjs" verify-only-operation \
+            --plan "${GITHUB_WORKSPACE}/recovery-public/release-successor-publication-recovery-plan.json" \
+            --publication-directory "${publication_root}" \
+            --live-proof "${live_proof}" \
+            --output "${GITHUB_WORKSPACE}/recovery-public/release-successor-publication-recovery-operation.json"
+          pnpm release:scan -- --pre-upload "${publication_root}"
+      - name: Emit a receipt that cannot claim Stage 7 closure
+        if: steps.route.outputs.github-publication-policy == 'VERIFY_EXACT_NO_MUTATION'
+        run: |
+          set -euo pipefail
+          completed_at="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
+          node recovery-control/scripts/stage7/release-successor-publication-recovery-cli.mjs complete \
+            --plan recovery-public/release-successor-publication-recovery-plan.json \
+            --publication-directory candidate/output/evidence/stage7-publication \
+            --recovery-operation recovery-public/release-successor-publication-recovery-operation.json \
+            --completed-at "${completed_at}" \
+            --output recovery-public/release-successor-publication-recovery-receipt.json
+          cd candidate
+          pnpm release:scan -- --pre-upload \
+            ../recovery-public/release-successor-publication-recovery-receipt.json \
+            output/evidence/stage7-publication
+      - name: Stage the exact eight root basenames for the C result supplement
+        if: steps.route.outputs.github-publication-policy == 'VERIFY_EXACT_NO_MUTATION'
+        run: |
+          set -euo pipefail
+          install -d -m 700 recovery-upload/result
+          install -m 600 recovery-public/release-successor-completion-fence.json recovery-upload/result/
+          install -m 600 recovery-public/release-successor-publication-recovery-plan.json recovery-upload/result/
+          install -m 600 recovery-public/release-successor-publication-recovery-receipt.json recovery-upload/result/
+          install -m 600 candidate/output/evidence/stage7-publication/*.json recovery-upload/result/
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          const expected = [
+            'release-successor-completion-fence.json',
+            'release-successor-publication-recovery-plan.json',
+            'release-successor-publication-recovery-receipt.json',
+            'publication.json',
+            'publication-operation.json',
+            'publication-plan.json',
+            'publication-proof.json',
+            'publication-target-proof.json',
+          ].sort();
+          const actual = fs.readdirSync('recovery-upload/result', { withFileTypes: true });
+          if (actual.some((entry) => !entry.isFile())) process.exit(1);
+          if (JSON.stringify(actual.map(({ name }) => name).sort()) !== JSON.stringify(expected)) {
+            process.exit(1);
+          }
+          NODE
+      - name: Preserve the exact C result supplement without duplicating source artifacts
+        if: steps.route.outputs.github-publication-policy == 'VERIFY_EXACT_NO_MUTATION'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-release-successor-publication-recovery-result-s${{ inputs.source_run_id }}-r${{ github.run_id }}-a${{ github.run_attempt }}
+          if-no-files-found: error
+          path: recovery-upload/result/
+          retention-days: 30
+
+  forward-publication:
+    name: Forward-only A or B publication under write authority
+    if: >-
+      needs.preflight-read-only.outputs.github-publication-policy ==
+      'VERIFY_EXACT_OR_CREATE_MISSING'
+    needs: preflight-read-only
+    environment: assessment-release-successor-publication-recovery
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out the exact recovery control revision without stored credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          path: recovery-control
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Check out the exact failed release candidate without stored credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          path: candidate
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Download only the sealed pre-mutation plan artifact from this run
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: ${{ needs.preflight-read-only.outputs.plan-artifact-name }}
+          path: recovery-download/plan
+      - name: Revalidate the exact plan root set route authority and expiry
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          const expected = [
+            'release-successor-completion-fence.json',
+            'release-successor-publication-recovery-plan.json',
+          ].sort();
+          const actual = fs.readdirSync('recovery-download/plan', { withFileTypes: true });
+          if (actual.some((entry) => !entry.isFile())) process.exit(1);
+          if (JSON.stringify(actual.map(({ name }) => name).sort()) !== JSON.stringify(expected)) {
+            process.exit(1);
+          }
+          NODE
+          observed_at="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
+          node recovery-control/scripts/stage7/release-successor-publication-recovery-cli.mjs assert-ready \
+            --plan recovery-download/plan/release-successor-publication-recovery-plan.json \
+            --observed-at "${observed_at}" \
+            --expected-policy VERIFY_EXACT_OR_CREATE_MISSING
+          test '${{ needs.preflight-read-only.outputs.crash-window }}' != 'SOURCE_PUBLICATION_PRESENT_SUMMARY_INCOMPLETE'
+          install -d -m 700 recovery-private recovery-public
+          install -m 600 recovery-download/plan/release-successor-completion-fence.json recovery-public/
+          install -m 600 recovery-download/plan/release-successor-publication-recovery-plan.json recovery-public/
+      - name: Fail closed on current protected configuration and candidate identity
+        env:
+          CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+          STAGE7_EXTERNAL_AUTHORIZATIONS_B64: ${{ vars.STAGE7_EXTERNAL_AUTHORIZATIONS_B64 }}
+        run: |
+          set -euo pipefail
+          test "${STAGE7_PROTECTED_ENVIRONMENT}" = 'assessment-release-successor-publication-recovery'
+          test -n "${STAGE7_CONFIG_B64}"
+          test -n "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}"
+          test "$(git -C candidate rev-parse HEAD)" = '${{ inputs.candidate_sha }}'
+          umask 077
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > recovery-private/stage7-config.json
+          printf '%s' "${STAGE7_EXTERNAL_AUTHORIZATIONS_B64}" | base64 --decode > recovery-private/external-authorizations.json
+          test "$(sha256sum recovery-private/stage7-config.json | cut -d ' ' -f 1)" = "${CONFIG_SHA256}"
+          node candidate/scripts/stage7/cli.mjs config --config recovery-private/stage7-config.json > /dev/null
+      - name: Activate the pinned package manager for the exact candidate
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Redownload and verify only the 27 source artifacts sealed by the plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 recovery-private/archives
+          node recovery-control/scripts/stage7/release-successor-publication-recovery-cli.mjs manifest \
+            --plan recovery-public/release-successor-publication-recovery-plan.json |
+          while IFS=$'\t' read -r artifact_name artifact_id artifact_digest; do
+            [[ "${artifact_name}" =~ ^stage7-[a-z0-9-]+$ ]]
+            target="recovery-private/archives/${artifact_name}.zip"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > "${target}"
+            test "sha256:$(sha256sum "${target}" | cut -d ' ' -f 1)" = "${artifact_digest}"
+          done
+          node recovery-control/scripts/stage7/release-successor-publication-recovery-cli.mjs extract \
+            --plan recovery-public/release-successor-publication-recovery-plan.json \
+            --archives recovery-private/archives \
+            --output-directory candidate/.stage7/evidence
+          install -d -m 700 candidate/.stage7/evidence/stage7-release-successor-fence
+          install -m 600 recovery-public/release-successor-completion-fence.json \
+            candidate/.stage7/evidence/stage7-release-successor-fence/release-successor-completion-fence.json
+      - name: Revalidate and prepare the exact publication locally
+        run: |
+          set -euo pipefail
+          cd candidate
+          node scripts/stage7/control.mjs verify-successor-fence \
+            --fence .stage7/evidence/stage7-release-successor-fence/release-successor-completion-fence.json \
+            --release-metadata .stage7/evidence/stage7-release-metadata/release-metadata.json \
+            --approval .stage7/evidence/stage7-approval/approval.json \
+            --activation .stage7/evidence/stage7-activation/activation.json \
+            --drift .stage7/evidence/stage7-rollback/drift.json \
+            --protected-run .stage7/evidence/stage7-rollback-resilience/stage7-rollback-resilience-protected-run.json \
+            --completion .stage7/evidence/stage7-rollback-resilience/stage7-rollback-resilience-complete.json \
+            --pre-fence-gate .stage7/evidence/stage7-release-reconciliation/stage7-release-pre-fence-gate.json
+          STAGE7_CANDIDATE_SHA='${{ inputs.candidate_sha }}' \
+          STAGE7_RELEASE_ID='${{ inputs.release_id }}' \
+          STAGE7_RELEASE_TAG='${{ inputs.release_tag }}' \
+            pnpm release:github-publication:self-test
+          STAGE7_CANDIDATE_SHA='${{ inputs.candidate_sha }}' \
+          STAGE7_RELEASE_ID='${{ inputs.release_id }}' \
+          STAGE7_RELEASE_TAG='${{ inputs.release_tag }}' \
+            pnpm release:publish -- --evidence .stage7/evidence --resilience-app .stage7/evidence/stage7-candidate/iac
+          pnpm release:scan -- --pre-upload output/release/publication "${STAGE7_EVIDENCE_ROOT}/publication.json"
+      - name: Rebind fresh protected authorization before deployed URL verification
+        env:
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          cd candidate
+          export STAGE7_EXTERNAL_AUTHORIZATIONS="${GITHUB_WORKSPACE}/recovery-private/external-authorizations.json"
+          pnpm release:preflight -- \
+            --scope full \
+            --external-authorization .stage7/evidence/stage7-web \
+            --approved-environment
+      - name: Verify exact remote state or create only the missing GitHub publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+          STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          cd candidate
+          test "${GITHUB_REPOSITORY}" = 'ivanmonsalve0404/async-checkout-demo'
+          test "${GITHUB_REF}" = 'refs/heads/master'
+          test "$(git rev-parse HEAD)" = "${STAGE7_CANDIDATE_SHA}"
+          plan='output/release/publication/publication-plan.json'
+          target_proof="${STAGE7_EVIDENCE_ROOT}/publication-target-proof.json"
+          operation="${STAGE7_EVIDENCE_ROOT}/publication-operation.json"
+          proof="${STAGE7_EVIDENCE_ROOT}/publication-proof.json"
+          pnpm release:verify -- \
+            --publication-target "${plan}" \
+            --publication-evidence .stage7/evidence \
+            --resilience-app .stage7/evidence/stage7-candidate/iac \
+            --evidence "${target_proof}"
+          pnpm release:github-publication -- --plan "${plan}" --result "${operation}"
+          pnpm release:verify -- \
+            --publication-native "${plan}" \
+            --publication-target-proof "${target_proof}" \
+            --publication-operation "${operation}" \
+            --evidence "${proof}"
+          publication_root='output/evidence/stage7-publication'
+          test ! -e "${publication_root}"
+          install -d -m 700 "${publication_root}"
+          install -m 600 "${STAGE7_EVIDENCE_ROOT}/publication.json" "${publication_root}/publication.json"
+          install -m 600 "${plan}" "${publication_root}/publication-plan.json"
+          install -m 600 "${target_proof}" "${publication_root}/publication-target-proof.json"
+          install -m 600 "${operation}" "${publication_root}/publication-operation.json"
+          install -m 600 "${proof}" "${publication_root}/publication-proof.json"
+          pnpm release:scan -- --pre-upload "${publication_root}"
+      - name: Emit the non-closing A or B recovery receipt
+        run: |
+          set -euo pipefail
+          completed_at="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
+          node recovery-control/scripts/stage7/release-successor-publication-recovery-cli.mjs complete \
+            --plan recovery-public/release-successor-publication-recovery-plan.json \
+            --publication-directory candidate/output/evidence/stage7-publication \
+            --recovery-operation candidate/output/evidence/runtime/stage-7-publication-recovery/publication-operation.json \
+            --completed-at "${completed_at}" \
+            --output recovery-public/release-successor-publication-recovery-receipt.json
+      - name: Stage the exact eight root basenames for the A or B result supplement
+        run: |
+          set -euo pipefail
+          install -d -m 700 recovery-upload/result
+          install -m 600 recovery-public/release-successor-completion-fence.json recovery-upload/result/
+          install -m 600 recovery-public/release-successor-publication-recovery-plan.json recovery-upload/result/
+          install -m 600 recovery-public/release-successor-publication-recovery-receipt.json recovery-upload/result/
+          install -m 600 candidate/output/evidence/stage7-publication/*.json recovery-upload/result/
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          const expected = [
+            'release-successor-completion-fence.json',
+            'release-successor-publication-recovery-plan.json',
+            'release-successor-publication-recovery-receipt.json',
+            'publication.json',
+            'publication-operation.json',
+            'publication-plan.json',
+            'publication-proof.json',
+            'publication-target-proof.json',
+          ].sort();
+          const actual = fs.readdirSync('recovery-upload/result', { withFileTypes: true });
+          if (actual.some((entry) => !entry.isFile())) process.exit(1);
+          if (JSON.stringify(actual.map(({ name }) => name).sort()) !== JSON.stringify(expected)) {
+            process.exit(1);
+          }
+          NODE
+      - name: Preserve the exact A or B result supplement
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-release-successor-publication-recovery-result-s${{ inputs.source_run_id }}-r${{ github.run_id }}-a${{ github.run_attempt }}
+          if-no-files-found: error
+          path: recovery-upload/result/
+          retention-days: 30

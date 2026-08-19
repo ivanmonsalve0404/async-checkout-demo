@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checkout.invalid/schemas/stage7/prerelease-live-safety-recheck.schema.json",
+  "title": "Stage 7 fresh prerelease live safety recheck",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "status",
+    "decision",
+    "phase",
+    "scope",
+    "generatedAtUtc",
+    "environment",
+    "authorizationId",
+    "candidateSha",
+    "releaseId",
+    "configSha256",
+    "freezeManifestSha256",
+    "initialSafetyReadinessSha256",
+    "durableCleanupReadinessSha256",
+    "readIdentity",
+    "accessControl",
+    "watchdogApi",
+    "maxAgeSeconds",
+    "externalRequests",
+    "mutationsPerformed",
+    "containsSensitiveData",
+    "liveSafetyRecheckSha256"
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "isoUtc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "readIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "decision",
+        "runId",
+        "runAttempt",
+        "sessionKind",
+        "sessionPrefix",
+        "accountSha256",
+        "accountSuffix",
+        "roleArnSha256",
+        "sessionArnSha256",
+        "principalIdSha256",
+        "sessionNameSha256",
+        "sessionBindingSha256",
+        "rawIdentityCaptured"
+      ],
+      "properties": {
+        "status": { "const": "PASS" },
+        "decision": { "const": "READ_ROLE_ACCOUNT_CONFIRMED" },
+        "runId": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+        "runAttempt": { "type": "string", "pattern": "^[1-9][0-9]{0,5}$" },
+        "sessionKind": { "enum": ["activation", "sandbox"] },
+        "sessionPrefix": { "enum": ["e7pre-read", "e7pre-external-read"] },
+        "accountSha256": { "$ref": "#/$defs/sha256" },
+        "accountSuffix": { "type": "string", "pattern": "^[0-9]{4}$" },
+        "roleArnSha256": { "$ref": "#/$defs/sha256" },
+        "sessionArnSha256": { "$ref": "#/$defs/sha256" },
+        "principalIdSha256": { "$ref": "#/$defs/sha256" },
+        "sessionNameSha256": { "$ref": "#/$defs/sha256" },
+        "sessionBindingSha256": { "$ref": "#/$defs/sha256" },
+        "rawIdentityCaptured": { "const": false }
+      }
+    }
+  },
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 7 },
+    "kind": { "const": "PRERELEASE_LIVE_SAFETY_RECHECK" },
+    "status": { "const": "PASS" },
+    "decision": {
+      "enum": ["FRESH_FOR_PRERELEASE_ACTIVATION", "FRESH_FOR_PRERELEASE_SANDBOX"]
+    },
+    "phase": { "enum": ["activation", "sandbox"] },
+    "scope": { "const": "prerelease" },
+    "generatedAtUtc": { "$ref": "#/$defs/isoUtc" },
+    "environment": {
+      "type": "string",
+      "pattern": "^assessment-prerelease-[a-z0-9][a-z0-9-]{0,18}$"
+    },
+    "authorizationId": { "type": "string" },
+    "candidateSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "releaseId": { "type": "string", "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$" },
+    "configSha256": { "$ref": "#/$defs/sha256" },
+    "freezeManifestSha256": { "$ref": "#/$defs/sha256" },
+    "initialSafetyReadinessSha256": { "$ref": "#/$defs/sha256" },
+    "durableCleanupReadinessSha256": { "$ref": "#/$defs/sha256" },
+    "readIdentity": { "$ref": "#/$defs/readIdentity" },
+    "accessControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "mode",
+        "bindingSha256",
+        "keyGroupIdSha256",
+        "keyGroupEtagSha256",
+        "keyGroupPublicKeyCount",
+        "publicKeyIdSha256",
+        "publicKeyEtagSha256",
+        "publicKeyMaterialSha256",
+        "publicKeyAlgorithm",
+        "originTokenSecretArnSha256",
+        "originTokenSecretVersionIdSha256",
+        "originSecretBindingSha256",
+        "currentVersionCount",
+        "rotationEnabled",
+        "customerManagedKmsKeyUsed",
+        "rawAccessMaterialCaptured"
+      ],
+      "properties": {
+        "status": { "const": "PASS" },
+        "mode": { "const": "CLOUDFRONT_SIGNED_COOKIE" },
+        "bindingSha256": { "$ref": "#/$defs/sha256" },
+        "keyGroupIdSha256": { "$ref": "#/$defs/sha256" },
+        "keyGroupEtagSha256": { "$ref": "#/$defs/sha256" },
+        "keyGroupPublicKeyCount": { "const": 1 },
+        "publicKeyIdSha256": { "$ref": "#/$defs/sha256" },
+        "publicKeyEtagSha256": { "$ref": "#/$defs/sha256" },
+        "publicKeyMaterialSha256": { "$ref": "#/$defs/sha256" },
+        "publicKeyAlgorithm": { "const": "RSA" },
+        "originTokenSecretArnSha256": { "$ref": "#/$defs/sha256" },
+        "originTokenSecretVersionIdSha256": { "$ref": "#/$defs/sha256" },
+        "originSecretBindingSha256": { "$ref": "#/$defs/sha256" },
+        "currentVersionCount": { "const": 1 },
+        "rotationEnabled": { "const": false },
+        "customerManagedKmsKeyUsed": { "const": false },
+        "rawAccessMaterialCaptured": { "const": false }
+      }
+    },
+    "watchdogApi": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "decision",
+        "repository",
+        "defaultBranch",
+        "workflowPath",
+        "workflowState",
+        "defaultBranchHeadSha256",
+        "workflowIdSha256",
+        "repositoryResponseSha256",
+        "workflowResponseSha256",
+        "refResponseSha256",
+        "apiRequests",
+        "rawResponseCaptured"
+      ],
+      "properties": {
+        "status": { "const": "PASS" },
+        "decision": { "const": "ACTIVE_ON_DEFAULT_BRANCH" },
+        "repository": { "const": "ivanmonsalve0404/async-checkout-demo" },
+        "defaultBranch": { "const": "master" },
+        "workflowPath": { "const": ".github/workflows/prerelease-cleanup.yml" },
+        "workflowState": { "const": "active" },
+        "defaultBranchHeadSha256": { "$ref": "#/$defs/sha256" },
+        "workflowIdSha256": { "$ref": "#/$defs/sha256" },
+        "repositoryResponseSha256": { "$ref": "#/$defs/sha256" },
+        "workflowResponseSha256": { "$ref": "#/$defs/sha256" },
+        "refResponseSha256": { "$ref": "#/$defs/sha256" },
+        "apiRequests": { "const": 3 },
+        "rawResponseCaptured": { "const": false }
+      }
+    },
+    "maxAgeSeconds": { "const": 300 },
+    "externalRequests": { "const": 7 },
+    "mutationsPerformed": { "const": 0 },
+    "containsSensitiveData": { "const": false },
+    "liveSafetyRecheckSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "phase": { "const": "activation" } } },
+      "then": {
+        "properties": {
+          "decision": { "const": "FRESH_FOR_PRERELEASE_ACTIVATION" },
+          "readIdentity": {
+            "properties": {
+              "sessionKind": { "const": "activation" },
+              "sessionPrefix": { "const": "e7pre-read" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "phase": { "const": "sandbox" } } },
+      "then": {
+        "properties": {
+          "decision": { "const": "FRESH_FOR_PRERELEASE_SANDBOX" },
+          "readIdentity": {
+            "properties": {
+              "sessionKind": { "const": "sandbox" },
+              "sessionPrefix": { "const": "e7pre-external-read" }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

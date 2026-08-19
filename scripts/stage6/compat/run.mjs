@@ -331,7 +331,7 @@ const report = {
   ...(await evidenceBase({
     command: 'node scripts/stage6/compat/run.mjs',
     scriptPath: SCRIPT_PATH,
-    tool: { name: '@playwright/test', version: '1.61.1' },
+    tool: { name: '@playwright/test', version: '1.62.1' },
   })),
   status,
   requiredEngines: ['chromium', 'firefox', 'webkit'],

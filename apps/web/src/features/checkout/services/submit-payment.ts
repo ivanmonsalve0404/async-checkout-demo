@@ -1,5 +1,6 @@
 import type { components } from '@checkout/contracts';
 import { z } from 'zod';
+import { getPublicConfig } from '../../../shared/config/public-config';
 import { checkoutEtag } from '../api/checkout-api';
 
 export type PaymentSubmissionRequest = components['schemas']['PaymentSubmissionRequest'];
@@ -58,7 +59,11 @@ const problemSchema = z
 export const buildPaymentCommandRequest = (
   input: SubmitPaymentInput,
 ): { readonly url: string; readonly init: RequestInit } => ({
-  url: '/api/v1/checkouts/' + encodeURIComponent(input.checkoutId) + '/transactions',
+  url:
+    getPublicConfig().apiBaseUrl +
+    '/checkouts/' +
+    encodeURIComponent(input.checkoutId) +
+    '/transactions',
   init: {
     method: 'POST',
     credentials: 'same-origin',

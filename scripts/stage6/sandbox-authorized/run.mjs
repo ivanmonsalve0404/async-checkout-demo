@@ -18,6 +18,10 @@ import {
   sha256,
   validateRequiredEnvironment,
 } from './authorization-policy.mjs';
+import {
+  consumeSandboxExecutionClaim,
+  revalidateConsumedSandboxExecutionClaim,
+} from '../../stage7/sandbox-execution-claim.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(HERE, '..', '..', '..');
@@ -83,7 +87,7 @@ const exactChildResult = (result, execution) => {
     result.runId !== execution.authorization.runId ||
     !validUtc(result.executedAtUtc) ||
     result.hostSha256 !== sha256(SANDBOX_HOST) ||
-    !SHA256.test(result.referenceSha256) ||
+    result.referenceSha256 !== execution.referenceSha256 ||
     !SHA256.test(result.reportSha256) ||
     result.containsSensitiveData !== false ||
     !Array.isArray(result.checks) ||
@@ -204,7 +208,7 @@ const authorizedChildEnvironment = (authorizationPath) => ({
   STAGE6_SANDBOX_AUTHORIZATION: authorizationPath,
 });
 
-const runAuthorizedChild = (authorizationContext) =>
+const runAuthorizedChild = (authorizationContext, executionClaim) =>
   new Promise((resolve, reject) => {
     const nonce = randomBytes(32).toString('base64url');
     const capability = {
@@ -213,6 +217,9 @@ const runAuthorizedChild = (authorizationContext) =>
       parentPid: process.pid,
       commitSha: authorizationContext.commitSha,
       authorizationSha256: authorizationContext.sourceSha256,
+      executionClaimSha256: executionClaim.claimSha256,
+      executionBindingSha256: executionClaim.bindingSha256,
+      deterministicReference: executionClaim.reference,
     };
     const child = spawn(
       process.execPath,
@@ -284,6 +291,13 @@ const runAuthorizedChild = (authorizationContext) =>
 
 const execute = async () => {
   const startedAt = new Date();
+  const scope = process.env.STAGE7_SANDBOX_CLAIM_SCOPE;
+  if (scope !== 'full' && scope !== 'prerelease') fail('EXECUTION_CLAIM_SCOPE_INVALID');
+  const executionClaim = consumeSandboxExecutionClaim({
+    environment: process.env,
+    scope,
+    now: startedAt,
+  });
   const authorizationContext = loadAuthorizationContext({
     repositoryRoot: REPOSITORY_ROOT,
     schemaPath: AUTHORIZATION_SCHEMA_PATH,
@@ -291,16 +305,25 @@ const execute = async () => {
     now: startedAt,
   });
   validateRequiredEnvironment(process.env, authorizationContext.authorization);
-  const childOutput = await runAuthorizedChild(authorizationContext);
+  const childOutput = await runAuthorizedChild(authorizationContext, executionClaim);
   let currentContext = revalidateAuthorizationContext(authorizationContext, new Date());
   validateRequiredEnvironment(process.env, currentContext.authorization);
   const result = exactChildResult(parseStrictJsonSource(Buffer.from(childOutput, 'utf8')), {
     commitSha: authorizationContext.commitSha,
     authorization: currentContext.authorization,
     startedAt,
+    referenceSha256: executionClaim.referenceSha256,
   });
   currentContext = revalidateAuthorizationContext(authorizationContext, new Date());
   validateRequiredEnvironment(process.env, currentContext.authorization);
+  revalidateConsumedSandboxExecutionClaim({
+    environment: process.env,
+    scope,
+    expectedClaimSha256: executionClaim.claimSha256,
+    expectedBindingSha256: executionClaim.bindingSha256,
+    expectedReferenceSha256: result.referenceSha256,
+    now: new Date(),
+  });
   const authorization = currentContext.authorization;
   const capability = {
     status: 'PASS',

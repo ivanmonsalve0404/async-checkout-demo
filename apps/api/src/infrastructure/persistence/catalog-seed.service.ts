@@ -13,6 +13,7 @@ export class CatalogSeedService implements OnModuleInit {
   ) {}
 
   public async onModuleInit(): Promise<void> {
+    if (!this.config.autoSeedCatalog) return;
     const seed = createProductSeed(
       this.config.productSeedId,
       this.config.publicAssetOrigin,

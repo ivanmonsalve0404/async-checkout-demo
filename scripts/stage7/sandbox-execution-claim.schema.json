@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://async-checkout.invalid/schemas/stage7-sandbox-execution-claim-v1.json",
+  "title": "Stage 7 one-use sandbox execution claim",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaId",
+    "schemaVersion",
+    "stage",
+    "kind",
+    "status",
+    "scope",
+    "repository",
+    "workflow",
+    "execution",
+    "authorization",
+    "limits",
+    "approvedAtUtc",
+    "expiresAtUtc",
+    "ownerAlias",
+    "approvalSha256",
+    "executionApprovalSha256",
+    "approvedByAlias",
+    "approvalEvidence",
+    "claimId",
+    "containsSensitiveData"
+  ],
+  "properties": {
+    "schemaId": { "const": "async-checkout-stage7-sandbox-execution-claim" },
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 7 },
+    "kind": { "const": "SANDBOX_ONE_USE_EXECUTION_CLAIM" },
+    "status": { "const": "APPROVED" },
+    "scope": { "enum": ["full", "prerelease"] },
+    "repository": { "const": "ivanmonsalve0404/async-checkout-demo" },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "ref", "sha", "job"],
+      "properties": {
+        "file": {
+          "enum": [".github/workflows/release.yml", ".github/workflows/prerelease.yml"]
+        },
+        "ref": {
+          "type": "string",
+          "pattern": "^ivanmonsalve0404/async-checkout-demo/\\.github/workflows/(?:release|prerelease)\\.yml@refs/heads/master$"
+        },
+        "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "job": { "enum": ["sandbox-smoke", "external-verification"] }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runId",
+        "runAttempt",
+        "environment",
+        "candidateSha",
+        "releaseId",
+        "releaseTag",
+        "configSha256",
+        "rerunExplicitlyApproved",
+        "rerunOfAttempt"
+      ],
+      "properties": {
+        "runId": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+        "runAttempt": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "environment": {
+          "enum": ["assessment-release", "assessment-prerelease-external"]
+        },
+        "candidateSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "releaseId": {
+          "type": "string",
+          "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$"
+        },
+        "releaseTag": {
+          "type": "string",
+          "pattern": "^(?:v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-rc\\.[1-9][0-9]*)?|NOT_APPLICABLE)$"
+        },
+        "configSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "rerunExplicitlyApproved": { "type": "boolean" },
+        "rerunOfAttempt": { "type": "integer", "minimum": 0, "maximum": 999 }
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage6Id",
+        "stage7Id",
+        "stage6SourceSha256",
+        "stage7BundleSourceSha256",
+        "providerHostSha256"
+      ],
+      "properties": {
+        "stage6Id": { "const": "AUTH-E6-02" },
+        "stage7Id": { "enum": ["AUTH-E6-02", "AUTH-E7-EXT-02"] },
+        "stage6SourceSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "stage7BundleSourceSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "providerHostSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["externalRequests", "tokenizations", "transactions"],
+      "properties": {
+        "externalRequests": { "const": 7 },
+        "tokenizations": { "const": 1 },
+        "transactions": { "const": 1 }
+      }
+    },
+    "approvedAtUtc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "expiresAtUtc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "ownerAlias": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,31}$" },
+    "approvalSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "executionApprovalSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "approvedByAlias": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$"
+    },
+    "approvalEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestSha256", "responseSha256", "reviewerAlias", "externalRequests"],
+      "properties": {
+        "requestSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "responseSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "reviewerAlias": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$"
+        },
+        "externalRequests": { "const": 1 }
+      }
+    },
+    "claimId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "containsSensitiveData": { "const": false }
+  }
+}

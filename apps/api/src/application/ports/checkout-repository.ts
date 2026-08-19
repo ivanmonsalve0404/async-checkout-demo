@@ -103,6 +103,7 @@ export interface CheckoutRepository {
     providerId: string,
   ): Promise<Result<Transaction | null, CheckoutRepositoryError>>;
   recordWebhook(eventHash: string): Promise<Result<'NEW' | 'DUPLICATE', CheckoutRepositoryError>>;
+  findOldestPendingAcceptedAt(): Promise<Result<string | null, CheckoutRepositoryError>>;
   claimDue(
     now: string,
     leaseUntil: string,

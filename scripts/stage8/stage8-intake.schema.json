@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checkout.example.invalid/schemas/stage8-intake.schema.json",
+  "title": "Validated Stage 8 intake",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "intakeValidated",
+    "release",
+    "urls",
+    "stage7Gates",
+    "sourceBindings",
+    "stage7Counts",
+    "stage7GeneratedAtUtc",
+    "stage7OwnerAlias",
+    "containsSensitiveData",
+    "intakeSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 8 },
+    "kind": { "const": "STAGE8_E7_ACCEPTANCE_INTAKE" },
+    "intakeValidated": { "const": true },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["releaseId", "runtimeSha", "submissionSha", "tag", "documentationCommit"],
+      "properties": {
+        "releaseId": {
+          "type": "string",
+          "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$"
+        },
+        "runtimeSha": { "$ref": "#/$defs/sha" },
+        "submissionSha": { "$ref": "#/$defs/sha" },
+        "documentationCommit": { "$ref": "#/$defs/documentationCommit" },
+        "tag": {
+          "type": "string",
+          "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-rc\\.[1-9][0-9]*)?$"
+        }
+      }
+    },
+    "urls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["application", "api", "docs", "health", "repository"],
+      "properties": {
+        "application": { "$ref": "#/$defs/httpsUrl" },
+        "api": { "$ref": "#/$defs/httpsUrl" },
+        "docs": { "$ref": "#/$defs/httpsUrl" },
+        "health": { "$ref": "#/$defs/httpsUrl" },
+        "repository": { "$ref": "#/$defs/httpsUrl" }
+      }
+    },
+    "stage7Gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["GATE-E7-01", "GATE-E7-02", "GATE-E7-03"],
+      "properties": {
+        "GATE-E7-01": { "const": "PASS" },
+        "GATE-E7-02": { "const": "PASS" },
+        "GATE-E7-03": { "const": "PASS" }
+      }
+    },
+    "sourceBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "releaseManifestRawSha256",
+        "releaseManifestObjectSha256",
+        "closeoutRawSha256",
+        "provenanceLedgerRawSha256",
+        "provenanceLedgerObjectSha256",
+        "handoffRawSha256",
+        "handoffObjectSha256",
+        "executedReportRawSha256"
+      ],
+      "properties": {
+        "releaseManifestRawSha256": { "$ref": "#/$defs/sha256" },
+        "releaseManifestObjectSha256": { "$ref": "#/$defs/sha256" },
+        "closeoutRawSha256": { "$ref": "#/$defs/sha256" },
+        "provenanceLedgerRawSha256": { "$ref": "#/$defs/sha256" },
+        "provenanceLedgerObjectSha256": { "$ref": "#/$defs/sha256" },
+        "handoffRawSha256": { "$ref": "#/$defs/sha256" },
+        "handoffObjectSha256": { "$ref": "#/$defs/sha256" },
+        "executedReportRawSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "stage7Counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifacts", "evidence", "handoffItems"],
+      "properties": {
+        "artifacts": { "const": 20 },
+        "evidence": { "const": 57 },
+        "handoffItems": { "const": 37 }
+      }
+    },
+    "stage7GeneratedAtUtc": { "$ref": "#/$defs/utc" },
+    "stage7OwnerAlias": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$"
+    },
+    "containsSensitiveData": { "const": false },
+    "intakeSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "documentationCommit": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "authority"],
+          "properties": {
+            "mode": { "const": "SAME_COMMIT" },
+            "authority": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "authority"],
+          "properties": {
+            "mode": { "const": "DOCUMENTATION_ONLY_APPROVED" },
+            "authority": { "$ref": "#/$defs/documentationAuthority" }
+          }
+        }
+      ]
+    },
+    "documentationAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "fromSha",
+        "toSha",
+        "changedPaths",
+        "ownerAlias",
+        "approvedByAlias",
+        "approvedAtUtc",
+        "reason",
+        "sourceHashes",
+        "containsSensitiveData",
+        "authoritySha256",
+        "authorityRawSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 8 },
+        "kind": { "const": "STAGE8_DOCUMENTATION_COMMIT_AUTHORITY" },
+        "status": { "const": "APPROVED" },
+        "fromSha": { "$ref": "#/$defs/sha" },
+        "toSha": { "$ref": "#/$defs/sha" },
+        "changedPaths": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?:README\\.md|docs/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\\.md)$"
+          }
+        },
+        "ownerAlias": { "$ref": "#/$defs/alias" },
+        "approvedByAlias": { "$ref": "#/$defs/alias" },
+        "approvedAtUtc": { "$ref": "#/$defs/utc" },
+        "reason": { "type": "string", "minLength": 12, "maxLength": 500 },
+        "sourceHashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "commitMetadataRawSha256",
+            "changedPathsRawSha256",
+            "approvalRawSha256",
+            "updatedManifestRawSha256"
+          ],
+          "properties": {
+            "commitMetadataRawSha256": { "$ref": "#/$defs/sha256" },
+            "changedPathsRawSha256": { "$ref": "#/$defs/sha256" },
+            "approvalRawSha256": { "$ref": "#/$defs/sha256" },
+            "updatedManifestRawSha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "containsSensitiveData": { "const": false },
+        "authoritySha256": { "$ref": "#/$defs/sha256" },
+        "authorityRawSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "alias": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$"
+    },
+    "utc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{3})?Z$"
+    },
+    "httpsUrl": { "type": "string", "pattern": "^https://[^\\s]+$" }
+  }
+}

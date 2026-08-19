@@ -46,19 +46,20 @@ El Scheduler queda `DISABLED` en la plantilla. Los scripts ofrecen `synth`; no o
 
 ## Inventario de recursos sintetizados
 
-| Recurso lógico   | Configuración relevante                                                                                          |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `CatalogTable`   | PK/SK string, on-demand, cifrado AWS administrado, límite 50 RRU/25 WRU, sin PITR mientras `QST-22` siga abierto |
-| `CheckoutTable`  | PK/SK string, on-demand, cifrado administrado, TTL físico `purgeAt`, límite 50 RRU/50 WRU                        |
-| `GSI1-Reconcile` | `GSI1PK/GSI1SK`, proyección sólo de cuatro campos aprobados                                                      |
-| API Lambda       | `nodejs24.x`, ARM64, 512 MiB, 10 s, concurrencia reservada 5, fake-only                                          |
-| Worker Lambda    | `nodejs24.x`, ARM64, 512 MiB, 50 s, concurrencia reservada 1, fake-only                                          |
-| Log groups       | explícitos, JSON Lambda, retención exacta de 7 días                                                              |
-| HTTP API         | route proxy, sin CORS, throttle 5 req/s y burst 10                                                               |
-| Scheduler        | cada minuto, input constante sin PII, alias de worker, 2 reintentos acotados, `DISABLED`                         |
-| Bucket web       | S3 privado, bloqueo público completo, TLS obligatorio, cifrado administrado, versionado                          |
-| CloudFront       | OAC a S3, HTTPS redirect, documentos/API no-store, assets con caché optimizada y price class 100                 |
-| Headers          | HSTS, CSP fake-only, deny framing, nosniff y referrer same-origin                                                |
+| Recurso lógico    | Configuración relevante                                                                                          |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `CatalogTable`    | PK/SK string, on-demand, cifrado AWS administrado, límite 50 RRU/25 WRU, sin PITR mientras `QST-22` siga abierto |
+| `CheckoutTable`   | PK/SK string, on-demand, cifrado administrado, TTL físico `purgeAt`, límite 50 RRU/50 WRU                        |
+| `GSI1-Reconcile`  | `GSI1PK/GSI1SK`, proyección sólo de cuatro campos aprobados                                                      |
+| `GSI2-PendingAge` | `GSI2PK/GSI2SK`, índice escaso por `acceptedAt` para medir todo pago `PENDING`, aun durante backoff              |
+| API Lambda        | `nodejs24.x`, ARM64, 512 MiB, 10 s, concurrencia reservada 5, fake-only                                          |
+| Worker Lambda     | `nodejs24.x`, ARM64, 512 MiB, 50 s, concurrencia reservada 1, fake-only                                          |
+| Log groups        | explícitos, JSON Lambda, retención exacta de 7 días                                                              |
+| HTTP API          | route proxy, sin CORS, throttle 5 req/s y burst 10                                                               |
+| Scheduler         | cada minuto, input constante sin PII, alias de worker, 2 reintentos acotados, `DISABLED`                         |
+| Bucket web        | S3 privado, bloqueo público completo, TLS obligatorio, cifrado administrado, versionado                          |
+| CloudFront        | OAC a S3, HTTPS redirect, documentos/API no-store, assets con caché optimizada y price class 100                 |
+| Headers           | HSTS, CSP fake-only, deny framing, nosniff y referrer same-origin                                                |
 
 Los nombres globales no están hardcodeados. S3 conserva nombre generado por CloudFormation; las etiquetas cubren proyecto neutral, ambiente, coste, administración y modo fake. El único output es una URL HTTPS no sensible.
 
@@ -69,10 +70,10 @@ No se adjuntan managed policies. Cada Lambda tiene un rol propio; los streams de
 | Principal      | Acciones                                                        | Recursos                                                       |
 | -------------- | --------------------------------------------------------------- | -------------------------------------------------------------- |
 | API Lambda     | `logs:CreateLogStream`, `logs:PutLogEvents`                     | sólo su log group                                              |
-| API Lambda     | `dynamodb:GetItem`, `BatchGetItem`, `Query`                     | dos tablas y GSI aprobado                                      |
+| API Lambda     | `dynamodb:GetItem`, `BatchGetItem`, `Query`                     | dos tablas y GSI aprobados                                     |
 | API Lambda     | `dynamodb:UpdateItem`, `TransactWriteItems`                     | dos tablas                                                     |
 | Worker Lambda  | `logs:CreateLogStream`, `logs:PutLogEvents`                     | sólo su log group                                              |
-| Worker Lambda  | `dynamodb:GetItem`, `Query`, `UpdateItem`, `TransactWriteItems` | dos tablas y GSI aprobado                                      |
+| Worker Lambda  | `dynamodb:GetItem`, `Query`, `UpdateItem`, `TransactWriteItems` | dos tablas y GSI aprobados                                     |
 | Scheduler      | `lambda:InvokeFunction`                                         | sólo alias preview del worker                                  |
 | CloudFront OAC | lectura de objetos                                              | bucket de origen mediante policy condicionada por distribución |
 

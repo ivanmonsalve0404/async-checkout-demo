@@ -1,11 +1,21 @@
 import { Controller, Get, Header } from '@nestjs/common';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+
+const bundledContract = join(__dirname, 'openapi.yaml');
+const sourceContract = resolve(__dirname, '../../../../../..', 'output/architecture/openapi.yaml');
+const openApi = readFileSync(
+  existsSync(bundledContract) ? bundledContract : sourceContract,
+  'utf8',
+);
 
 @Controller('api/docs')
 export class DocsController {
   @Get()
   @Header('Cache-Control', 'public, max-age=300')
-  @Header('Content-Type', 'text/html; charset=utf-8')
+  @Header('Content-Disposition', 'inline; filename="openapi.yaml"')
+  @Header('Content-Type', 'application/yaml; charset=utf-8')
   public getDocumentation(): string {
-    return '<!doctype html><html lang="es"><head><meta charset="utf-8"><title>API checkout</title></head><body><main><h1>Contrato API</h1><p>La fuente canónica está versionada en packages/contracts/openapi.yaml.</p></main></body></html>';
+    return openApi;
   }
 }

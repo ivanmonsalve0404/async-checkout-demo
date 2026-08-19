@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ivanmonsalve0404/async-checkout-demo/schemas/stage7/release-successor-preservation-receipt.schema.json",
+  "title": "Stage 7 re-downloaded release-successor preservation receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "status",
+    "sourceRunId",
+    "sourceRunAttempt",
+    "postSuccessRunId",
+    "postSuccessRunAttempt",
+    "headSha",
+    "sourceArtifact",
+    "sourceBundleSha256",
+    "sourceIndexSha256",
+    "sourceProvenanceSha256",
+    "releaseEvidenceSetSha256",
+    "finalizationMarkerSha256",
+    "journalLifecycleSha256",
+    "reconciliationJournalAuthoritySha256",
+    "journalSnapshotBinding",
+    "journalRoleAuthoritySha256",
+    "callerAttemptAuthoritySha256",
+    "auditEvidenceSha256",
+    "preservedAtUtc",
+    "containsSensitiveData",
+    "preservationReceiptSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 7 },
+    "kind": { "const": "RELEASE_SUCCESSOR_DURABLE_HANDOFF_RECEIPT" },
+    "status": { "const": "DURABLE_REQUERY_VERIFIED" },
+    "sourceRunId": { "$ref": "#/$defs/runId" },
+    "sourceRunAttempt": { "const": 1 },
+    "postSuccessRunId": { "$ref": "#/$defs/runId" },
+    "postSuccessRunAttempt": { "type": "integer", "minimum": 1, "maximum": 999 },
+    "headSha": { "$ref": "#/$defs/sha" },
+    "sourceArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "logicalName",
+        "physicalName",
+        "id",
+        "digest",
+        "archiveRawSha256",
+        "archiveBytes",
+        "apiResponseRawSha256",
+        "apiResponseCanonicalSha256"
+      ],
+      "properties": {
+        "logicalName": { "const": "stage7-release-successor-source" },
+        "physicalName": {
+          "type": "string",
+          "pattern": "^stage7-release-successor-source-r[1-9][0-9]{0,19}-a[1-9][0-9]{0,2}$"
+        },
+        "id": { "type": "integer", "minimum": 1 },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "archiveRawSha256": { "$ref": "#/$defs/sha256" },
+        "archiveBytes": { "type": "integer", "minimum": 1 },
+        "apiResponseRawSha256": { "$ref": "#/$defs/sha256" },
+        "apiResponseCanonicalSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "sourceBundleSha256": { "$ref": "#/$defs/sha256" },
+    "sourceIndexSha256": { "$ref": "#/$defs/sha256" },
+    "sourceProvenanceSha256": { "$ref": "#/$defs/sha256" },
+    "releaseEvidenceSetSha256": { "$ref": "#/$defs/sha256" },
+    "finalizationMarkerSha256": { "$ref": "#/$defs/sha256" },
+    "journalLifecycleSha256": { "$ref": "#/$defs/sha256" },
+    "reconciliationJournalAuthoritySha256": { "$ref": "#/$defs/sha256" },
+    "journalSnapshotBinding": { "$ref": "#/$defs/journalSnapshotBinding" },
+    "journalRoleAuthoritySha256": { "$ref": "#/$defs/sha256" },
+    "callerAttemptAuthoritySha256": { "$ref": "#/$defs/sha256" },
+    "auditEvidenceSha256": { "$ref": "#/$defs/sha256" },
+    "preservedAtUtc": { "type": "string", "format": "date-time" },
+    "containsSensitiveData": { "const": false },
+    "preservationReceiptSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runId": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+    "journalSnapshotBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "rawSha256",
+        "canonicalSha256",
+        "bytes",
+        "snapshotSha256",
+        "targetNameSetSha256",
+        "entryCount"
+      ],
+      "properties": {
+        "path": { "const": "release-reconciliation-journal-snapshot.json" },
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 2 },
+        "snapshotSha256": { "$ref": "#/$defs/sha256" },
+        "targetNameSetSha256": { "$ref": "#/$defs/sha256" },
+        "entryCount": { "type": "integer", "minimum": 3 }
+      }
+    }
+  }
+}

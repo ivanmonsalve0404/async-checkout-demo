@@ -8,11 +8,15 @@ import { InMemoryCatalogRepository } from './in-memory-catalog.repository';
 export const DYNAMODB_DOCUMENT_CLIENT = Symbol('DYNAMODB_DOCUMENT_CLIENT');
 
 export const createDynamoDocumentClient = (config: AppConfig): DynamoDBDocumentClient => {
-  const lowLevelClient = new DynamoDBClient({
-    endpoint: config.dynamoDbEndpoint,
-    region: 'us-east-1',
-    credentials: { accessKeyId: 'local', secretAccessKey: 'local' },
-  });
+  const lowLevelClient = new DynamoDBClient(
+    config.dynamoDbEndpoint === undefined
+      ? { region: config.awsRegion }
+      : {
+          endpoint: config.dynamoDbEndpoint,
+          region: config.awsRegion,
+          credentials: { accessKeyId: 'local', secretAccessKey: 'local' },
+        },
+  );
   return DynamoDBDocumentClient.from(lowLevelClient, {
     marshallOptions: { removeUndefinedValues: true },
   });

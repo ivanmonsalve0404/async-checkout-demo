@@ -1,0 +1,654 @@
+name: Stage 7 release reconciliation recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact failed release candidate SHA
+        required: true
+        type: string
+      original_run_id:
+        description: Attempt-1 release run that owns the durable journal
+        required: true
+        type: string
+      config_sha256:
+        description: Exact approved Stage 7 config raw SHA-256
+        required: true
+        type: string
+      phase:
+        description: Interrupted reconciliation phase
+        required: true
+        type: choice
+        options:
+          - ROLLBACK_CHECK
+          - ROLLBACK_RESILIENCE
+      original_job_conclusion:
+        description: Terminal conclusion of the interrupted original job
+        required: true
+        type: choice
+        options:
+          - FAILURE
+          - CANCELLED
+          - TIMED_OUT
+      mode:
+        description: Recover the journal or close a previously preserved partial cleanup
+        required: true
+        type: choice
+        options:
+          - RECOVER_AND_CLOSE
+          - CLEANUP_PRESERVED
+      preserved_artifact_run_id:
+        description: Recovery run that uploaded the preservation artifact (cleanup-only)
+        required: false
+        default: ''
+        type: string
+      preserved_artifact_id:
+        description: Exact preservation artifact ID (cleanup-only)
+        required: false
+        default: ''
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: stage7-assessment-release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24.19.0'
+  PNPM_VERSION: '11.19.0'
+  STAGE7_AWS_ACCOUNT_ID: ${{ vars.STAGE7_AWS_ACCOUNT_ID }}
+  STAGE7_AWS_REGION: ${{ vars.STAGE7_AWS_REGION }}
+  AWS_REGION: ${{ vars.STAGE7_AWS_REGION }}
+  AWS_DEFAULT_REGION: ${{ vars.STAGE7_AWS_REGION }}
+  STAGE7_RELEASE_RECONCILIATION_RECOVERY_ROLE_ARN: ${{ vars.STAGE7_RELEASE_RECONCILIATION_RECOVERY_ROLE_ARN }}
+  STAGE7_RELEASE_RECONCILIATION_RECOVERY_PERMISSIONS_BOUNDARY_ARN: ${{ vars.STAGE7_RELEASE_RECONCILIATION_RECOVERY_PERMISSIONS_BOUNDARY_ARN }}
+  STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN: ${{ vars.STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN }}
+  STAGE7_RELEASE_JOURNAL_CLEANUP_PERMISSIONS_BOUNDARY_ARN: ${{ vars.STAGE7_RELEASE_JOURNAL_CLEANUP_PERMISSIONS_BOUNDARY_ARN }}
+  STAGE7_RECOVERY_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+  STAGE7_PROTECTED_ENVIRONMENT: assessment-release-reconciliation-recovery
+
+jobs:
+  validate-contract:
+    name: Validate isolated recovery contract
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact recovery control revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Validate recovery modules and workflow contract
+        run: |
+          set -euo pipefail
+          node scripts/stage7/release-reconciliation-recovery-self-test.mjs
+          node scripts/security/validate-stage7-release-reconciliation-recovery.mjs
+
+  prepare-request:
+    name: Rebuild original intent and prepare protected request
+    needs: validate-contract
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out the exact recovery control revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Validate exact dispatch identity and cleanup-only tuple
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          MODE: ${{ inputs.mode }}
+          ORIGINAL_RUN_ID: ${{ inputs.original_run_id }}
+          PRESERVED_ARTIFACT_ID: ${{ inputs.preserved_artifact_id }}
+          PRESERVED_ARTIFACT_RUN_ID: ${{ inputs.preserved_artifact_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${ORIGINAL_RUN_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
+          case "${MODE}" in
+            RECOVER_AND_CLOSE)
+              test -z "${PRESERVED_ARTIFACT_ID}"
+              test -z "${PRESERVED_ARTIFACT_RUN_ID}"
+              ;;
+            CLEANUP_PRESERVED)
+              [[ "${PRESERVED_ARTIFACT_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
+              [[ "${PRESERVED_ARTIFACT_RUN_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
+              ;;
+            *) exit 1 ;;
+          esac
+      - name: Observe the exact completed attempt-1 source run before AWS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_RUN_ID: ${{ inputs.original_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p .stage7/recovery-private
+          umask 077
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${ORIGINAL_RUN_ID}" > .stage7/recovery-private/original-run.json
+          gh api --paginate --slurp "/repos/${GITHUB_REPOSITORY}/actions/runs/${ORIGINAL_RUN_ID}/jobs?filter=all&per_page=100" > .stage7/recovery-private/original-jobs.json
+      - name: Download the immutable candidate assembly
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate
+          path: .stage7/candidate
+          run-id: ${{ inputs.original_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download the immutable release identity
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-release-metadata
+          path: .stage7/release-metadata
+          run-id: ${{ inputs.original_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download the immutable candidate manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-candidate-manifest
+          path: .stage7/candidate-manifest
+          run-id: ${{ inputs.original_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download the immutable release plan
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-release-plan
+          path: .stage7/release-plan
+          run-id: ${{ inputs.original_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download the exact reviewed diff
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-infra-diff
+          path: .stage7/infra-diff
+          run-id: ${{ inputs.original_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download the original protected approval
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-approval
+          path: .stage7/approval
+          run-id: ${{ inputs.original_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download the original AWS authorities
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-aws-auth
+          path: .stage7/aws-auth
+          run-id: ${{ inputs.original_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download activation and web authorities
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-activation
+          path: .stage7/activation
+          run-id: ${{ inputs.original_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download web deployment authority
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-web
+          path: .stage7/web
+          run-id: ${{ inputs.original_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download durable candidate rollback record
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-recovery-probe
+          path: .stage7/recovery-probe
+          run-id: ${{ inputs.original_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download external authorization authority
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-external-authorization
+          path: .stage7/external-authorization
+          run-id: ${{ inputs.original_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download exact N-1 projection
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-previous-release
+          path: .stage7/previous
+          run-id: ${{ inputs.original_run_id }}
+          github-token: ${{ github.token }}
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the exact source-freeze package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(node --version)" = "v${NODE_VERSION}"
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Materialize the exact original config without reusing its expired release window
+        env:
+          EXPECTED_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_CONFIG_B64}"
+          mkdir -p .stage7/recovery-private
+          umask 077
+          printf '%s' "${STAGE7_CONFIG_B64}" | base64 --decode > .stage7/recovery-private/stage7-config.json
+          test "$(sha256sum .stage7/recovery-private/stage7-config.json | cut -d ' ' -f 1)" = "${EXPECTED_CONFIG_SHA256}"
+      - name: Rebuild the exact original 23-binding intent without replacing GitHub identity
+        run: |
+          set -euo pipefail
+          node scripts/stage7/release-reconciliation-recovery-cli.mjs rebuild-intent \
+            --original-run-id "${{ inputs.original_run_id }}" \
+            --candidate-sha "${{ inputs.candidate_sha }}" \
+            --config .stage7/recovery-private/stage7-config.json \
+            --release-metadata .stage7/release-metadata/release-metadata.json \
+            --candidate-manifest .stage7/candidate-manifest/candidate-manifest.json \
+            --release-plan .stage7/release-plan/release-plan.json \
+            --approved-diff .stage7/infra-diff/infra-diff.json \
+            --raw-diff .stage7/infra-diff/infra-diff.txt \
+            --github-environment-approval .stage7/approval/github-environment-approval.json \
+            --approval .stage7/approval/approval.json \
+            --aws-auth .stage7/aws-auth/aws-auth.json \
+            --journal-role-effective-permissions .stage7/aws-auth/stage7-release-journal-role-effective-permissions.json \
+            --activation .stage7/activation/activation.json \
+            --web-deployment .stage7/web/web.json \
+            --candidate-record .stage7/recovery-probe/versioned-rollback-candidate.json \
+            --external-authorization .stage7/external-authorization/external-authorization.json \
+            --previous-release-manifest .stage7/previous/previous-release-manifest.json \
+            --previous-source-provenance .stage7/previous/previous-source-provenance.json \
+            --previous-target-compatibility .stage7/previous/previous-target-compatibility.json \
+            --previous-final-disable-provenance .stage7/previous/previous-final-disable-provenance.json \
+            --previous-api-contract-evidence .stage7/previous/previous-api-contract-evidence.json \
+            --previous-pending-evidence .stage7/previous/previous-pending-evidence.json \
+            --previous-smoke-evidence .stage7/previous/previous-smoke-evidence.json \
+            --previous-release-projection-index .stage7/previous/previous-release-projection-index.json \
+            --output .stage7/recovery-private/release-reconciliation-intent.json
+      - name: Create the exact protected recovery request
+        id: request
+        run: |
+          set -euo pipefail
+          node scripts/stage7/release-reconciliation-recovery-cli.mjs create-request \
+            --intent .stage7/recovery-private/release-reconciliation-intent.json \
+            --config .stage7/recovery-private/stage7-config.json \
+            --aws-auth .stage7/aws-auth/aws-auth.json \
+            --candidate-manifest .stage7/candidate-manifest/candidate-manifest.json \
+            --original-run .stage7/recovery-private/original-run.json \
+            --original-jobs .stage7/recovery-private/original-jobs.json \
+            --recovery-role-effective-permissions .stage7/aws-auth/stage7-release-reconciliation-recovery-role-effective-permissions.json \
+            --candidate-record .stage7/recovery-probe/versioned-rollback-candidate.json \
+            --previous-manifest .stage7/previous/previous-release-manifest.json \
+            --phase "${{ inputs.phase }}" \
+            --original-job-conclusion "${{ inputs.original_job_conclusion }}" \
+            --output .stage7/recovery-private/recovery-request.json
+          request_sha="$(jq -er '.requestSha256' .stage7/recovery-private/recovery-request.json)"
+          [[ "${request_sha}" =~ ^[0-9a-f]{64}$ ]]
+          printf 'request_sha256=%s\n' "${request_sha}" >> "${GITHUB_OUTPUT}"
+          printf 'Protected reviewer comment required: `STAGE7_RECONCILIATION_RECOVERY_SHA256=%s`\n' "${request_sha}" >> "${GITHUB_STEP_SUMMARY}"
+      - name: Scan the exact request-context allowlist before upload
+        run: |
+          set -euo pipefail
+          pnpm release:scan -- --pre-upload \
+            .stage7/candidate/iac \
+            .stage7/release-metadata/release-metadata.json \
+            .stage7/candidate-manifest/candidate-manifest.json \
+            .stage7/release-plan/release-plan.json \
+            .stage7/infra-diff/infra-diff.json \
+            .stage7/infra-diff/infra-diff.txt \
+            .stage7/approval/github-environment-approval.json \
+            .stage7/approval/approval.json \
+            .stage7/aws-auth/aws-auth.json \
+            .stage7/aws-auth/stage7-release-journal-role-effective-permissions.json \
+            .stage7/aws-auth/stage7-release-reconciliation-recovery-role-effective-permissions.json \
+            .stage7/activation/activation.json \
+            .stage7/web/web.json \
+            .stage7/recovery-probe/versioned-rollback-candidate.json \
+            .stage7/external-authorization/external-authorization.json \
+            .stage7/previous/previous-release-manifest.json \
+            .stage7/previous/previous-source-provenance.json \
+            .stage7/previous/previous-target-compatibility.json \
+            .stage7/previous/previous-final-disable-provenance.json \
+            .stage7/previous/previous-api-contract-evidence.json \
+            .stage7/previous/previous-pending-evidence.json \
+            .stage7/previous/previous-smoke-evidence.json \
+            .stage7/previous/previous-release-projection-index.json \
+            .stage7/recovery-private/stage7-config.json \
+            .stage7/recovery-private/original-run.json \
+            .stage7/recovery-private/original-jobs.json \
+            .stage7/recovery-private/release-reconciliation-intent.json \
+            .stage7/recovery-private/recovery-request.json
+      - name: Preserve attempt-suffixed request context
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-release-reconciliation-recovery-request-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          include-hidden-files: true
+          path: |
+            .stage7/candidate/iac
+            .stage7/release-metadata/release-metadata.json
+            .stage7/candidate-manifest/candidate-manifest.json
+            .stage7/release-plan/release-plan.json
+            .stage7/infra-diff/infra-diff.json
+            .stage7/infra-diff/infra-diff.txt
+            .stage7/approval/github-environment-approval.json
+            .stage7/approval/approval.json
+            .stage7/aws-auth/aws-auth.json
+            .stage7/aws-auth/stage7-release-journal-role-effective-permissions.json
+            .stage7/aws-auth/stage7-release-reconciliation-recovery-role-effective-permissions.json
+            .stage7/activation/activation.json
+            .stage7/web/web.json
+            .stage7/recovery-probe/versioned-rollback-candidate.json
+            .stage7/external-authorization/external-authorization.json
+            .stage7/previous/previous-release-manifest.json
+            .stage7/previous/previous-source-provenance.json
+            .stage7/previous/previous-target-compatibility.json
+            .stage7/previous/previous-final-disable-provenance.json
+            .stage7/previous/previous-api-contract-evidence.json
+            .stage7/previous/previous-pending-evidence.json
+            .stage7/previous/previous-smoke-evidence.json
+            .stage7/previous/previous-release-projection-index.json
+            .stage7/recovery-private/stage7-config.json
+            .stage7/recovery-private/original-run.json
+            .stage7/recovery-private/original-jobs.json
+            .stage7/recovery-private/release-reconciliation-intent.json
+            .stage7/recovery-private/recovery-request.json
+          retention-days: 30
+
+  recover:
+    name: Protected terminal resume or forward candidate N recovery
+    needs: prepare-request
+    environment: assessment-release-reconciliation-recovery
+    env:
+      STAGE7_CONFIG: .stage7/recovery-private/stage7-config.json
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out the exact recovery control revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Download exact current attempt request context
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-release-reconciliation-recovery-request-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .stage7
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(node --version)" = "v${NODE_VERSION}"
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Capture the exact protected environment approval response
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/approvals" > .stage7/recovery-private/recovery-review-response.json
+          node scripts/stage7/release-reconciliation-recovery-cli.mjs capture-approval \
+            --request .stage7/recovery-private/recovery-request.json \
+            --review-response .stage7/recovery-private/recovery-review-response.json \
+            --output .stage7/recovery-private/recovery-approval.json
+      - name: Derive the exact approved recovery session policy
+        id: recovery-session-policy
+        run: |
+          set -euo pipefail
+          policy="$(jq -cer '.recoveryRoleAuthority.sessionPolicy' .stage7/recovery-private/recovery-request.json)"
+          test -n "${policy}"
+          printf 'policy=%s\n' "${policy}" >> "${GITHUB_OUTPUT}"
+      - name: Assume the dedicated recovery role with the approved exact session policy
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          inline-session-policy: ${{ steps.recovery-session-policy.outputs.policy }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-reconciliation-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ env.STAGE7_RELEASE_RECONCILIATION_RECOVERY_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Capture and compare the dedicated recovery role before any SSM access
+        run: |
+          set -euo pipefail
+          node scripts/stage7/release-reconciliation-recovery-cli.mjs capture-role-authority \
+            --request .stage7/recovery-private/recovery-request.json \
+            --output .stage7/recovery-private/live-recovery-role-effective-permissions.json \
+            --role-audit-output .stage7/recovery-private/live-recovery-role-audit.json
+      - name: Create the exact current recovery actor after live IAM equality
+        run: |
+          node scripts/stage7/release-reconciliation-recovery-cli.mjs create-actor \
+            --intent .stage7/recovery-private/release-reconciliation-intent.json \
+            --request .stage7/recovery-private/recovery-request.json \
+            --approval .stage7/recovery-private/recovery-approval.json \
+            --live-recovery-role-effective-permissions .stage7/recovery-private/live-recovery-role-effective-permissions.json \
+            --output .stage7/recovery-private/recovery-actor.json
+      - name: Probe terminal before any recovery mutation
+        if: ${{ inputs.mode == 'RECOVER_AND_CLOSE' }}
+        id: probe
+        run: |
+          set -euo pipefail
+          node scripts/stage7/release-reconciliation-recovery-cli.mjs inspect \
+            --request .stage7/recovery-private/recovery-request.json \
+            --approval .stage7/recovery-private/recovery-approval.json \
+            --live-recovery-role-effective-permissions .stage7/recovery-private/live-recovery-role-effective-permissions.json \
+            --actor-output .stage7/recovery-private/recovery-actor.json \
+            --intent-output .stage7/recovery-private/release-reconciliation-intent.json \
+            --owner-output .stage7/recovery-private/recovery-owner.json \
+            --probe-output .stage7/recovery-private/recovery-probe.json
+          status="$(jq -er '.status' .stage7/recovery-private/recovery-probe.json)"
+          case "${status}" in TERMINAL_ABSENT|TERMINAL_PRESENT) ;; *) exit 1 ;; esac
+          printf 'status=%s\n' "${status}" >> "${GITHUB_OUTPUT}"
+      - name: Resume durable terminal without rollback or Put
+        if: ${{ inputs.mode == 'RECOVER_AND_CLOSE' && steps.probe.outputs.status == 'TERMINAL_PRESENT' }}
+        run: node scripts/stage7/release-reconciliation-recovery-cli.mjs resume-terminal --intent .stage7/recovery-private/release-reconciliation-intent.json --actor .stage7/recovery-private/recovery-actor.json --receipt-output .stage7/recovery-private/release-reconciliation-receipt.json --outcome-output .stage7/recovery-private/release-reconciliation-recovery-outcome.json
+      - name: Converge forward to candidate N only
+        if: ${{ inputs.mode == 'RECOVER_AND_CLOSE' && steps.probe.outputs.status == 'TERMINAL_ABSENT' }}
+        run: |
+          set -euo pipefail
+          mkdir -p .stage7/recovery-private/forward
+          node scripts/stage7/release-reconciliation-recovery-cli.mjs converge-forward \
+            --intent .stage7/recovery-private/release-reconciliation-intent.json \
+            --actor .stage7/recovery-private/recovery-actor.json \
+            --app .stage7/candidate/iac \
+            --manifest .stage7/candidate-manifest/candidate-manifest.json \
+            --previous-manifest .stage7/previous/previous-release-manifest.json \
+            --previous-api-contract-evidence .stage7/previous/previous-api-contract-evidence.json \
+            --previous-pending-evidence .stage7/previous/previous-pending-evidence.json \
+            --previous-smoke-evidence .stage7/previous/previous-smoke-evidence.json \
+            --candidate-record .stage7/recovery-probe/versioned-rollback-candidate.json \
+            --approval .stage7/approval/approval.json \
+            --approved-plan .stage7/infra-diff/infra-diff.json \
+            --deployment-evidence .stage7/web/web.json \
+            --aws-auth .stage7/aws-auth/aws-auth.json \
+            --journal-role-effective-permissions .stage7/aws-auth/stage7-release-journal-role-effective-permissions.json \
+            --transition-output .stage7/recovery-private/forward/transition.json \
+            --convergence-output .stage7/recovery-private/forward/convergence.json
+      - name: Assume read-only role for fresh post-convergence proof
+        if: ${{ inputs.mode == 'RECOVER_AND_CLOSE' && steps.probe.outputs.status == 'TERMINAL_ABSENT' }}
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 900
+          role-session-name: e7-reconciliation-recovery-read-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Capture fresh drift and actor-bound smoke under read authority
+        if: ${{ inputs.mode == 'RECOVER_AND_CLOSE' && steps.probe.outputs.status == 'TERMINAL_ABSENT' }}
+        env:
+          STAGE7_EVIDENCE_ROOT: .stage7/recovery-private/forward/fresh
+        run: |
+          set -euo pipefail
+          mkdir -p "${STAGE7_EVIDENCE_ROOT}"
+          pnpm release:verify:drift -- \
+            --scope full \
+            --versioned-update \
+            --app .stage7/candidate/iac \
+            --manifest .stage7/candidate-manifest/candidate-manifest.json \
+            --previous-manifest .stage7/previous/previous-release-manifest.json \
+            --previous-api-contract-evidence .stage7/previous/previous-api-contract-evidence.json \
+            --previous-pending-evidence .stage7/previous/previous-pending-evidence.json \
+            --previous-smoke-evidence .stage7/previous/previous-smoke-evidence.json \
+            --reconciliation-intent .stage7/recovery-private/release-reconciliation-intent.json \
+            --reconciliation-recovery-actor .stage7/recovery-private/recovery-actor.json
+          source_drift=output/evidence/runtime/stage-7/drift.json
+          target_drift="${STAGE7_EVIDENCE_ROOT}/drift.json"
+          test -s "${source_drift}"
+          test ! -e "${target_drift}"
+          cp -- "${source_drift}" "${target_drift}"
+          cmp --silent "${source_drift}" "${target_drift}"
+          pnpm release:smoke -- --scope full --reconciliation-intent .stage7/recovery-private/release-reconciliation-intent.json --reconciliation-convergence .stage7/recovery-private/forward/convergence.json --reconciliation-recovery-actor .stage7/recovery-private/recovery-actor.json --external-authorization-evidence .stage7/external-authorization/external-authorization.json --previous-manifest .stage7/previous/previous-release-manifest.json --candidate-record .stage7/recovery-probe/versioned-rollback-candidate.json --manifest .stage7/candidate-manifest/candidate-manifest.json --evidence "${STAGE7_EVIDENCE_ROOT}/smoke.json"
+      - name: Re-assume recovery role to seal fresh proofs and terminal
+        if: ${{ inputs.mode == 'RECOVER_AND_CLOSE' && steps.probe.outputs.status == 'TERMINAL_ABSENT' }}
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          inline-session-policy: ${{ steps.recovery-session-policy.outputs.policy }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 900
+          role-session-name: e7-reconciliation-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ env.STAGE7_RELEASE_RECONCILIATION_RECOVERY_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Re-capture and compare recovery role immediately before terminal Put
+        if: ${{ inputs.mode == 'RECOVER_AND_CLOSE' && steps.probe.outputs.status == 'TERMINAL_ABSENT' }}
+        run: |
+          set -euo pipefail
+          node scripts/stage7/release-reconciliation-recovery-cli.mjs capture-role-authority \
+            --request .stage7/recovery-private/recovery-request.json \
+            --output .stage7/recovery-private/live-finalize-recovery-role-effective-permissions.json \
+            --role-audit-output .stage7/recovery-private/live-finalize-recovery-role-audit.json
+          node scripts/stage7/release-reconciliation-recovery-cli.mjs verify-live-role-authority \
+            --request .stage7/recovery-private/recovery-request.json \
+            --actor .stage7/recovery-private/recovery-actor.json \
+            --live-recovery-role-effective-permissions .stage7/recovery-private/live-finalize-recovery-role-effective-permissions.json
+      - name: Finalize forward recovery with fresh actor-bound proof
+        if: ${{ inputs.mode == 'RECOVER_AND_CLOSE' && steps.probe.outputs.status == 'TERMINAL_ABSENT' }}
+        run: node scripts/stage7/release-reconciliation-recovery-cli.mjs finalize-forward --intent .stage7/recovery-private/release-reconciliation-intent.json --actor .stage7/recovery-private/recovery-actor.json --convergence .stage7/recovery-private/forward/convergence.json --drift-evidence .stage7/recovery-private/forward/fresh/drift.json --smoke-evidence .stage7/recovery-private/forward/fresh/smoke.json --receipt-output .stage7/recovery-private/release-reconciliation-receipt.json --outcome-output .stage7/recovery-private/release-reconciliation-recovery-outcome.json
+      - name: Preserve exact raw SSM authority before deletion
+        if: ${{ inputs.mode == 'RECOVER_AND_CLOSE' }}
+        run: |
+          set -euo pipefail
+          node scripts/stage7/release-reconciliation-recovery-cli.mjs snapshot --outcome .stage7/recovery-private/release-reconciliation-recovery-outcome.json --output .stage7/recovery-private/release-reconciliation-recovery-journal-snapshot.json
+          mkdir -p .stage7/recovery-preservation
+          cp .stage7/recovery-private/release-reconciliation-intent.json .stage7/recovery-preservation/release-reconciliation-intent.json
+          cp .stage7/recovery-private/release-reconciliation-receipt.json .stage7/recovery-preservation/release-reconciliation-receipt.json
+          cp .stage7/recovery-private/release-reconciliation-recovery-outcome.json .stage7/recovery-preservation/release-reconciliation-recovery-outcome.json
+          cp .stage7/recovery-private/release-reconciliation-recovery-journal-snapshot.json .stage7/recovery-preservation/release-reconciliation-recovery-journal-snapshot.json
+          cp .stage7/recovery-private/live-recovery-role-effective-permissions.json .stage7/recovery-preservation/stage7-release-reconciliation-recovery-role-effective-permissions.json
+          node scripts/stage7/release-reconciliation-recovery-cli.mjs create-preservation-index --intent .stage7/recovery-preservation/release-reconciliation-intent.json --receipt .stage7/recovery-preservation/release-reconciliation-receipt.json --outcome .stage7/recovery-preservation/release-reconciliation-recovery-outcome.json --snapshot .stage7/recovery-preservation/release-reconciliation-recovery-journal-snapshot.json --recovery-role-effective-permissions .stage7/recovery-preservation/stage7-release-reconciliation-recovery-role-effective-permissions.json --output .stage7/recovery-preservation/release-reconciliation-recovery-preservation-index.json
+      - name: Scan the exact raw preservation allowlist before upload
+        if: ${{ inputs.mode == 'RECOVER_AND_CLOSE' }}
+        run: pnpm release:scan -- --pre-upload .stage7/recovery-preservation/release-reconciliation-intent.json .stage7/recovery-preservation/release-reconciliation-receipt.json .stage7/recovery-preservation/release-reconciliation-recovery-outcome.json .stage7/recovery-preservation/release-reconciliation-recovery-journal-snapshot.json .stage7/recovery-preservation/stage7-release-reconciliation-recovery-role-effective-permissions.json .stage7/recovery-preservation/release-reconciliation-recovery-preservation-index.json
+      - name: Upload attempt-suffixed raw preservation authority
+        if: ${{ inputs.mode == 'RECOVER_AND_CLOSE' }}
+        id: preservation-upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-release-reconciliation-recovery-preservation-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          include-hidden-files: true
+          path: |
+            .stage7/recovery-preservation/release-reconciliation-intent.json
+            .stage7/recovery-preservation/release-reconciliation-receipt.json
+            .stage7/recovery-preservation/release-reconciliation-recovery-outcome.json
+            .stage7/recovery-preservation/release-reconciliation-recovery-journal-snapshot.json
+            .stage7/recovery-preservation/stage7-release-reconciliation-recovery-role-effective-permissions.json
+            .stage7/recovery-preservation/release-reconciliation-recovery-preservation-index.json
+          retention-days: 30
+      - name: Requery and reopen the exact preservation ZIP by artifact ID
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ inputs.mode }}
+          PRESERVED_ARTIFACT_ID: ${{ inputs.preserved_artifact_id }}
+          PRESERVED_ARTIFACT_RUN_ID: ${{ inputs.preserved_artifact_run_id }}
+          UPLOADED_ARTIFACT_ID: ${{ steps.preservation-upload.outputs.artifact-id }}
+        run: |
+          set -euo pipefail
+          if test "${MODE}" = 'RECOVER_AND_CLOSE'; then
+            artifact_id="${UPLOADED_ARTIFACT_ID}"
+            artifact_run_id="${GITHUB_RUN_ID}"
+          else
+            artifact_id="${PRESERVED_ARTIFACT_ID}"
+            artifact_run_id="${PRESERVED_ARTIFACT_RUN_ID}"
+          fi
+          [[ "${artifact_id}" =~ ^[1-9][0-9]{0,19}$ ]]
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}" > .stage7/recovery-private/preservation-artifact-metadata.json
+          test ! -e .stage7/recovery-private/preservation-artifact.zip
+          test ! -e .stage7/recovery-preservation-reopened
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > .stage7/recovery-private/preservation-artifact.zip
+          expected_digest="$(jq -er '.digest' .stage7/recovery-private/preservation-artifact-metadata.json)"
+          actual_digest="sha256:$(sha256sum .stage7/recovery-private/preservation-artifact.zip | cut -d ' ' -f 1)"
+          test "${actual_digest}" = "${expected_digest}"
+          node scripts/stage7/release-reconciliation-recovery-cli.mjs extract-preservation-archive --archive .stage7/recovery-private/preservation-artifact.zip --output-directory .stage7/recovery-preservation-reopened
+          node scripts/stage7/release-reconciliation-recovery-cli.mjs create-artifact-binding --preservation-index .stage7/recovery-preservation-reopened/release-reconciliation-recovery-preservation-index.json --metadata .stage7/recovery-private/preservation-artifact-metadata.json --archive .stage7/recovery-private/preservation-artifact.zip --expected-run-id "${artifact_run_id}" --output .stage7/recovery-private/preservation-artifact-binding.json
+      - name: Assume the separately audited journal role for deletion only
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          inline-session-policy: >-
+            {"Version":"2012-10-17","Statement":[{"Sid":"AuditOnlyCleanupRole","Effect":"Allow","Action":["iam:GetRole","iam:GetRolePolicy","iam:ListAttachedRolePolicies","iam:ListRolePolicies"],"Resource":"${{ env.STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN }}"},{"Sid":"AuditOnlyCleanupBoundary","Effect":"Allow","Action":["iam:GetPolicy","iam:GetPolicyVersion"],"Resource":"${{ env.STAGE7_RELEASE_JOURNAL_CLEANUP_PERMISSIONS_BOUNDARY_ARN }}"},{"Sid":"ReadExactRecoveryAndCompletionGuards","Effect":"Allow","Action":["ssm:GetParameter","ssm:GetParametersByPath"],"Resource":["arn:aws:ssm:${{ env.STAGE7_AWS_REGION }}:${{ env.STAGE7_AWS_ACCOUNT_ID }}:parameter/checkout/stage7/rollback/${{ inputs.candidate_sha }}","arn:aws:ssm:${{ env.STAGE7_AWS_REGION }}:${{ env.STAGE7_AWS_ACCOUNT_ID }}:parameter/checkout/stage7/rollback/${{ inputs.candidate_sha }}/*","arn:aws:ssm:${{ env.STAGE7_AWS_REGION }}:${{ env.STAGE7_AWS_ACCOUNT_ID }}:parameter/checkout/stage7/release-fence/${{ inputs.candidate_sha }}","arn:aws:ssm:${{ env.STAGE7_AWS_REGION }}:${{ env.STAGE7_AWS_ACCOUNT_ID }}:parameter/checkout/stage7/release-fence/${{ inputs.candidate_sha }}/*","arn:aws:ssm:${{ env.STAGE7_AWS_REGION }}:${{ env.STAGE7_AWS_ACCOUNT_ID }}:parameter/checkout/stage7/release-finalization/${{ inputs.candidate_sha }}","arn:aws:ssm:${{ env.STAGE7_AWS_REGION }}:${{ env.STAGE7_AWS_ACCOUNT_ID }}:parameter/checkout/stage7/release-finalization/${{ inputs.candidate_sha }}/*"]},{"Sid":"DeleteOnlyOriginalRecoveryJournal","Effect":"Allow","Action":"ssm:DeleteParameter","Resource":"arn:aws:ssm:${{ env.STAGE7_AWS_REGION }}:${{ env.STAGE7_AWS_ACCOUNT_ID }}:parameter/checkout/stage7/rollback/${{ inputs.candidate_sha }}/release-reconciliation/${{ inputs.original_run_id }}/*"},{"Sid":"ReadCallerIdentity","Effect":"Allow","Action":"sts:GetCallerIdentity","Resource":"*"}]}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 900
+          role-session-name: e7-reconciliation-recovery-cleanup-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ env.STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Re-capture and compare cleanup role immediately before DeleteParameter
+        run: |
+          set -euo pipefail
+          node scripts/stage7/release-successor-cli.mjs capture-journal-role-authority \
+            --journal-role-arn "${STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN}" \
+            --permissions-boundary-arn "${STAGE7_RELEASE_JOURNAL_CLEANUP_PERMISSIONS_BOUNDARY_ARN}" \
+            --aws-region "${STAGE7_AWS_REGION}" \
+            --output .stage7/recovery-private/live-cleanup-role-effective-permissions.json \
+            --get-role-output .stage7/recovery-private/live-cleanup-role-audit.json
+      - name: Delete only the fully preserved journal and prove residual zero
+        run: node scripts/stage7/release-reconciliation-recovery-cli.mjs cleanup --actor .stage7/recovery-private/recovery-actor.json --intent .stage7/recovery-preservation-reopened/release-reconciliation-intent.json --receipt .stage7/recovery-preservation-reopened/release-reconciliation-receipt.json --outcome .stage7/recovery-preservation-reopened/release-reconciliation-recovery-outcome.json --snapshot .stage7/recovery-preservation-reopened/release-reconciliation-recovery-journal-snapshot.json --recovery-role-effective-permissions .stage7/recovery-preservation-reopened/stage7-release-reconciliation-recovery-role-effective-permissions.json --preservation-index .stage7/recovery-preservation-reopened/release-reconciliation-recovery-preservation-index.json --preservation-artifact-binding .stage7/recovery-private/preservation-artifact-binding.json --frozen-cleanup-role-effective-permissions .stage7/aws-auth/stage7-release-journal-role-effective-permissions.json --live-cleanup-role-effective-permissions .stage7/recovery-private/live-cleanup-role-effective-permissions.json --output .stage7/recovery-private/release-reconciliation-recovery-closure.json
+      - name: Scan the residual-zero closure before upload
+        run: pnpm release:scan -- --pre-upload .stage7/recovery-private/release-reconciliation-recovery-closure.json .stage7/aws-auth/stage7-release-journal-role-effective-permissions.json .stage7/recovery-private/live-cleanup-role-effective-permissions.json .stage7/recovery-private/live-cleanup-role-audit.json
+      - name: Upload attempt-suffixed residual-zero closure
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-release-reconciliation-recovery-closure-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          include-hidden-files: true
+          path: |
+            .stage7/recovery-private/release-reconciliation-recovery-closure.json
+            .stage7/aws-auth/stage7-release-journal-role-effective-permissions.json
+            .stage7/recovery-private/live-cleanup-role-effective-permissions.json
+            .stage7/recovery-private/live-cleanup-role-audit.json
+          retention-days: 30

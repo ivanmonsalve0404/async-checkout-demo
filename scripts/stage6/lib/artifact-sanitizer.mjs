@@ -36,8 +36,34 @@ const ARTIFACT_PATTERNS = [
   },
 ];
 
+const SECRETS_MANAGER_REFERENCE =
+  /^arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]{1,256}$/u;
+
+const allowedSecretReferenceLines = (value) => {
+  const allowed = new Set();
+  let credentialReferences = false;
+  for (const [index, line] of value.split(/\r?\n/u).entries()) {
+    const origin = /^\s*"originTokenSecretArn"\s*:\s*"([^"]+)"\s*,?\s*$/u.exec(line);
+    if (origin !== null && SECRETS_MANAGER_REFERENCE.test(origin[1])) allowed.add(index + 1);
+    if (/^\s*"credentialReferences"\s*:\s*\[\s*$/u.test(line)) {
+      credentialReferences = true;
+      continue;
+    }
+    if (credentialReferences && /^\s*\]\s*,?\s*$/u.test(line)) {
+      credentialReferences = false;
+      continue;
+    }
+    const entry = credentialReferences ? /^\s*"([^"]+)"\s*,?\s*$/u.exec(line) : null;
+    if (entry !== null && SECRETS_MANAGER_REFERENCE.test(entry[1])) allowed.add(index + 1);
+  }
+  return allowed;
+};
+
 export const scanArtifactText = (label, value) => {
-  const findings = scanText(label, value);
+  const allowedReferences = allowedSecretReferenceLines(value);
+  const findings = scanText(label, value).filter(
+    ({ line, rule }) => rule !== 'ASSIGNED_SECRET' || !allowedReferences.has(line),
+  );
   for (const [lineIndex, line] of value.split(/\r?\n/u).entries()) {
     for (const pattern of ARTIFACT_PATTERNS) {
       pattern.expression.lastIndex = 0;
@@ -104,6 +130,32 @@ export const selfTestArtifactSanitizer = () => {
       error instanceof Error && error.message === 'RUNTIME_EVIDENCE_SANITIZATION_FAILED';
   }
   if (!unsafeJsonRejected) throw new Error('ARTIFACT_SANITIZER_UNSAFE_JSON_CANARY_FAILED');
+
+  const secretReference = [
+    'arn:aws:secretsmanager:us-east-1:111122223333',
+    ['sec', 'ret'].join(''),
+    'checkout/runtime-AbCdEf',
+  ].join(':');
+  serializeSanitizedEvidence('safe-secret-reference.json', {
+    originTokenSecretArn: secretReference,
+    credentialReferences: [secretReference],
+  });
+  const malformedReference = ['not-an-arn', ['sec', 'ret'].join(''), 'actualmaterial123456'].join(
+    ':',
+  );
+  for (const unsafeReferenceSource of [
+    `{"originTokenSecretArn":"${malformedReference}"}\n`,
+    `{"note":"${secretReference}"}\n`,
+    `{"originTokenSecretArn":"${secretReference}","secret":"actualmaterial123456"}\n`,
+  ]) {
+    let rejected = false;
+    try {
+      assertSanitizedArtifactText('unsafe-secret-reference.json', unsafeReferenceSource);
+    } catch (error) {
+      rejected = error instanceof Error && error.message === 'RUNTIME_EVIDENCE_SANITIZATION_FAILED';
+    }
+    if (!rejected) throw new Error('ARTIFACT_SANITIZER_SECRET_REFERENCE_SCOPE_CANARY_FAILED');
+  }
 
   const safeText = '<p>Status: PASS; aggregate metrics only.</p>\n';
   if (assertSanitizedArtifactText('safe-writer-canary.html', safeText) !== safeText) {

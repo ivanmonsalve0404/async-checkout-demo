@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ivanmonsalve0404/async-checkout-demo/schemas/stage7/release-successor-source-provenance.schema.json",
+  "title": "Stage 7 target-independent release-successor source provenance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "status",
+    "artifactName",
+    "repository",
+    "workflowPath",
+    "sourceEvent",
+    "sourceRef",
+    "sourceRunId",
+    "sourceRunAttempt",
+    "headSha",
+    "releaseId",
+    "releaseTag",
+    "sourceKind",
+    "predecessorManifestSha256",
+    "candidateRecordSha256",
+    "rollbackRehearsalSha256",
+    "journalLifecycleSha256",
+    "reconciliationJournalAuthority",
+    "reconciliationJournalAuthoritySha256",
+    "reconciliationEvidenceBindings",
+    "releaseFenceAuthoritySetSha256",
+    "journalSnapshotBinding",
+    "releaseEvidenceSetSha256",
+    "finalDisableEvidenceSha256",
+    "files",
+    "canonicalSha256ByPath",
+    "artifactOriginsByPath",
+    "bundleSha256",
+    "capturedAtUtc",
+    "externalRequests",
+    "mutationsPerformed",
+    "containsSensitiveData",
+    "provenanceSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 7 },
+    "kind": { "const": "RELEASE_SUCCESSOR_SOURCE_PROVENANCE" },
+    "status": { "const": "PASS" },
+    "artifactName": { "const": "stage7-release-successor-source" },
+    "repository": { "const": "ivanmonsalve0404/async-checkout-demo" },
+    "workflowPath": { "const": ".github/workflows/release.yml" },
+    "sourceEvent": { "const": "workflow_dispatch" },
+    "sourceRef": { "const": "refs/heads/master" },
+    "sourceRunId": { "$ref": "#/$defs/runId" },
+    "sourceRunAttempt": { "const": 1 },
+    "headSha": { "$ref": "#/$defs/sha" },
+    "releaseId": { "$ref": "#/$defs/releaseId" },
+    "releaseTag": {
+      "type": "string",
+      "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-rc\\.[1-9][0-9]*)?$"
+    },
+    "sourceKind": { "const": "RELEASE_SUCCESSOR_POST_SUCCESS" },
+    "predecessorManifestSha256": { "$ref": "#/$defs/sha256" },
+    "candidateRecordSha256": { "$ref": "#/$defs/sha256" },
+    "rollbackRehearsalSha256": { "$ref": "#/$defs/sha256" },
+    "journalLifecycleSha256": { "$ref": "#/$defs/sha256" },
+    "reconciliationJournalAuthority": { "$ref": "#/$defs/reconciliationAuthority" },
+    "reconciliationJournalAuthoritySha256": { "$ref": "#/$defs/sha256" },
+    "reconciliationEvidenceBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rollbackCheck", "rollbackResilience", "preFenceGate"],
+      "properties": {
+        "rollbackCheck": { "$ref": "#/$defs/receiptBinding" },
+        "rollbackResilience": { "$ref": "#/$defs/receiptBinding" },
+        "preFenceGate": { "$ref": "#/$defs/gateBinding" }
+      }
+    },
+    "releaseFenceAuthoritySetSha256": { "$ref": "#/$defs/sha256" },
+    "journalSnapshotBinding": { "$ref": "#/$defs/journalSnapshotBinding" },
+    "releaseEvidenceSetSha256": { "$ref": "#/$defs/sha256" },
+    "finalDisableEvidenceSha256": { "$ref": "#/$defs/sha256" },
+    "files": {
+      "type": "array",
+      "minItems": 55,
+      "maxItems": 55,
+      "items": { "$ref": "#/$defs/rawFile" }
+    },
+    "canonicalSha256ByPath": {
+      "type": "object",
+      "minProperties": 54,
+      "maxProperties": 54,
+      "additionalProperties": { "$ref": "#/$defs/sha256" }
+    },
+    "artifactOriginsByPath": {
+      "type": "object",
+      "minProperties": 55,
+      "maxProperties": 55,
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "bundleSha256": { "$ref": "#/$defs/sha256" },
+    "capturedAtUtc": { "type": "string", "format": "date-time" },
+    "externalRequests": { "type": "integer", "minimum": 3 },
+    "mutationsPerformed": { "const": 0 },
+    "containsSensitiveData": { "const": false },
+    "provenanceSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runId": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+    "releaseId": {
+      "type": "string",
+      "pattern": "^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$"
+    },
+    "reconciliationAuthority": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "stage",
+        "kind",
+        "status",
+        "source",
+        "cleanupParameterNames",
+        "cleanupParameterCount",
+        "requiredResidualCount",
+        "containsSensitiveData",
+        "journalAuthoritySha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "stage": { "const": 7 },
+        "kind": { "const": "STAGE7_RELEASE_RECONCILIATION_JOURNAL_AUTHORITY" },
+        "status": { "const": "PRESERVE_THEN_DELETE_EXACT_SET" },
+        "source": { "type": "object" },
+        "cleanupParameterNames": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 155,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^/checkout/stage7/rollback/" }
+        },
+        "cleanupParameterCount": { "type": "integer", "minimum": 4, "maximum": 155 },
+        "requiredResidualCount": { "const": 0 },
+        "containsSensitiveData": { "const": false },
+        "journalAuthoritySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "artifactName", "rawSha256", "canonicalSha256", "bytes"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "artifactName": { "const": "stage7-release-reconciliation" },
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 2 }
+      }
+    },
+    "receiptBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "artifactName",
+        "rawSha256",
+        "canonicalSha256",
+        "bytes",
+        "receiptSha256"
+      ],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "artifactName": { "const": "stage7-release-reconciliation" },
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 2 },
+        "receiptSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "gateBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "artifactName", "rawSha256", "canonicalSha256", "bytes", "gateSha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "artifactName": { "const": "stage7-release-reconciliation" },
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 2 },
+        "gateSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "journalSnapshotBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "rawSha256",
+        "canonicalSha256",
+        "bytes",
+        "snapshotSha256",
+        "targetNameSetSha256",
+        "entryCount"
+      ],
+      "properties": {
+        "path": { "const": "release-reconciliation-journal-snapshot.json" },
+        "rawSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 2 },
+        "snapshotSha256": { "$ref": "#/$defs/sha256" },
+        "targetNameSetSha256": { "$ref": "#/$defs/sha256" },
+        "entryCount": { "type": "integer", "minimum": 3 }
+      }
+    },
+    "rawFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^release-successor-.+\\.(?:json|txt)$" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 16777216 }
+      }
+    }
+  }
+}

@@ -1,0 +1,593 @@
+name: Stage 7 Closed Baseline Establishment
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact 40-character Stage 6 release-candidate commit on master
+        required: true
+        type: string
+      release_id:
+        description: Closed baseline identifier (rel-YYYYMMDD-HHMM-sha7)
+        required: true
+        type: string
+      baseline_version:
+        description: Internal N-1 baseline version (v0.0.0-rc.N); no tag is created
+        required: true
+        type: string
+      config_sha256:
+        description: Raw SHA-256 of the approved STAGE7_BASELINE_CONFIG_B64 payload
+        required: true
+        type: string
+      stage6_run_id:
+        description: Exact successful Stage 6 workflow run containing verification-reports
+        required: true
+        type: string
+      stage6_manifest_sha256:
+        description: Raw SHA-256 of output/evidence/stage-6/verification-manifest.json
+        required: true
+        type: string
+      stage6_artifact_id:
+        description: Exact GitHub artifact ID of verification-reports in the Stage 6 run
+        required: true
+        type: string
+      stage6_artifact_digest:
+        description: Exact GitHub REST digest of verification-reports in sha256:hex form
+        required: true
+        type: string
+      confirm_closed_baseline:
+        description: Confirm FULL_RELEASE_BASELINE_CLOSED with no public release effects
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage7-assessment-release-baseline
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  AWS_EC2_METADATA_DISABLED: 'true'
+  NODE_VERSION: '24.19.0'
+  PNPM_VERSION: '11.19.0'
+  STAGE7_AWS_ACCOUNT_ID: ${{ vars.STAGE7_AWS_ACCOUNT_ID }}
+  STAGE7_AWS_REGION: ${{ vars.STAGE7_AWS_REGION }}
+  STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+  STAGE7_ENVIRONMENT: assessment-release
+  STAGE7_RELEASE_ID: ${{ inputs.release_id }}
+
+jobs:
+  build-freeze:
+    name: 01 Build once and freeze a disabled baseline
+    if: >-
+      github.run_attempt == 1 &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/master' &&
+      github.repository == 'ivanmonsalve0404/async-checkout-demo' &&
+      inputs.confirm_closed_baseline == true
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out the exact candidate without persisted credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the exact Stage 6 evidence source
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: verification-reports
+          path: .stage7/stage6
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.stage6_run_id }}
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile
+      - name: Validate the closed baseline identity and authorization input
+        env:
+          BASELINE_VERSION: ${{ inputs.baseline_version }}
+          CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE6_MANIFEST_SHA256: ${{ inputs.stage6_manifest_sha256 }}
+          STAGE6_RUN_ID: ${{ inputs.stage6_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "${STAGE7_CANDIDATE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${STAGE7_RELEASE_ID}" =~ ^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$ ]]
+          [[ "${BASELINE_VERSION}" =~ ^v0\.0\.0-rc\.[1-9][0-9]*$ ]]
+          [[ "${CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${STAGE6_MANIFEST_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${STAGE6_RUN_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
+          test "${STAGE7_RELEASE_ID##*-}" = "${STAGE7_CANDIDATE_SHA:0:7}"
+          test "$(git rev-parse HEAD)" = "${STAGE7_CANDIDATE_SHA}"
+          test "$(git rev-parse origin/master)" = "${STAGE7_CANDIDATE_SHA}"
+          test "${GITHUB_SHA}" = "${STAGE7_CANDIDATE_SHA}"
+      - name: Materialize and validate the approved closed baseline config
+        env:
+          EXPECTED_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+          STAGE7_BASELINE_CONFIG_B64: ${{ vars.STAGE7_BASELINE_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${STAGE7_BASELINE_CONFIG_B64}"
+          umask 077
+          mkdir -p .stage7/freeze
+          printf '%s' "${STAGE7_BASELINE_CONFIG_B64}" | base64 --decode > .stage7/freeze/baseline-config.json
+          test "$(sha256sum .stage7/freeze/baseline-config.json | cut -d ' ' -f 1)" = "${EXPECTED_CONFIG_SHA256}"
+          pnpm release:baseline -- validate-config --config .stage7/freeze/baseline-config.json
+      - name: Build and synthesize once without AWS credentials or lookups
+        run: |
+          set -euo pipefail
+          test -z "${AWS_ACCESS_KEY_ID:-}"
+          test -z "${AWS_SECRET_ACCESS_KEY:-}"
+          test -z "${AWS_SESSION_TOKEN:-}"
+          pnpm build
+          pnpm release:build
+          pnpm release:baseline -- synth --config .stage7/freeze/baseline-config.json --candidate-sha "${STAGE7_CANDIDATE_SHA}" --release-id "${STAGE7_RELEASE_ID}" --output-directory output/release/build/iac
+      - name: Capture the exact local toolchain without contacting AWS APIs
+        run: |
+          set -euo pipefail
+          node --input-type=module -e "import { execFileSync } from 'node:child_process'; import { writeFileSync } from 'node:fs'; const cdk=execFileSync('./infra/node_modules/.bin/cdk',['--version'],{encoding:'utf8'}).match(/^[0-9]+\.[0-9]+\.[0-9]+/u)?.[0]; const aws=execFileSync('aws',['--version'],{encoding:'utf8'}).match(/aws-cli\/([0-9]+\.[0-9]+\.[0-9]+)/u)?.[1]; const value={node:process.version,packageManager:'pnpm@'+execFileSync('pnpm',['--version'],{encoding:'utf8'}).trim(),cdk,awsCli:aws}; if(Object.values(value).some(v=>!v))process.exit(2); writeFileSync('.stage7/freeze/baseline-toolchain.json',JSON.stringify(value,null,2)+'\n',{flag:'wx',mode:0o600});"
+      - name: Scan candidate artifacts before their immutable upload
+        run: pnpm release:scan -- --pre-upload output/release/build/api output/release/build/worker output/release/build/web output/release/build/iac output/release/build/public-config.json
+      - name: Preserve the immutable baseline candidate
+        id: baseline-candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-baseline-candidate
+          if-no-files-found: error
+          path: |
+            output/release/build/api/
+            output/release/build/worker/
+            output/release/build/web/
+            output/release/build/iac/
+            output/release/build/public-config.json
+          retention-days: 90
+      - name: Freeze the uploaded candidate and execute the pending compatibility producer
+        env:
+          BASELINE_VERSION: ${{ inputs.baseline_version }}
+          SOURCE_ARTIFACT_ID: ${{ steps.baseline-candidate.outputs.artifact-id }}
+          SOURCE_ARTIFACT_SHA256: ${{ steps.baseline-candidate.outputs.artifact-digest }}
+          STAGE6_MANIFEST_SHA256: ${{ inputs.stage6_manifest_sha256 }}
+          STAGE6_ARTIFACT_ID: ${{ inputs.stage6_artifact_id }}
+          STAGE6_ARTIFACT_DIGEST: ${{ inputs.stage6_artifact_digest }}
+          STAGE6_SOURCE_RUN_ID: ${{ inputs.stage6_run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          manifest=.stage7/stage6/output/evidence/stage-6/verification-manifest.json
+          test -f "${manifest}"
+          test "$(sha256sum "${manifest}" | cut -d ' ' -f 1)" = "${STAGE6_MANIFEST_SHA256}"
+          [[ "${SOURCE_ARTIFACT_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "${SOURCE_ARTIFACT_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${STAGE6_ARTIFACT_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "${STAGE6_ARTIFACT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          node scripts/stage7/stage6-source-provenance.mjs capture --repository "${GITHUB_REPOSITORY}" --run-id "${STAGE6_SOURCE_RUN_ID}" --artifact-id "${STAGE6_ARTIFACT_ID}" --artifact-digest "${STAGE6_ARTIFACT_DIGEST}" --manifest "${manifest}" --manifest-sha256 "${STAGE6_MANIFEST_SHA256}" --candidate-sha "${STAGE7_CANDIDATE_SHA}" --output .stage7/freeze/baseline-stage6-source-provenance.json
+          pnpm release:baseline -- freeze --config .stage7/freeze/baseline-config.json --stage6-manifest "${manifest}" --stage6-sha256 "${STAGE6_MANIFEST_SHA256}" --stage6-source-provenance .stage7/freeze/baseline-stage6-source-provenance.json --stage6-source-run-id "${STAGE6_SOURCE_RUN_ID}" --stage6-source-artifact-id "${STAGE6_ARTIFACT_ID}" --stage6-source-artifact-digest "${STAGE6_ARTIFACT_DIGEST}" --source-run-id "${GITHUB_RUN_ID}" --source-artifact-id "${SOURCE_ARTIFACT_ID}" --source-artifact-sha256 "${SOURCE_ARTIFACT_SHA256}" --source-artifact-path output/release/build --baseline-version "${BASELINE_VERSION}" --release-id "${STAGE7_RELEASE_ID}" --web output/release/build/web --api output/release/build/api --worker output/release/build/worker --iac output/release/build/iac --toolchain .stage7/freeze/baseline-toolchain.json --output .stage7/freeze/baseline-freeze.json
+          pnpm release:baseline -- pending-test --freeze .stage7/freeze/baseline-freeze.json --output .stage7/freeze/baseline-pending-evidence.json
+      - name: Preserve the sanitized closed baseline freeze
+        run: pnpm release:scan -- --pre-upload .stage7/freeze/baseline-config.json .stage7/freeze/baseline-freeze.json .stage7/freeze/baseline-pending-evidence.json .stage7/freeze/baseline-stage6-source-provenance.json
+      - name: Upload the sanitized closed baseline freeze
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-baseline-freeze
+          if-no-files-found: error
+          include-hidden-files: true
+          path: |
+            .stage7/freeze/baseline-config.json
+            .stage7/freeze/baseline-freeze.json
+            .stage7/freeze/baseline-pending-evidence.json
+            .stage7/freeze/baseline-stage6-source-provenance.json
+          retention-days: 90
+
+  plan:
+    name: 02 Read-only AWS preflight, IAM audit, and exact diff
+    if: ${{ github.run_attempt == 1 }}
+    needs: build-freeze
+    environment: assessment-release
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the exact candidate without persisted credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable baseline candidate
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-baseline-candidate
+          path: output/release/build
+      - name: Download the exact baseline freeze
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-baseline-freeze
+          path: .stage7/evidence
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Revalidate the immutable config and freeze before OIDC
+        run: |
+          set -euo pipefail
+          printf 'STAGE7_CONFIG=%s\n' "${GITHUB_WORKSPACE}/.stage7/evidence/baseline-config.json" >> "${GITHUB_ENV}"
+          pnpm release:baseline -- validate-config --config .stage7/evidence/baseline-config.json
+      - name: Assume only the allowlisted read role for plan and CDK lookup
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1800
+          role-session-name: e7-baseline-plan-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Audit exact IAM and bootstrap permissions without mutation
+        run: |
+          set -euo pipefail
+          mkdir -p .stage7/plan
+          pnpm release:preflight -- --scope baseline --aws-read --manifest .stage7/evidence/baseline-freeze.json --cloud-assembly output/release/build/iac --no-write --evidence .stage7/plan/baseline-iam.json
+      - name: Verify AWS resources, capacity, certificates, secret version, and cost guard
+        run: pnpm release:baseline -- preflight --config .stage7/evidence/baseline-config.json --freeze .stage7/evidence/baseline-freeze.json --output .stage7/plan/baseline-aws-preflight.json
+      - name: Produce the exact fail-closed baseline diff
+        run: pnpm release:baseline -- plan --config .stage7/evidence/baseline-config.json --freeze .stage7/evidence/baseline-freeze.json --iam .stage7/plan/baseline-iam.json --preflight .stage7/plan/baseline-aws-preflight.json --app output/release/build/iac --raw-diff .stage7/plan/baseline-infra-diff.txt --output .stage7/plan/baseline-plan.json
+      - name: Publish the exact protected-review confirmation
+        run: |
+          set -euo pipefail
+          diff_sha="$(sha256sum .stage7/plan/baseline-infra-diff.txt | cut -d ' ' -f 1)"
+          [[ "${diff_sha}" =~ ^[0-9a-f]{64}$ ]]
+          printf 'Approve assessment-release-baseline only after reviewing the diff with this exact comment: `STAGE7_IAM_DIFF_REVIEWED_SHA256=%s`\n' "${diff_sha}" >> "${GITHUB_STEP_SUMMARY}"
+      - name: Preserve the read-only baseline plan for protected review
+        run: pnpm release:scan -- --pre-upload .stage7/plan/baseline-iam.json .stage7/plan/baseline-aws-preflight.json .stage7/plan/baseline-infra-diff.txt .stage7/plan/baseline-plan.json
+      - name: Upload the read-only baseline plan for protected review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-baseline-plan
+          if-no-files-found: error
+          include-hidden-files: true
+          path: |
+            .stage7/plan/baseline-iam.json
+            .stage7/plan/baseline-aws-preflight.json
+            .stage7/plan/baseline-infra-diff.txt
+            .stage7/plan/baseline-plan.json
+          retention-days: 90
+
+  establish:
+    name: 03 Protected closed establishment, restricted smoke, and disable
+    if: ${{ github.run_attempt == 1 }}
+    needs: plan
+    environment: assessment-release-baseline
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      CONFIRM_BASELINE: ${{ inputs.confirm_closed_baseline && 'true' || 'false' }}
+      STAGE7_PROTECTED_ENVIRONMENT: assessment-release-baseline
+    outputs:
+      capture_artifact_id: ${{ steps.capture-chain-artifact.outputs.artifact-id }}
+      capture_artifact_digest: ${{ format('sha256:{0}', steps.capture-chain-artifact.outputs.artifact-digest) }}
+    steps:
+      - name: Check out the exact candidate without persisted credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable baseline candidate
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-baseline-candidate
+          path: output/release/build
+      - name: Download the exact baseline freeze
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-baseline-freeze
+          path: .stage7/evidence
+      - name: Download the exact approved baseline plan
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-baseline-plan
+          path: .stage7/plan
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+          printf 'STAGE7_CONFIG=%s\n' "${GITHUB_WORKSPACE}/.stage7/evidence/baseline-config.json" >> "${GITHUB_ENV}"
+      - name: Assume only the dedicated closed-baseline role
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 3600
+          role-session-name: e7-baseline-establish-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_BASELINE_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Capture the exact protected environment approval and IAM diff attestation
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STAGE7_PROTECTED_ENVIRONMENT: assessment-release-baseline
+        run: |
+          set -euo pipefail
+          mkdir -p .stage7/establish
+          pnpm release:github-approval -- --candidate-sha "${STAGE7_CANDIDATE_SHA}" --diff .stage7/plan/baseline-infra-diff.txt --environment assessment-release-baseline --evidence .stage7/establish/baseline-github-approval.json --release-id "${STAGE7_RELEASE_ID}" --repository "${GITHUB_REPOSITORY}" --run-attempt "${GITHUB_RUN_ATTEMPT}" --run-id "${GITHUB_RUN_ID}"
+          pnpm release:baseline -- approve --config .stage7/evidence/baseline-config.json --freeze .stage7/evidence/baseline-freeze.json --plan .stage7/plan/baseline-plan.json --github-approval .stage7/establish/baseline-github-approval.json --output .stage7/establish/baseline-approval.json
+      - name: Deploy or resume the exact four-stack prefix while publication remains disabled
+        id: deploy
+        env:
+          STAGE7_ALERT_EMAIL: ${{ secrets.STAGE7_ALERT_EMAIL }}
+        run: pnpm release:baseline -- deploy --config .stage7/evidence/baseline-config.json --freeze .stage7/evidence/baseline-freeze.json --preflight .stage7/plan/baseline-aws-preflight.json --iam .stage7/plan/baseline-iam.json --plan .stage7/plan/baseline-plan.json --approval .stage7/establish/baseline-approval.json --github-approval .stage7/establish/baseline-github-approval.json --raw-diff .stage7/plan/baseline-infra-diff.txt --app output/release/build/iac --output .stage7/establish/baseline-deployment.json
+      - name: Seed the synthetic catalog twice while all publication remains disabled
+        id: seed
+        run: pnpm release:baseline -- seed --config .stage7/evidence/baseline-config.json --freeze .stage7/evidence/baseline-freeze.json --preflight .stage7/plan/baseline-aws-preflight.json --iam .stage7/plan/baseline-iam.json --plan .stage7/plan/baseline-plan.json --approval .stage7/establish/baseline-approval.json --github-approval .stage7/establish/baseline-github-approval.json --raw-diff .stage7/plan/baseline-infra-diff.txt --deployment .stage7/establish/baseline-deployment.json --app output/release/build/iac --output .stage7/establish/baseline-seed.json
+      - name: Verify the exact confirmed notification subscription
+        id: notification
+        run: pnpm release:baseline -- notification --config .stage7/evidence/baseline-config.json --freeze .stage7/evidence/baseline-freeze.json --preflight .stage7/plan/baseline-aws-preflight.json --iam .stage7/plan/baseline-iam.json --plan .stage7/plan/baseline-plan.json --approval .stage7/establish/baseline-approval.json --github-approval .stage7/establish/baseline-github-approval.json --raw-diff .stage7/plan/baseline-infra-diff.txt --deployment .stage7/establish/baseline-deployment.json --app output/release/build/iac --output .stage7/establish/baseline-notification.json
+      - name: Enable only the signed-cookie viewer and origin-gated API mapping
+        id: activate
+        run: pnpm release:baseline -- activate --config .stage7/evidence/baseline-config.json --freeze .stage7/evidence/baseline-freeze.json --preflight .stage7/plan/baseline-aws-preflight.json --iam .stage7/plan/baseline-iam.json --plan .stage7/plan/baseline-plan.json --approval .stage7/establish/baseline-approval.json --github-approval .stage7/establish/baseline-github-approval.json --raw-diff .stage7/plan/baseline-infra-diff.txt --deployment .stage7/establish/baseline-deployment.json --notification .stage7/establish/baseline-notification.json --seed .stage7/establish/baseline-seed.json --app output/release/build/iac --output .stage7/establish/baseline-activation.json
+      - name: Materialize ephemeral signed-cookie probes without preserving them
+        env:
+          EXPIRED_COOKIE_B64: ${{ secrets.STAGE7_BASELINE_EXPIRED_SIGNED_COOKIE_B64 }}
+          VALID_COOKIE_B64: ${{ secrets.STAGE7_BASELINE_SIGNED_COOKIE_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${VALID_COOKIE_B64}"
+          test -n "${EXPIRED_COOKIE_B64}"
+          umask 077
+          mkdir -p .stage7/access
+          printf '%s' "${VALID_COOKIE_B64}" | base64 --decode > .stage7/access/valid-cookie.json
+          printf '%s' "${EXPIRED_COOKIE_B64}" | base64 --decode > .stage7/access/expired-cookie.json
+      - name: Execute the exact eight-request restricted smoke and compatibility checks
+        id: smoke
+        run: pnpm release:baseline -- smoke --config .stage7/evidence/baseline-config.json --freeze .stage7/evidence/baseline-freeze.json --preflight .stage7/plan/baseline-aws-preflight.json --iam .stage7/plan/baseline-iam.json --plan .stage7/plan/baseline-plan.json --approval .stage7/establish/baseline-approval.json --github-approval .stage7/establish/baseline-github-approval.json --raw-diff .stage7/plan/baseline-infra-diff.txt --deployment .stage7/establish/baseline-deployment.json --notification .stage7/establish/baseline-notification.json --activation .stage7/establish/baseline-activation.json --seed .stage7/establish/baseline-seed.json --valid-cookie .stage7/access/valid-cookie.json --expired-cookie .stage7/access/expired-cookie.json --pending .stage7/evidence/baseline-pending-evidence.json --app output/release/build/iac --output-directory .stage7/smoke
+      - name: Always return the baseline to disabled after any completed deployment
+        id: disable
+        if: ${{ always() && steps.deploy.outcome == 'success' }}
+        run: pnpm release:baseline -- disable --config .stage7/evidence/baseline-config.json --freeze .stage7/evidence/baseline-freeze.json --preflight .stage7/plan/baseline-aws-preflight.json --iam .stage7/plan/baseline-iam.json --plan .stage7/plan/baseline-plan.json --approval .stage7/establish/baseline-approval.json --github-approval .stage7/establish/baseline-github-approval.json --raw-diff .stage7/plan/baseline-infra-diff.txt --app output/release/build/iac --output .stage7/establish/baseline-disable.json
+      - name: Capture the complete N-1 chain only after normal disable
+        id: capture
+        if: ${{ steps.smoke.outcome == 'success' && steps.disable.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          rm -f .stage7/access/valid-cookie.json .stage7/access/expired-cookie.json
+          rmdir .stage7/access
+          mkdir -p .stage7/capture-input
+          cp .stage7/evidence/baseline-config.json .stage7/capture-input/baseline-config.json
+          cp .stage7/evidence/baseline-freeze.json .stage7/capture-input/baseline-freeze.json
+          cp .stage7/evidence/baseline-stage6-source-provenance.json .stage7/capture-input/baseline-stage6-source-provenance.json
+          cp .stage7/plan/baseline-aws-preflight.json .stage7/capture-input/baseline-aws-preflight.json
+          cp .stage7/plan/baseline-iam.json .stage7/capture-input/baseline-iam.json
+          cp .stage7/plan/baseline-infra-diff.txt .stage7/capture-input/baseline-infra-diff.txt
+          cp .stage7/plan/baseline-plan.json .stage7/capture-input/baseline-plan.json
+          cp .stage7/establish/baseline-github-approval.json .stage7/capture-input/baseline-github-approval.json
+          cp .stage7/establish/baseline-approval.json .stage7/capture-input/baseline-approval.json
+          cp .stage7/establish/baseline-deployment.json .stage7/capture-input/baseline-deployment.json
+          cp .stage7/establish/baseline-seed.json .stage7/capture-input/baseline-seed.json
+          cp .stage7/establish/baseline-notification.json .stage7/capture-input/baseline-notification.json
+          cp .stage7/establish/baseline-activation.json .stage7/capture-input/baseline-activation.json
+          cp .stage7/establish/baseline-disable.json .stage7/capture-input/baseline-disable.json
+          cp .stage7/smoke/*.json .stage7/capture-input/
+          pnpm release:baseline -- capture --config .stage7/evidence/baseline-config.json --freeze .stage7/evidence/baseline-freeze.json --preflight .stage7/plan/baseline-aws-preflight.json --iam .stage7/plan/baseline-iam.json --plan .stage7/plan/baseline-plan.json --approval .stage7/establish/baseline-approval.json --github-approval .stage7/establish/baseline-github-approval.json --raw-diff .stage7/plan/baseline-infra-diff.txt --deployment .stage7/establish/baseline-deployment.json --seed .stage7/establish/baseline-seed.json --notification .stage7/establish/baseline-notification.json --activation .stage7/establish/baseline-activation.json --disable .stage7/establish/baseline-disable.json --evidence-directory .stage7/capture-input --app output/release/build/iac --output .stage7/capture-input/stage7-baseline-capture.json
+      - name: Scan the closed capture chain before transport to finalization
+        run: |
+          set -euo pipefail
+          test ! -e .stage7/capture-input/valid-cookie.json
+          test ! -e .stage7/capture-input/expired-cookie.json
+          pnpm release:scan -- --pre-upload .stage7/capture-input
+      - name: Preserve the closed capture chain for post-recovery finalization
+        id: capture-chain-artifact
+        if: ${{ steps.capture.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-baseline-capture-chain
+          if-no-files-found: error
+          include-hidden-files: true
+          path: .stage7/capture-input/
+          retention-days: 90
+
+  ensure-disabled:
+    name: 04 Independent fail-closed publication recovery
+    if: ${{ always() && github.run_attempt == 1 && needs.build-freeze.result == 'success' }}
+    needs:
+      - build-freeze
+      - plan
+      - establish
+    environment: assessment-release-recovery
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      STAGE7_PROTECTED_ENVIRONMENT: assessment-release-recovery
+    outputs:
+      artifact_id: ${{ steps.recovery-artifact.outputs.artifact-id }}
+      artifact_digest: ${{ format('sha256:{0}', steps.recovery-artifact.outputs.artifact-digest) }}
+    steps:
+      - name: Check out the exact candidate without persisted credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the immutable baseline candidate
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-baseline-candidate
+          path: output/release/build
+      - name: Download the exact baseline freeze
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-baseline-freeze
+          path: .stage7/evidence
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+          mkdir -p .stage7/recovery
+      - name: Assume only the dedicated recovery role
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          allowed-account-ids: ${{ env.STAGE7_AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.STAGE7_AWS_REGION }}
+          mask-aws-account-id: true
+          output-credentials: false
+          role-duration-seconds: 1200
+          role-session-name: e7-baseline-recovery-${{ github.run_id }}
+          role-to-assume: ${{ vars.STAGE7_AWS_ROLLBACK_ROLE_ARN }}
+          unset-current-credentials: true
+      - name: Reassert and verify disabled API, web distribution, and scheduler state
+        run: pnpm release:baseline -- recover-disable --config .stage7/evidence/baseline-config.json --freeze .stage7/evidence/baseline-freeze.json --app output/release/build/iac --output .stage7/recovery/baseline-disable.json
+      - name: Scan the recovery evidence before upload
+        run: pnpm release:scan -- --pre-upload .stage7/recovery/baseline-disable.json
+      - name: Preserve the independent recovery evidence
+        id: recovery-artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-baseline-recovery
+          if-no-files-found: error
+          include-hidden-files: true
+          path: .stage7/recovery/baseline-disable.json
+          retention-days: 90
+
+  closeout:
+    name: 05 Closed-baseline handoff only
+    if: ${{ always() && github.run_attempt == 1 }}
+    needs:
+      - build-freeze
+      - plan
+      - establish
+      - ensure-disabled
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      artifact_id: ${{ steps.previous-release-artifact.outputs.artifact-id }}
+      artifact_digest: ${{ format('sha256:{0}', steps.previous-release-artifact.outputs.artifact-digest) }}
+      bundle_sha256: ${{ steps.bundle-metadata.outputs.bundle_sha256 }}
+    steps:
+      - name: Require every closed-baseline producer to succeed
+        env:
+          CAPTURE_ARTIFACT_DIGEST: ${{ needs.establish.outputs.capture_artifact_digest }}
+          CAPTURE_ARTIFACT_ID: ${{ needs.establish.outputs.capture_artifact_id }}
+          RECOVERY_ARTIFACT_DIGEST: ${{ needs.ensure-disabled.outputs.artifact_digest }}
+          RECOVERY_ARTIFACT_ID: ${{ needs.ensure-disabled.outputs.artifact_id }}
+        run: |
+          set -euo pipefail
+          test "${{ needs.build-freeze.result }}" = success
+          test "${{ needs.plan.result }}" = success
+          test "${{ needs.establish.result }}" = success
+          test "${{ needs.ensure-disabled.result }}" = success
+          [[ "${CAPTURE_ARTIFACT_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "${CAPTURE_ARTIFACT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${RECOVERY_ARTIFACT_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "${RECOVERY_ARTIFACT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+      - name: Check out the exact candidate without persisted credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download the exact closed capture chain
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-baseline-capture-chain
+          path: .stage7/capture-input
+      - name: Download the independent final-disable checkpoint
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: stage7-baseline-recovery
+          path: .stage7/recovery
+      - name: Set up the pinned Node.js runtime
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Activate the pinned package manager
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Finalize the immutable N-1 bundle after independent recovery
+        env:
+          RECOVERY_ARTIFACT_DIGEST: ${{ needs.ensure-disabled.outputs.artifact_digest }}
+          RECOVERY_ARTIFACT_ID: ${{ needs.ensure-disabled.outputs.artifact_id }}
+        run: pnpm release:baseline -- bundle --capture .stage7/capture-input/stage7-baseline-capture.json --final-disable .stage7/recovery/baseline-disable.json --recovery-artifact-id "${RECOVERY_ARTIFACT_ID}" --recovery-artifact-digest "${RECOVERY_ARTIFACT_DIGEST}" --evidence-directory .stage7/capture-input --output-directory .stage7/stage7-previous-release --source-run-id "${GITHUB_RUN_ID}" --source-run-attempt "${GITHUB_RUN_ATTEMPT}" --source-workflow-path .github/workflows/baseline.yml --source-event workflow_dispatch --source-ref refs/heads/master --source-head-sha "${STAGE7_CANDIDATE_SHA}"
+      - name: Expose the canonical final bundle digest
+        id: bundle-metadata
+        run: node --input-type=module -e "import { readFileSync } from 'node:fs'; const x=JSON.parse(readFileSync('.stage7/stage7-previous-release/stage7-previous-release-bundle.json','utf8')); if(!/^[0-9a-f]{64}$/u.test(x.bundleSha256))process.exit(2); process.stdout.write('bundle_sha256='+x.bundleSha256+'\n');" >> "${GITHUB_OUTPUT}"
+      - name: Scan the immutable post-recovery bundle before upload
+        run: pnpm release:scan -- --pre-upload .stage7/stage7-previous-release
+      - name: Upload the immutable post-recovery previous-release bundle
+        id: previous-release-artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage7-previous-release
+          if-no-files-found: error
+          include-hidden-files: true
+          path: .stage7/stage7-previous-release/
+          retention-days: 90
+      - name: Report the closed N-1 handoff without public release effects
+        env:
+          ARTIFACT_DIGEST: ${{ format('sha256:{0}', steps.previous-release-artifact.outputs.artifact-digest) }}
+          ARTIFACT_ID: ${{ steps.previous-release-artifact.outputs.artifact-id }}
+          BUNDLE_SHA256: ${{ steps.bundle-metadata.outputs.bundle_sha256 }}
+        run: |
+          printf 'Closed N-1 bundle created after independent recovery. Baseline run ID: `%s`; artifact ID: `%s`; artifact digest: `%s`; bundle digest: `%s`. Publication remains DISABLED. RB-E7-06 and RB-E7-08 remain blocked until a real producer exists.\n' "${GITHUB_RUN_ID}" "${ARTIFACT_ID}" "${ARTIFACT_DIGEST}" "${BUNDLE_SHA256}" >> "${GITHUB_STEP_SUMMARY}"
