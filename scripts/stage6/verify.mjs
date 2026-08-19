@@ -74,16 +74,26 @@ const isExactPullRequestOpenGateState = ({
     exactStringSet(partialIds, ['E6-ACCESSIBILITY', 'E6-SANDBOX-EVIDENCE', 'E6-UAT']) &&
     closeout?.schemaVersion === 1 &&
     closeout?.stage === 6 &&
-    closeout?.status === 'REJECTED' &&
+    closeout?.status === 'VERIFICATION_INCOMPLETE' &&
     closeout?.releasePolicy === 'STAGE_7_BLOCKED' &&
+    closeout?.requiredDocumentsValid === true &&
+    closeout?.entryGate?.state === 'CONDITIONAL_GO_POST_MERGE_CI_GREEN_EXTERNAL_AUTH_BLOCKED' &&
     closeout?.externalRequestsMadeByCloseout === 0 &&
     closeout?.externalEvidence?.externalNetworkAttemptsByIngestion === 0 &&
+    closeout?.externalEvidence?.summary?.status === 'NOT_PROVIDED' &&
+    closeout?.externalEvidence?.summary?.source === 'NOT_PROVIDED' &&
+    closeout?.externalEvidence?.summary?.containsSensitiveData === false &&
+    closeout?.artifactSummary?.total === 18 &&
+    closeout?.artifactSummary?.validStates === 18 &&
+    closeout?.artifactSummary?.failed === 0 &&
     exactStringSet(Object.keys(closeout?.gates ?? {}), [
       'GATE-E6-01',
       'GATE-E6-02',
       'GATE-E6-03',
     ]) &&
-    Object.values(closeout.gates).every((status) => status === 'FAIL') &&
+    closeout.gates['GATE-E6-01'] === 'PASS' &&
+    closeout.gates['GATE-E6-02'] === 'FAIL' &&
+    closeout.gates['GATE-E6-03'] === 'FAIL' &&
     accessibility?.status === 'PARTIAL_NOT_RUN_MANUAL_REQUIRED' &&
     accessibility?.automated?.status === 'PASS' &&
     accessibility?.automated?.blockedExternalRequests === 0 &&
@@ -126,11 +136,21 @@ const selfTestPullRequestOpenGates = () => {
     closeout: {
       schemaVersion: 1,
       stage: 6,
-      status: 'REJECTED',
+      status: 'VERIFICATION_INCOMPLETE',
       releasePolicy: 'STAGE_7_BLOCKED',
+      requiredDocumentsValid: true,
+      entryGate: { state: 'CONDITIONAL_GO_POST_MERGE_CI_GREEN_EXTERNAL_AUTH_BLOCKED' },
       externalRequestsMadeByCloseout: 0,
-      externalEvidence: { externalNetworkAttemptsByIngestion: 0 },
-      gates: { 'GATE-E6-01': 'FAIL', 'GATE-E6-02': 'FAIL', 'GATE-E6-03': 'FAIL' },
+      externalEvidence: {
+        externalNetworkAttemptsByIngestion: 0,
+        summary: {
+          status: 'NOT_PROVIDED',
+          source: 'NOT_PROVIDED',
+          containsSensitiveData: false,
+        },
+      },
+      artifactSummary: { total: 18, validStates: 18, failed: 0 },
+      gates: { 'GATE-E6-01': 'PASS', 'GATE-E6-02': 'FAIL', 'GATE-E6-03': 'FAIL' },
     },
     accessibility: {
       status: 'PARTIAL_NOT_RUN_MANUAL_REQUIRED',
@@ -179,7 +199,17 @@ const selfTestPullRequestOpenGates = () => {
       value.results[0].status = 'FAIL';
     },
     (value) => {
+      value.closeout.status = 'RELEASE_CANDIDATE';
+    },
+    (value) => {
+      value.closeout.gates['GATE-E6-01'] = 'FAIL';
+    },
+    (value) => {
       value.closeout.gates['GATE-E6-03'] = 'PASS';
+    },
+    (value) => {
+      value.closeout.artifactSummary.failed = 1;
+      value.closeout.artifactSummary.validStates = 17;
     },
     (value) => {
       value.sandbox.externalRequestsByIngestion = 1;
