@@ -20,7 +20,7 @@ env:
   NODE_VERSION: '24.19.0'
   STAGE7_AWS_ACCOUNT_ID: ${{ vars.STAGE7_AWS_ACCOUNT_ID }}
   STAGE7_PRERELEASE_CLEANUP_WATCHDOG_ROLE_ARN: ${{ vars.STAGE7_PRERELEASE_CLEANUP_WATCHDOG_ROLE_ARN }}
-  STAGE7_AWS_REGION: ${{ vars.STAGE7_AWS_REGION }}
+  STAGE7_AWS_REGION: ${{ vars.STAGE7_PRERELEASE_AWS_REGION }}
   STAGE7_PRERELEASE_CLEANUP_OIDC_SUBJECT: repo:ivanmonsalve0404/async-checkout-demo:ref:refs/heads/master
   STAGE7_CLEANUP_CONTRACT_EVIDENCE: output/evidence/runtime/stage-7-prerelease-cleanup/contract-${{ github.run_id }}-${{ github.run_attempt }}.json
   STAGE7_CLEANUP_EVIDENCE: output/evidence/runtime/stage-7-prerelease-cleanup/cleanup-${{ github.run_id }}-${{ github.run_attempt }}.json
@@ -96,7 +96,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
         with:
           allowed-account-ids: ${{ vars.STAGE7_AWS_ACCOUNT_ID }}
-          aws-region: ${{ vars.STAGE7_AWS_REGION }}
+          aws-region: ${{ vars.STAGE7_PRERELEASE_AWS_REGION }}
           mask-aws-account-id: true
           role-duration-seconds: 3600
           role-session-name: e7-prerelease-cleanup-${{ github.run_id }}

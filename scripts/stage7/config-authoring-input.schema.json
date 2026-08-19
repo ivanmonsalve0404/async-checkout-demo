@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checkout.invalid/schemas/stage7/config-authoring-input.schema.json",
+  "title": "Stage 7 release and closed-baseline config authoring input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "kind",
+    "release",
+    "prerelease",
+    "baseline",
+    "aws",
+    "budget",
+    "domains",
+    "access"
+  ],
+  "$defs": {
+    "alias": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$"
+    },
+    "isoUtc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "ownerAlias",
+        "approvedAtUtc",
+        "expiresAtUtc",
+        "communicationChannelAlias",
+        "rollbackOwnerAlias"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^AUTH-E7-[A-Z0-9][A-Z0-9-]{1,31}$"
+        },
+        "ownerAlias": { "$ref": "#/$defs/alias" },
+        "approvedAtUtc": { "$ref": "#/$defs/isoUtc" },
+        "expiresAtUtc": { "$ref": "#/$defs/isoUtc" },
+        "communicationChannelAlias": { "$ref": "#/$defs/alias" },
+        "rollbackOwnerAlias": { "$ref": "#/$defs/alias" }
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startsAtUtc", "endsAtUtc"],
+      "properties": {
+        "startsAtUtc": { "$ref": "#/$defs/isoUtc" },
+        "endsAtUtc": { "$ref": "#/$defs/isoUtc" }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ownerAlias", "expiresAtUtc"],
+      "properties": {
+        "ownerAlias": { "$ref": "#/$defs/alias" },
+        "expiresAtUtc": { "$ref": "#/$defs/isoUtc" }
+      }
+    },
+    "phase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authorization", "window", "cleanup"],
+      "properties": {
+        "authorization": { "$ref": "#/$defs/authority" },
+        "window": { "$ref": "#/$defs/window" },
+        "cleanup": { "$ref": "#/$defs/cleanup" }
+      }
+    },
+    "prereleasePhase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environment", "authorization", "window", "cleanup"],
+      "properties": {
+        "environment": {
+          "type": "string",
+          "pattern": "^assessment-prerelease-[a-z0-9](?:[a-z0-9-]{0,17}[a-z0-9])?$"
+        },
+        "authorization": { "$ref": "#/$defs/authority" },
+        "window": { "$ref": "#/$defs/window" },
+        "cleanup": { "$ref": "#/$defs/cleanup" }
+      }
+    },
+    "roleArn": {
+      "type": "string",
+      "pattern": "^arn:aws:iam::[0-9]{12}:role/(?=.{1,512}$)(?!/)(?!.*//)(?:[A-Za-z0-9+=,.@_-]+/)*[A-Za-z0-9+=,.@_-]{1,64}$"
+    },
+    "region": {
+      "type": "string",
+      "pattern": "^(?:af|ap|ca|eu|il|me|mx|sa|us)-(?:central|east|north|northeast|northwest|south|southeast|southwest|west)-[1-9]$"
+    },
+    "hostname": {
+      "type": "string",
+      "pattern": "^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
+    },
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "readRoleArn",
+        "deployRoleArn",
+        "rollbackRoleArn",
+        "cleanupRoleArn",
+        "baselineRoleArn"
+      ],
+      "properties": {
+        "readRoleArn": { "$ref": "#/$defs/roleArn" },
+        "deployRoleArn": { "$ref": "#/$defs/roleArn" },
+        "rollbackRoleArn": { "$ref": "#/$defs/roleArn" },
+        "cleanupRoleArn": { "$ref": "#/$defs/roleArn" },
+        "baselineRoleArn": { "$ref": "#/$defs/roleArn" }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["region", "roles"],
+      "properties": {
+        "region": { "$ref": "#/$defs/region" },
+        "roles": { "$ref": "#/$defs/roles" }
+      }
+    },
+    "domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hostname",
+        "apiHostname",
+        "hostedZoneId",
+        "hostedZoneName",
+        "webCertificateArn",
+        "apiCertificateArn"
+      ],
+      "properties": {
+        "hostname": { "$ref": "#/$defs/hostname" },
+        "apiHostname": { "$ref": "#/$defs/hostname" },
+        "hostedZoneId": { "type": "string", "pattern": "^Z[A-Z0-9]{5,31}$" },
+        "hostedZoneName": { "$ref": "#/$defs/hostname" },
+        "webCertificateArn": { "type": "string" },
+        "apiCertificateArn": { "type": "string" }
+      }
+    },
+    "access": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "keyGroupId",
+        "publicKeyId",
+        "originTokenSecretArn",
+        "originTokenSecretVersionId"
+      ],
+      "properties": {
+        "keyGroupId": { "type": "string", "pattern": "^[A-Z0-9]{8,64}$" },
+        "publicKeyId": { "type": "string", "pattern": "^[A-Z0-9]{8,64}$" },
+        "originTokenSecretArn": {
+          "type": "string",
+          "pattern": "^arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]{1,256}$"
+        },
+        "originTokenSecretVersionId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]{32,64}$"
+        }
+      }
+    }
+  },
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "const": 7 },
+    "kind": { "const": "STAGE7_CONFIG_AUTHORING_INPUT" },
+    "release": { "$ref": "#/$defs/phase" },
+    "prerelease": { "$ref": "#/$defs/prereleasePhase" },
+    "baseline": { "$ref": "#/$defs/phase" },
+    "aws": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accountId", "targets"],
+      "properties": {
+        "accountId": { "type": "string", "pattern": "^[0-9]{12}$" },
+        "targets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["full", "prerelease"],
+          "properties": {
+            "full": { "$ref": "#/$defs/target" },
+            "prerelease": { "$ref": "#/$defs/target" }
+          }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxUsd",
+        "warningUsd",
+        "alertOwnerAlias",
+        "alertChannelAlias",
+        "alertDestination"
+      ],
+      "properties": {
+        "maxUsd": { "type": "number", "minimum": 0.01, "maximum": 100 },
+        "warningUsd": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": { "type": "number", "minimum": 0.01 }
+        },
+        "alertOwnerAlias": { "$ref": "#/$defs/alias" },
+        "alertChannelAlias": { "$ref": "#/$defs/alias" },
+        "alertDestination": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+        }
+      }
+    },
+    "domains": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["full", "prerelease"],
+      "properties": {
+        "full": { "$ref": "#/$defs/domain" },
+        "prerelease": { "$ref": "#/$defs/domain" }
+      }
+    },
+    "access": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["full", "prerelease"],
+      "properties": {
+        "full": { "$ref": "#/$defs/access" },
+        "prerelease": { "$ref": "#/$defs/access" }
+      }
+    }
+  }
+}

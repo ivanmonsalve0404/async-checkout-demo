@@ -11,7 +11,7 @@
   "traces": 0,
   "node": "v24.19.0",
   "packageManager": "pnpm@11.19.0",
-  "smokeScriptSha256": "33bd968805acec7106df618e97ec392828e6ebb472f7a628ae507762d986bef5",
+  "smokeScriptSha256": "5ea042df8e9281e9dd0e936cdca10baa94030be8589c8590f6b3ac478faad11c",
   "exitCode": 0,
   "passed": 12,
   "total": 12,
@@ -19,98 +19,98 @@
     {
       "id": "SMK-E5-01",
       "title": "producto → checkout → aprobado → stock actualizado",
-      "status": "PASS",
       "browserExternalRequests": 0,
       "apiExternalRequestsBlocked": 0,
-      "networkGuardCanaries": "PASS"
+      "networkGuardCanaries": "PASS",
+      "status": "PASS"
     },
     {
       "id": "SMK-E5-02",
       "title": "declinado → reserva liberada → sin entrega",
-      "status": "PASS",
       "browserExternalRequests": 0,
       "apiExternalRequestsBlocked": 0,
-      "networkGuardCanaries": "PASS"
+      "networkGuardCanaries": "PASS",
+      "status": "PASS"
     },
     {
       "id": "SMK-E5-03",
       "title": "error final → reserva liberada → sin entrega",
-      "status": "PASS",
       "browserExternalRequests": 0,
       "apiExternalRequestsBlocked": 0,
-      "networkGuardCanaries": "PASS"
+      "networkGuardCanaries": "PASS",
+      "status": "PASS"
     },
     {
       "id": "SMK-E5-04",
       "title": "pending → volver al producto → recuperar el mismo intento",
-      "status": "PASS",
       "browserExternalRequests": 0,
       "apiExternalRequestsBlocked": 0,
-      "networkGuardCanaries": "PASS"
+      "networkGuardCanaries": "PASS",
+      "status": "PASS"
     },
     {
       "id": "SMK-E5-05",
       "title": "refresh en datos de entrega",
-      "status": "PASS",
       "browserExternalRequests": 0,
       "apiExternalRequestsBlocked": 0,
-      "networkGuardCanaries": "PASS"
+      "networkGuardCanaries": "PASS",
+      "status": "PASS"
     },
     {
       "id": "SMK-E5-06",
       "title": "refresh durante pago pendiente",
-      "status": "PASS",
       "browserExternalRequests": 0,
       "apiExternalRequestsBlocked": 0,
-      "networkGuardCanaries": "PASS"
+      "networkGuardCanaries": "PASS",
+      "status": "PASS"
     },
     {
       "id": "SMK-E5-07",
       "title": "doble clic → una transacción lógica",
-      "status": "PASS",
       "browserExternalRequests": 0,
       "apiExternalRequestsBlocked": 0,
-      "networkGuardCanaries": "PASS"
+      "networkGuardCanaries": "PASS",
+      "status": "PASS"
     },
     {
       "id": "SMK-E5-08",
       "title": "dos requests concurrentes contra último stock",
-      "status": "PASS",
       "browserExternalRequests": 0,
       "apiExternalRequestsBlocked": 0,
-      "networkGuardCanaries": "PASS"
+      "networkGuardCanaries": "PASS",
+      "status": "PASS"
     },
     {
       "id": "SMK-E5-09",
       "title": "quote vencido/reprecio",
-      "status": "PASS",
       "browserExternalRequests": 0,
       "apiExternalRequestsBlocked": 0,
-      "networkGuardCanaries": "PASS"
+      "networkGuardCanaries": "PASS",
+      "status": "PASS"
     },
     {
       "id": "SMK-E5-10",
       "title": "sesión expirada",
-      "status": "PASS",
       "browserExternalRequests": 0,
       "apiExternalRequestsBlocked": 0,
-      "networkGuardCanaries": "PASS"
+      "networkGuardCanaries": "PASS",
+      "status": "PASS"
     },
     {
       "id": "SMK-E5-11",
       "title": "respuesta externa divergente bloqueada",
-      "status": "PASS",
       "browserExternalRequests": 0,
       "apiExternalRequestsBlocked": 0,
-      "networkGuardCanaries": "PASS"
+      "networkGuardCanaries": "PASS",
+      "status": "PASS"
     },
     {
       "id": "SMK-E5-12",
       "title": "replay de finalización sin efectos duplicados",
-      "status": "PASS",
       "browserExternalRequests": 0,
       "apiExternalRequestsBlocked": 0,
-      "networkGuardCanaries": "PASS"
+      "networkGuardCanaries": "PASS",
+      "status": "PASS"
     }
   ]
 }

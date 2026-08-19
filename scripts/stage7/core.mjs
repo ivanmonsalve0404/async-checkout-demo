@@ -43,6 +43,9 @@ const ALIAS = /^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$/u;
 const STACK = /^[A-Za-z][A-Za-z0-9-]{1,127}$/u;
 const AWS_REGION =
   /^(?:af|ap|ca|eu|il|me|mx|sa|us)-(?:central|east|north|northeast|northwest|south|southeast|southwest|west)-[1-9]$/u;
+const IAM_ROLE_ARN =
+  /^arn:aws:iam::([0-9]{12}):role\/((?!\/)(?!.*\/\/)(?!.*\/$)[A-Za-z0-9+=,.@_/-]{1,512})$/u;
+const IAM_ROLE_NAME = /^[A-Za-z0-9+=,.@_-]{1,64}$/u;
 const HOSTNAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/u;
 const HOSTED_ZONE_ID = /^Z[A-Z0-9]{5,31}$/u;
 const CREDENTIAL_REFERENCE =
@@ -271,6 +274,24 @@ const canonicalize = (value) => {
 export const canonicalJson = (value) => JSON.stringify(canonicalize(value));
 export const objectSha256 = (value) => sha256(canonicalJson(value));
 
+export const parseIamRoleArn = (value) => {
+  if (typeof value !== 'string') return null;
+  const match = IAM_ROLE_ARN.exec(value);
+  if (match === null) return null;
+  const roleName = match[2].split('/').at(-1);
+  if (!IAM_ROLE_NAME.test(roleName ?? '')) return null;
+  return Object.freeze({ accountId: match[1], resource: match[2], roleName });
+};
+
+export const hasUniqueIamRoleNames = (roleArns) => {
+  if (!Array.isArray(roleArns)) return false;
+  const identities = roleArns.map(parseIamRoleArn);
+  return (
+    identities.every((identity) => identity !== null) &&
+    new Set(identities.map(({ roleName }) => roleName)).size === identities.length
+  );
+};
+
 const assertAlias = (value, code) => {
   if (typeof value !== 'string' || !ALIAS.test(value)) fail(code);
 };
@@ -307,7 +328,7 @@ export const validateStage7Config = (value, { now = new Date() } = {}) => {
     value.stage !== 7 ||
     value.containsSensitiveData !== false ||
     typeof value.environment !== 'string' ||
-    !/^(?:assessment-release|assessment-prerelease-[a-z0-9][a-z0-9-]{0,18})$/u.test(
+    !/^(?:assessment-release|assessment-prerelease-[a-z0-9](?:[a-z0-9-]{0,17}[a-z0-9])?)$/u.test(
       value.environment,
     ) ||
     `checkout-${value.environment}`.length > 50
@@ -371,18 +392,21 @@ export const validateStage7Config = (value, { now = new Date() } = {}) => {
     fail('E7_AWS_TARGET_INVALID');
   }
   for (const roleArn of Object.values(aws.roles)) {
-    const roleMatch = /^arn:aws:iam::([0-9]{12}):role\/([A-Za-z0-9+=,.@_/-]{1,256})$/u.exec(
-      roleArn,
-    );
+    const roleIdentity = parseIamRoleArn(roleArn);
     if (
-      roleMatch === null ||
-      roleMatch[1] !== aws.accountId ||
-      /(?:^|[/_-])admin(?:istrator)?(?:$|[/_-])/iu.test(roleMatch[2])
+      roleIdentity === null ||
+      roleIdentity.accountId !== aws.accountId ||
+      /(?:^|[/_-])admin(?:istrator)?(?:$|[/_-])/iu.test(roleIdentity.resource)
     ) {
       fail('E7_DEPLOY_ROLE_INVALID');
     }
   }
-  if (new Set(Object.values(aws.roles)).size !== 5) fail('E7_AWS_ROLE_SEPARATION_INVALID');
+  if (
+    new Set(Object.values(aws.roles)).size !== 5 ||
+    !hasUniqueIamRoleNames(Object.values(aws.roles))
+  ) {
+    fail('E7_AWS_ROLE_SEPARATION_INVALID');
+  }
 
   const window = value.window;
   if (
@@ -3151,6 +3175,17 @@ export const selfTestStage7 = () => {
       ),
     (error) => error instanceof Stage7Error && error.code === 'E7_CONFIG_ENVELOPE_INVALID',
   );
+  assert.throws(
+    () =>
+      validateStage7Config(
+        {
+          ...validConfigFixture({ scope: 'EPHEMERAL_PRERELEASE' }),
+          environment: 'assessment-prerelease-x-',
+        },
+        { now },
+      ),
+    (error) => error instanceof Stage7Error && error.code === 'E7_CONFIG_ENVELOPE_INVALID',
+  );
   const prereleaseCleanupBeyondAuthorization = validConfigFixture({
     scope: 'EPHEMERAL_PRERELEASE',
   });
@@ -3291,6 +3326,42 @@ export const selfTestStage7 = () => {
       ),
     (error) => error instanceof Stage7Error && error.code === 'E7_AWS_ROLE_SEPARATION_INVALID',
   );
+  assert.throws(
+    () =>
+      validateStage7Config(
+        {
+          ...config,
+          aws: {
+            ...config.aws,
+            roles: {
+              ...config.aws.roles,
+              cleanupRoleArn: `arn:aws:iam::${config.aws.accountId}:role/isolated/${config.aws.roles.deployRoleArn.split('/').at(-1)}`,
+            },
+          },
+        },
+        { now },
+      ),
+    (error) => error instanceof Stage7Error && error.code === 'E7_AWS_ROLE_SEPARATION_INVALID',
+  );
+  for (const invalidRoleArn of [
+    `arn:aws:iam::${config.aws.accountId}:role/checkout/`,
+    `arn:aws:iam::${config.aws.accountId}:role/${'r'.repeat(65)}`,
+  ]) {
+    assert.throws(
+      () =>
+        validateStage7Config(
+          {
+            ...config,
+            aws: {
+              ...config.aws,
+              roles: { ...config.aws.roles, deployRoleArn: invalidRoleArn },
+            },
+          },
+          { now },
+        ),
+      (error) => error instanceof Stage7Error && error.code === 'E7_DEPLOY_ROLE_INVALID',
+    );
+  }
   assert.throws(
     () =>
       validateStage7Config(

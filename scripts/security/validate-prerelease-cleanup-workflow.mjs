@@ -96,6 +96,9 @@ export function validatePrereleaseCleanupWorkflow(name, source) {
   if (/\$\{\{\s*secrets\./iu.test(normalized)) {
     errors.push('cleanup workflow must not consume repository secrets');
   }
+  if (normalized.includes('${{ vars.STAGE7_AWS_REGION }}')) {
+    errors.push('cleanup workflow must use the isolated prerelease AWS region');
+  }
   if (
     /AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY)|STAGE7_AWS_(?:CLEANUP|DEPLOY|READ|ROLLBACK)_ROLE_ARN/u.test(
       normalized,
@@ -137,7 +140,7 @@ export function validatePrereleaseCleanupWorkflow(name, source) {
     !cleanup.includes('role-to-assume: ${{ vars.STAGE7_PRERELEASE_CLEANUP_WATCHDOG_ROLE_ARN }}') ||
     !cleanup.includes('role-duration-seconds: 3600') ||
     !cleanup.includes('          allowed-account-ids: ${{ vars.STAGE7_AWS_ACCOUNT_ID }}') ||
-    !cleanup.includes('aws-region: ${{ vars.STAGE7_AWS_REGION }}')
+    !cleanup.includes('aws-region: ${{ vars.STAGE7_PRERELEASE_AWS_REGION }}')
   ) {
     errors.push('the dedicated bounded OIDC cleanup session is incomplete');
   }
@@ -191,6 +194,14 @@ const replaceOnce = (source, before, after) => {
 const workflowCanaries = (source) => {
   assert.deepEqual(validatePrereleaseCleanupWorkflow(PRERELEASE_CLEANUP_WORKFLOW, source), []);
   const cases = [
+    {
+      label: 'full release region reuse',
+      value: replaceOnce(
+        source,
+        '${{ vars.STAGE7_PRERELEASE_AWS_REGION }}',
+        '${{ vars.STAGE7_AWS_REGION }}',
+      ),
+    },
     {
       label: 'schedule',
       value: replaceOnce(source, "    - cron: '23 * * * *'", "    - cron: '*/5 * * * *'"),
