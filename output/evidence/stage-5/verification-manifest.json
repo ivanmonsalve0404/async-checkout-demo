@@ -9,53 +9,53 @@
     "packageManager": "pnpm@11.19.0"
   },
   "sourceSnapshot": {
-    "files": 210,
-    "sha256": "84fcca1ef3c59ec7a6d0c63489722a81d7da7c6a98b51a2d66b5f801b4b0a1ac"
+    "files": 419,
+    "sha256": "1b6dda680b22ff9df6909c7fff6dd80f7170064c29608238b24d3bc22958d972"
   },
   "contracts": {
-    "openapiSha256": "aa90d17de283d720ab92112cda8a75ae0663a881cd25da931f56c1148ae4c01a",
+    "openapiSha256": "cdd07f1925e8cca947c109772b083cbc5756f0bbeb2e95622e230ca7dc647ea7",
     "generatedTypes": "MATCH"
   },
   "tests": {
     "api": {
-      "suites": 28,
-      "passedSuites": 28,
-      "tests": 338,
-      "passedTests": 338
+      "suites": 35,
+      "passedSuites": 35,
+      "tests": 384,
+      "passedTests": 384
     },
     "web": {
-      "suites": 22,
-      "passedSuites": 22,
-      "tests": 98,
-      "passedTests": 98
+      "suites": 23,
+      "passedSuites": 23,
+      "tests": 117,
+      "passedTests": 117
     },
     "dynamodb": {
       "image": "amazon/dynamodb-local:2.6.1",
       "imageDigest": "sha256:1856c05cc66a0e49dc1099e483ad2851477eeebe2135250ac11a1d1227db54b1",
       "suites": 1,
-      "tests": 10,
-      "passed": 10,
+      "tests": 11,
+      "passed": 11,
       "endpointLoopback": true,
       "awsExternal": false
     },
     "smoke": {
       "passed": 12,
       "total": 12,
-      "scriptSha256": "1981f13fc5387f73c44994a15949b4c9a49dd3a05cb2396d269397d74cf4009f"
+      "scriptSha256": "33bd968805acec7106df618e97ec392828e6ebb472f7a628ae507762d986bef5"
     }
   },
   "coverage": {
     "api": {
-      "statements": 92.8,
-      "branches": 85.81,
-      "functions": 99.1,
-      "lines": 94.6
+      "statements": 94.92,
+      "branches": 90.64,
+      "functions": 98.89,
+      "lines": 96.23
     },
     "web": {
-      "statements": 94.35,
-      "branches": 90.23,
-      "functions": 88.08,
-      "lines": 93.99
+      "statements": 94.06,
+      "branches": 88.79,
+      "functions": 95.85,
+      "lines": 94.74
     }
   },
   "security": {
