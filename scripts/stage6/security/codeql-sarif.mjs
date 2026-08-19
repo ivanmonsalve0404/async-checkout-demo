@@ -59,6 +59,16 @@ const classificationFor = (run, result) => {
     : { kind: 'non-security' };
 };
 
+const findingReference = (result) => {
+  const location = result.locations?.[0]?.physicalLocation;
+  const uri = location?.artifactLocation?.uri;
+  const line = location?.region?.startLine;
+  const ruleId = result.ruleId ?? 'RULE_ID_MISSING';
+  return typeof uri === 'string'
+    ? `${ruleId}@${uri}${Number.isSafeInteger(line) ? `:${line}` : ''}`
+    : ruleId;
+};
+
 export const summarizeCodeqlSarif = (documents) => {
   if (!Array.isArray(documents) || documents.length === 0) {
     throw new Error('CODEQL_SARIF_MISSING');
@@ -90,13 +100,17 @@ export const summarizeCodeqlSarif = (documents) => {
         if (classification.kind === 'non-security') counts.unclassified += 1;
         else if (classification.kind === 'security-unclassified') {
           counts.securityUnclassified += 1;
-          blockingRuleIds.add(result.ruleId ?? 'RULE_ID_MISSING');
+          blockingRuleIds.add(findingReference(result));
         } else if (classification.kind === 'unresolved') {
           counts.unresolved += 1;
-          blockingRuleIds.add(result.ruleId ?? 'RULE_ID_MISSING');
-        } else if (classification.score >= 9) counts.critical += 1;
-        else if (classification.score >= 7) counts.high += 1;
-        else if (classification.score >= 4) counts.medium += 1;
+          blockingRuleIds.add(findingReference(result));
+        } else if (classification.score >= 9) {
+          counts.critical += 1;
+          blockingRuleIds.add(findingReference(result));
+        } else if (classification.score >= 7) {
+          counts.high += 1;
+          blockingRuleIds.add(findingReference(result));
+        } else if (classification.score >= 4) counts.medium += 1;
         else counts.low += 1;
       }
     }
@@ -162,6 +176,7 @@ const selfTest = () => {
   assert.equal(summarizeCodeqlSarif([document('6.9')]).status, 'PASS');
   assert.equal(summarizeCodeqlSarif([document('0.0')]).status, 'PASS');
   assert.equal(summarizeCodeqlSarif([document('7.0')]).status, 'FAIL');
+  assert.deepEqual(summarizeCodeqlSarif([document('7.0')]).blockingRuleIds, ['js/example']);
   assert.equal(summarizeCodeqlSarif([document('9.0')]).findings.critical, 1);
   assert.equal(summarizeCodeqlSarif([document('not-a-score')]).status, 'FAIL');
   assert.equal(
