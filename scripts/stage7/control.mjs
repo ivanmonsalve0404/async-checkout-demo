@@ -13588,7 +13588,7 @@ export const selfTestStage7Control = async () => {
     'https://checkout.example.test/api/docs',
     'https://checkout.example.test/api/health/ready',
   ]);
-  assert.ok(!publicationProbeRequests.includes('https://checkout.example.test/api'));
+  assert.ok(publicationProbeRequests.every((request) => new URL(request).pathname !== '/api'));
   const unhealthyPublicationProbeRequests = [];
   await assert.rejects(
     verifyPublishedUrls(readmeUrlsFixture, async (url) => {
@@ -13601,7 +13601,9 @@ export const selfTestStage7Control = async () => {
     (error) => error.code === 'E7_PUBLICATION_URL_VERIFICATION_FAILED',
   );
   assert.equal(unhealthyPublicationProbeRequests.length, 3);
-  assert.ok(!unhealthyPublicationProbeRequests.includes('https://checkout.example.test/api'));
+  assert.ok(
+    unhealthyPublicationProbeRequests.every((request) => new URL(request).pathname !== '/api'),
+  );
   assert.throws(
     () =>
       validatePublicationPlan(
