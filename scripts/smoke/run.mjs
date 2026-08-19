@@ -2,29 +2,31 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
-import { chromium, expect } from '@playwright/test';
+import playwrightTest from '@playwright/test';
 
 import {
   serializeSanitizedEvidence,
   writeSanitizedJsonAtomic,
 } from '../stage6/lib/artifact-sanitizer.mjs';
 
+const { chromium, expect } = playwrightTest;
+
 const ROOT = process.cwd();
 const API_ORIGIN = 'http://127.0.0.1:3000';
 const WEB_ORIGIN = 'http://127.0.0.1:4173';
 const PRODUCT_ID = 'product-demo-001';
 const EDGE_PATH = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const EVIDENCE_PATH = path.join(
-  ROOT,
-  'output',
-  'evidence',
-  'runtime',
-  'stage-5-smoke-results.json',
-);
+const RUNTIME_EVIDENCE_DIRECTORY = path.join(ROOT, 'output', 'evidence', 'runtime');
+const DEFAULT_EVIDENCE_PATH = path.join(RUNTIME_EVIDENCE_DIRECTORY, 'stage-5-smoke-results.json');
+const workerEvidenceToken = process.env.SMOKE_WORKER_EVIDENCE_TOKEN;
+const EVIDENCE_PATH =
+  workerEvidenceToken !== undefined && /^[a-f0-9]{24}$/.test(workerEvidenceToken)
+    ? path.join(RUNTIME_EVIDENCE_DIRECTORY, `stage-5-smoke-worker-${workerEvidenceToken}.json`)
+    : DEFAULT_EVIDENCE_PATH;
 const TRACKED_EVIDENCE_PATH = path.join(
   ROOT,
   'output',
@@ -35,6 +37,13 @@ const TRACKED_EVIDENCE_PATH = path.join(
 const API_NETWORK_GUARD_PATH = path.join(ROOT, 'scripts', 'smoke', 'deny-external-network.cjs');
 const PRODUCT_PATH = `/products/${PRODUCT_ID}`;
 const processes = new Set();
+const processLabels = new WeakMap();
+const processErrors = new WeakMap();
+process.on('uncaughtExceptionMonitor', (_error, origin) => {
+  const failureCode =
+    origin === 'unhandledRejection' ? 'UNHANDLED_REJECTION' : 'UNCAUGHT_EXCEPTION';
+  process.stderr.write(`SMOKE_WORKER_FAILURE:${failureCode}\n`);
+});
 const SMOKE_IDS = [
   'SMK-E5-04',
   'SMK-E5-01',
@@ -85,7 +94,14 @@ const isLoopback = (candidate) => {
   return url.hostname === '127.0.0.1' || url.hostname === 'localhost';
 };
 
-const start = (executable, arguments_, environment = {}, cwd = ROOT, onStderr) => {
+const start = (
+  executable,
+  arguments_,
+  environment = {},
+  cwd = ROOT,
+  onStderr,
+  label = 'PROCESS',
+) => {
   const child = spawn(executable, arguments_, {
     cwd,
     env: { ...process.env, ...environment },
@@ -98,25 +114,56 @@ const start = (executable, arguments_, environment = {}, cwd = ROOT, onStderr) =
   } else {
     child.stderr?.on('data', onStderr);
   }
+  processLabels.set(child, label);
+  child.on('error', (error) => {
+    processErrors.set(child, error);
+  });
   processes.add(child);
   return child;
 };
 
+const hasExited = (child) => child.exitCode !== null || child.signalCode !== null;
+
+const signalAndWait = async (child, signal, timeoutMs) => {
+  if (hasExited(child)) return true;
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off('exit', onExit);
+      resolve(value);
+    };
+    const onExit = () => settle(true);
+    const timer = setTimeout(() => settle(hasExited(child)), timeoutMs);
+    child.once('exit', onExit);
+    try {
+      child.kill(signal);
+    } catch (error) {
+      processErrors.set(child, error);
+      if (hasExited(child)) settle(true);
+    }
+    if (hasExited(child)) settle(true);
+  });
+};
+
 const stop = async (child) => {
   if (child === undefined) return;
-  processes.delete(child);
-  if (child.exitCode !== null) return;
-  child.kill();
-  await new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      resolve();
-    }, 3_000);
-    child.once('exit', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
+  if (hasExited(child)) {
+    processes.delete(child);
+    return;
+  }
+  if (await signalAndWait(child, undefined, 3_000)) {
+    processes.delete(child);
+    return;
+  }
+  if (await signalAndWait(child, 'SIGKILL', 1_000)) {
+    processes.delete(child);
+    return;
+  }
+  const label = processLabels.get(child) ?? 'PROCESS';
+  throw new SmokeFailure(`${label}_STOP_TIMEOUT`);
 };
 
 const stopAll = async () => {
@@ -195,6 +242,7 @@ const writeEvidence = async (results, { closeout = false } = {}) => {
 
 const waitFor = async (name, child, url, attempts = 100) => {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (processErrors.has(child)) throw new SmokeFailure(`${name.toUpperCase()}_PROCESS_ERROR`);
     if (child.exitCode !== null) throw new SmokeFailure(`${name.toUpperCase()}_EXITED`);
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
@@ -540,11 +588,40 @@ const installBrowserNetworkGuard = async (context) => {
   return () => blocked;
 };
 
+const closeRoutedContext = async (context, page) => {
+  let failure;
+  const attempt = async (action, timeoutMs, timeoutCode, rejectedCode) => {
+    try {
+      await within(action(), timeoutMs, timeoutCode);
+    } catch (error) {
+      failure ??= error instanceof SmokeFailure ? error : new SmokeFailure(rejectedCode);
+    }
+  };
+
+  if (page !== undefined) {
+    await attempt(
+      () => page.unrouteAll({ behavior: 'wait' }),
+      7_000,
+      'PAGE_ROUTES_DRAIN_TIMEOUT',
+      'PAGE_ROUTES_DRAIN_FAILED',
+    );
+  }
+  await attempt(
+    () => context.unrouteAll({ behavior: 'wait' }),
+    7_000,
+    'CONTEXT_ROUTES_DRAIN_TIMEOUT',
+    'CONTEXT_ROUTES_DRAIN_FAILED',
+  );
+  await attempt(() => context.close(), 5_000, 'CONTEXT_CLOSE_TIMEOUT', 'CONTEXT_CLOSE_FAILED');
+  if (failure !== undefined) throw failure;
+};
+
 const assertBrowserNetworkGuard = async (browser) => {
   const context = await browser.newContext();
+  let page;
   try {
     const blockedRequests = await installBrowserNetworkGuard(context);
-    const page = await context.newPage();
+    page = await context.newPage();
     const rejected = await page.evaluate(async () => {
       try {
         await fetch('https://example.invalid/smoke-network-canary');
@@ -555,7 +632,7 @@ const assertBrowserNetworkGuard = async (browser) => {
     });
     check(rejected && blockedRequests() === 1, 'BROWSER_NETWORK_GUARD_CANARY_FAILED');
   } finally {
-    await context.close();
+    await closeRoutedContext(context, page);
   }
 };
 
@@ -572,6 +649,7 @@ const assertApiNetworkGuard = async () => {
     (chunk) => {
       blockedMarkers += String(chunk).match(/SMOKE_EXTERNAL_NETWORK_BLOCKED/g)?.length ?? 0;
     },
+    'NETWORK_GUARD',
   );
   const exitCode = await within(
     new Promise((resolve) => child.once('exit', (code) => resolve(code ?? 1))),
@@ -585,9 +663,19 @@ const assertApiNetworkGuard = async () => {
 const run = async () => {
   const web = start(
     process.execPath,
-    [path.join(ROOT, 'apps', 'web', 'node_modules', 'vite', 'bin', 'vite.js'), 'preview'],
+    [
+      path.join(ROOT, 'apps', 'web', 'node_modules', 'vite', 'bin', 'vite.js'),
+      'preview',
+      '--host',
+      '127.0.0.1',
+      '--port',
+      '4173',
+      '--strictPort',
+    ],
     {},
     path.join(ROOT, 'apps', 'web'),
+    undefined,
+    'WEB',
   );
   await waitFor('web', web, WEB_ORIGIN);
 
@@ -611,9 +699,11 @@ const run = async () => {
     const startedAt = Date.now();
     let api;
     let context;
+    let page;
     let browserExternalRequests = () => 0;
     let apiExternalRequestsBlocked = 0;
     let checkpoint = 'SETUP';
+    let failure;
     try {
       api = start(
         process.execPath,
@@ -624,11 +714,12 @@ const run = async () => {
           apiExternalRequestsBlocked +=
             String(chunk).match(/SMOKE_EXTERNAL_NETWORK_BLOCKED/g)?.length ?? 0;
         },
+        'API',
       );
       await waitFor(`api-${id}`, api, `${API_ORIGIN}/api/health`);
       context = await sharedBrowser.newContext({ viewport: { width: 390, height: 844 } });
       browserExternalRequests = await installBrowserNetworkGuard(context);
-      const page = await context.newPage();
+      page = await context.newPage();
       page.setDefaultTimeout(5_000);
       page.setDefaultNavigationTimeout(5_000);
       const browserCapability = await installCapabilityBridge(page);
@@ -647,40 +738,46 @@ const run = async () => {
       );
       check(browserExternalRequests() === 0, 'EXTERNAL_NETWORK_REQUEST_DETECTED');
       check(apiExternalRequestsBlocked === 0, 'API_EXTERNAL_NETWORK_REQUEST_BLOCKED');
-      results.push({
-        id,
-        title,
-        status: 'PASS',
-        durationMs: Date.now() - startedAt,
-        browserExternalRequests: browserExternalRequests(),
-        apiExternalRequestsBlocked,
-        networkGuardCanaries: 'PASS',
-      });
-      process.stdout.write(`${id} PASS — ${title}\n`);
     } catch (error) {
-      const rawFailureCode =
-        error instanceof SmokeFailure ? error.code : 'UNEXPECTED_ASSERTION_FAILURE';
-      const failureCode =
-        rawFailureCode === 'SCENARIO_TIMEOUT' || rawFailureCode === 'UNEXPECTED_ASSERTION_FAILURE'
-          ? `${rawFailureCode}_${checkpoint}`
-          : rawFailureCode;
-      results.push({
-        id,
-        title,
-        status: 'FAIL',
-        durationMs: Date.now() - startedAt,
-        browserExternalRequests: browserExternalRequests(),
-        apiExternalRequestsBlocked,
-        networkGuardCanaries: 'PASS',
-        failureCode,
-      });
-      process.stderr.write(`${id} FAIL — ${title}: ${failureCode}\n`);
+      failure = error;
     } finally {
       if (context !== undefined) {
-        await within(context.close(), 3_000, 'CONTEXT_CLOSE_TIMEOUT').catch(() => undefined);
+        try {
+          await closeRoutedContext(context, page);
+        } catch (error) {
+          failure ??=
+            error instanceof SmokeFailure ? error : new SmokeFailure('CONTEXT_CLOSE_FAILED');
+        }
       }
-      await stop(api);
+      try {
+        await stop(api);
+      } catch (error) {
+        failure ??= error instanceof SmokeFailure ? error : new SmokeFailure('API_STOP_FAILED');
+      }
     }
+
+    const commonResult = {
+      id,
+      title,
+      durationMs: Date.now() - startedAt,
+      browserExternalRequests: browserExternalRequests(),
+      apiExternalRequestsBlocked,
+      networkGuardCanaries: 'PASS',
+    };
+    if (failure === undefined) {
+      results.push({ ...commonResult, status: 'PASS' });
+      process.stdout.write(`${id} PASS — ${title}\n`);
+      return;
+    }
+
+    const rawFailureCode =
+      failure instanceof SmokeFailure ? failure.code : 'UNEXPECTED_ASSERTION_FAILURE';
+    const failureCode =
+      rawFailureCode === 'SCENARIO_TIMEOUT' || rawFailureCode === 'UNEXPECTED_ASSERTION_FAILURE'
+        ? `${rawFailureCode}_${checkpoint}`
+        : rawFailureCode;
+    results.push({ ...commonResult, status: 'FAIL', failureCode });
+    process.stderr.write(`${id} FAIL — ${title}: ${failureCode}\n`);
   };
 
   await scenario(
@@ -1067,44 +1164,83 @@ const run = async () => {
 };
 
 const runWorker = async (id) => {
-  const child = start(process.execPath, [process.argv[1]], {
-    SMOKE_ONLY: id,
-    SMOKE_WORKER: '1',
-  });
-  let exitCode;
+  const evidenceToken = randomBytes(12).toString('hex');
+  const workerEvidencePath = path.join(
+    RUNTIME_EVIDENCE_DIRECTORY,
+    `stage-5-smoke-worker-${evidenceToken}.json`,
+  );
+  let stderr = '';
+  const child = start(
+    process.execPath,
+    [process.argv[1]],
+    {
+      SMOKE_ONLY: id,
+      SMOKE_WORKER: '1',
+      SMOKE_WORKER_EVIDENCE_TOKEN: evidenceToken,
+    },
+    ROOT,
+    (chunk) => {
+      stderr = `${stderr}${String(chunk)}`.slice(-8_192);
+    },
+    'WORKER',
+  );
+  let outcome;
   try {
-    exitCode = await within(
+    outcome = await within(
       new Promise((resolve) => {
-        child.once('exit', (code) => resolve(code ?? 1));
+        child.once('close', (code, signal) => resolve({ code, signal }));
       }),
       90_000,
       `${id}_WORKER_TIMEOUT`,
     );
   } catch {
-    await stop(child);
+    let failureCode = 'WORKER_TIMEOUT';
+    try {
+      await stop(child);
+    } catch {
+      failureCode = 'WORKER_TIMEOUT_STOP_FAILED';
+    }
+    await rm(workerEvidencePath, { force: true }).catch(() => undefined);
     return {
       id,
       title: id,
       status: 'FAIL',
       durationMs: 90_000,
-      failureCode: 'WORKER_TIMEOUT',
+      failureCode,
     };
   } finally {
-    processes.delete(child);
+    if (hasExited(child)) processes.delete(child);
   }
 
+  const diagnostic = /(?:^|\r?\n)SMOKE_WORKER_FAILURE:([A-Z0-9_]+)(?:\r?\n|$)/.exec(stderr)?.[1];
+  const stderrFailureCode =
+    diagnostic ??
+    (/Named export ['"]chromium['"] not found|ERR_MODULE_NOT_FOUND|Cannot find package ['"]@playwright\/test['"]|EPERM: operation not permitted, open [^\r\n]*node_modules[^\r\n]*playwright/u.test(
+      stderr,
+    )
+      ? 'MODULE_LOAD_FAILED'
+      : undefined);
+  const abnormalExitCode =
+    stderrFailureCode === undefined
+      ? outcome.signal === null
+        ? `WORKER_EXIT_CODE_${outcome.code ?? 'UNKNOWN'}`
+        : 'WORKER_SIGNALLED'
+      : `WORKER_${stderrFailureCode}`;
+
   try {
-    const evidence = JSON.parse(await readFile(EVIDENCE_PATH, 'utf8'));
+    const evidence = JSON.parse(await readFile(workerEvidencePath, 'utf8'));
     const result = Array.isArray(evidence.results)
       ? evidence.results.find((candidate) => candidate?.id === id)
       : undefined;
     if (result !== undefined) {
-      return exitCode === 0 || result.status === 'FAIL'
+      return outcome.code === 0 || result.status === 'FAIL'
         ? result
-        : { ...result, status: 'FAIL', failureCode: 'WORKER_EXITED' };
+        : { ...result, status: 'FAIL', failureCode: abnormalExitCode };
     }
   } catch {
     // A missing or malformed worker artifact becomes a sanitized failure below.
+  } finally {
+    await rm(workerEvidencePath, { force: true }).catch(() => undefined);
   }
 
   return {
@@ -1112,7 +1248,7 @@ const runWorker = async (id) => {
     title: id,
     status: 'FAIL',
     durationMs: 0,
-    failureCode: 'WORKER_EVIDENCE_MISSING',
+    failureCode: outcome.code === 0 ? 'WORKER_EVIDENCE_MISSING' : abnormalExitCode,
   };
 };
 
@@ -1129,15 +1265,34 @@ const runIsolatedMatrix = async () => {
   if (results.some((result) => result.status !== 'PASS')) process.exitCode = 1;
 };
 
+let executionFailure;
 try {
   if (process.env.SMOKE_WORKER === '1' || process.env.SMOKE_ONLY !== undefined) {
     await run();
   } else {
     await runIsolatedMatrix();
   }
+} catch (error) {
+  executionFailure =
+    error instanceof SmokeFailure ? error : new SmokeFailure('UNEXPECTED_RUNTIME_FAILURE');
 } finally {
   if (sharedBrowser !== undefined) {
-    await within(sharedBrowser.close(), 5_000, 'BROWSER_CLOSE_TIMEOUT').catch(() => undefined);
+    try {
+      await within(sharedBrowser.close(), 5_000, 'BROWSER_CLOSE_TIMEOUT');
+    } catch (error) {
+      executionFailure ??=
+        error instanceof SmokeFailure ? error : new SmokeFailure('BROWSER_CLOSE_FAILED');
+    }
   }
-  await stopAll();
+  try {
+    await stopAll();
+  } catch (error) {
+    executionFailure ??=
+      error instanceof SmokeFailure ? error : new SmokeFailure('PROCESS_CLEANUP_FAILED');
+  }
+}
+
+if (executionFailure !== undefined) {
+  process.stderr.write(`SMOKE_WORKER_FAILURE:${executionFailure.code}\n`);
+  process.exitCode = 1;
 }

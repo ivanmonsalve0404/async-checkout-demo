@@ -2180,7 +2180,7 @@ export const validateGithubOidcTrustPolicy = ({ policy, accountId, expectedSubs 
     !/^[0-9]{12}$/u.test(accountId ?? '') ||
     !Array.isArray(expectedSubs) ||
     expectedSubs.length < 1 ||
-    expectedSubs.length > 2 ||
+    expectedSubs.length > 3 ||
     new Set(expectedSubs).size !== expectedSubs.length ||
     allowStatements.length < 1 ||
     allowStatements.length > expectedSubs.length ||
@@ -13951,6 +13951,10 @@ export const selfTestStage7Control = async () => {
   const externalSub =
     'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease-external';
   const baseSub = 'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease';
+  const recoverySub =
+    'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-recovery';
+  const reconciliationRecoverySub =
+    'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-reconciliation-recovery';
   assert.deepEqual(expectedGithubOidcSubjects(config, config.aws.roles.readRoleArn), [
     baseSub,
     externalSub,
@@ -13961,16 +13965,40 @@ export const selfTestStage7Control = async () => {
   ]);
   assert.deepEqual(expectedGithubOidcSubjects(config, config.aws.roles.rollbackRoleArn), [baseSub]);
   assert.deepEqual(expectedGithubOidcSubjects(config, config.aws.roles.cleanupRoleArn), [baseSub]);
-  assert.deepEqual(expectedGithubOidcSubjects(fullConfig, fullConfig.aws.roles.readRoleArn), [sub]);
+  assert.deepEqual(expectedGithubOidcSubjects(fullConfig, fullConfig.aws.roles.readRoleArn), [
+    sub,
+    recoverySub,
+    reconciliationRecoverySub,
+  ]);
   assert.deepEqual(expectedGithubOidcSubjects(fullConfig, fullConfig.aws.roles.rollbackRoleArn), [
     sub,
-    'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-recovery',
+    recoverySub,
   ]);
   validateGithubOidcTrustPolicy({
     policy: { Statement: [trustStatement([baseSub, externalSub])] },
     accountId: '123456789012',
     expectedSubs: [baseSub, externalSub],
   });
+  validateGithubOidcTrustPolicy({
+    policy: {
+      Statement: [trustStatement([sub, recoverySub, reconciliationRecoverySub])],
+    },
+    accountId: '123456789012',
+    expectedSubs: [sub, recoverySub, reconciliationRecoverySub],
+  });
+  assert.throws(
+    () =>
+      validateGithubOidcTrustPolicy({
+        policy: {
+          Statement: [
+            trustStatement([sub, recoverySub, reconciliationRecoverySub, `${sub}-extra`]),
+          ],
+        },
+        accountId: '123456789012',
+        expectedSubs: [sub, recoverySub, reconciliationRecoverySub, `${sub}-extra`],
+      }),
+    (error) => error.code === 'E7_AWS_ROLE_TRUST_INVALID',
+  );
   for (const policy of [
     { Statement: [trustStatement(), { ...trustStatement(), Principal: { AWS: '*' } }] },
     { Statement: [trustStatement(`${sub}:*`)] },

@@ -50,7 +50,7 @@ env:
   NODE_VERSION: '24.19.0'
   PNPM_VERSION: '11.19.0'
   STAGE7_AWS_ACCOUNT_ID: ${{ vars.STAGE7_AWS_ACCOUNT_ID }}
-  STAGE7_AWS_REGION: ${{ vars.STAGE7_AWS_REGION }}
+  STAGE7_AWS_REGION: ${{ vars.STAGE7_PRERELEASE_AWS_REGION }}
   STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
   STAGE7_EVIDENCE_ROOT: output/evidence/runtime/stage-7-prerelease
   STAGE7_PRERELEASE_CLEANUP_WATCHDOG_ROLE_ARN: ${{ vars.STAGE7_PRERELEASE_CLEANUP_WATCHDOG_ROLE_ARN }}
@@ -91,7 +91,7 @@ jobs:
       - name: Materialize and validate the approved Stage 7 config
         env:
           EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
-          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_PRERELEASE_CONFIG_B64 }}
         run: |
           set -euo pipefail
           test -n "${STAGE7_CONFIG_B64}"
@@ -269,7 +269,7 @@ jobs:
       - name: Materialize and validate the approved Stage 7 config
         env:
           EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
-          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_PRERELEASE_CONFIG_B64 }}
         run: |
           set -euo pipefail
           test -n "${STAGE7_CONFIG_B64}"
@@ -416,7 +416,7 @@ jobs:
       - name: Materialize and validate the approved Stage 7 config
         env:
           EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
-          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_PRERELEASE_CONFIG_B64 }}
         run: |
           set -euo pipefail
           test -n "${STAGE7_CONFIG_B64}"
@@ -487,7 +487,7 @@ jobs:
       - name: Materialize and validate the approved Stage 7 config
         env:
           EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
-          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_PRERELEASE_CONFIG_B64 }}
         run: |
           set -euo pipefail
           test -n "${STAGE7_CONFIG_B64}"
@@ -511,7 +511,7 @@ jobs:
           output-credentials: false
           role-duration-seconds: 1800
           role-session-name: e7pre-${{ github.job }}-${{ github.run_id }}
-          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}
+          role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_READ_ROLE_ARN }}
           unset-current-credentials: true
       - name: Produce sanitized prerelease plan and diff without deployment
         run: |
@@ -582,7 +582,7 @@ jobs:
       - name: Materialize and validate the approved Stage 7 config
         env:
           EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
-          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_PRERELEASE_CONFIG_B64 }}
         run: |
           set -euo pipefail
           test -n "${STAGE7_CONFIG_B64}"
@@ -677,7 +677,7 @@ jobs:
       - name: Materialize and validate the approved Stage 7 config
         env:
           EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
-          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_PRERELEASE_CONFIG_B64 }}
         run: |
           set -euo pipefail
           test -n "${STAGE7_CONFIG_B64}"
@@ -701,7 +701,7 @@ jobs:
           output-credentials: false
           role-duration-seconds: 900
           role-session-name: e7pre-safety-${{ github.run_id }}-${{ github.run_attempt }}
-          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}
+          role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_READ_ROLE_ARN }}
           unset-current-credentials: true
       - name: Capture positive prerelease safety readiness before any deployment
         env:
@@ -783,7 +783,7 @@ jobs:
       - name: Materialize and validate the approved Stage 7 config
         env:
           EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
-          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_PRERELEASE_CONFIG_B64 }}
         run: |
           set -euo pipefail
           test -n "${STAGE7_CONFIG_B64}"
@@ -831,7 +831,7 @@ jobs:
           output-credentials: false
           role-duration-seconds: 2700
           role-session-name: e7pre-${{ github.job }}-${{ github.run_id }}
-          role-to-assume: ${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_DEPLOY_ROLE_ARN }}
           unset-current-credentials: true
       - name: Revalidate ephemeral authority immediately before mutation
         env:
@@ -963,7 +963,7 @@ jobs:
       - name: Materialize and validate the approved Stage 7 config
         env:
           EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
-          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_PRERELEASE_CONFIG_B64 }}
         run: |
           set -euo pipefail
           test -n "${STAGE7_CONFIG_B64}"
@@ -1072,7 +1072,7 @@ jobs:
           output-credentials: false
           role-duration-seconds: 1800
           role-session-name: e7pre-read-${{ github.run_id }}-${{ github.run_attempt }}
-          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}
+          role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_READ_ROLE_ARN }}
           unset-current-credentials: true
       - name: Prove the exact alarm email subscription is confirmed without target traffic
         run: |
@@ -1095,7 +1095,7 @@ jobs:
           output-credentials: false
           role-duration-seconds: 2700
           role-session-name: e7pre-${{ github.job }}-${{ github.run_id }}
-          role-to-assume: ${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_DEPLOY_ROLE_ARN }}
           unset-current-credentials: true
       - name: Activate only after authorization and confirmed observability
         env:
@@ -1116,7 +1116,7 @@ jobs:
           output-credentials: false
           role-duration-seconds: 1800
           role-session-name: e7pre-external-read-${{ github.run_id }}-${{ github.run_attempt }}
-          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}
+          role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_READ_ROLE_ARN }}
           unset-current-credentials: true
       - name: Materialize one-use CloudFront access proofs without disclosure
         env:
@@ -1268,7 +1268,7 @@ jobs:
       - name: Materialize and validate the approved Stage 7 config
         env:
           EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
-          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_PRERELEASE_CONFIG_B64 }}
         run: |
           set -euo pipefail
           test -n "${STAGE7_CONFIG_B64}"
@@ -1354,7 +1354,7 @@ jobs:
       - name: Materialize and validate the approved Stage 7 config
         env:
           EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
-          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_PRERELEASE_CONFIG_B64 }}
         run: |
           set -euo pipefail
           test -n "${STAGE7_CONFIG_B64}"
@@ -1378,7 +1378,7 @@ jobs:
           output-credentials: false
           role-duration-seconds: 1800
           role-session-name: e7pre-${{ github.job }}-${{ github.run_id }}
-          role-to-assume: ${{ vars.STAGE7_AWS_CLEANUP_ROLE_ARN }}
+          role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_CLEANUP_ROLE_ARN }}
           unset-current-credentials: true
       - name: Remove only the authorized ephemeral prerelease
         run: |
@@ -1517,7 +1517,7 @@ jobs:
         if: ${{ always() }}
         env:
           EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
-          STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}
+          STAGE7_CONFIG_B64: ${{ vars.STAGE7_PRERELEASE_CONFIG_B64 }}
         run: |
           set -euo pipefail
           test -n "${STAGE7_CONFIG_B64}"

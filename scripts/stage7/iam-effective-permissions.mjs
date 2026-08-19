@@ -6,11 +6,11 @@ import { createHash } from 'node:crypto';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
+import { hasUniqueIamRoleNames, parseIamRoleArn } from './core.mjs';
+
 const SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const RELEASE_ID = /^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$/u;
-const IAM_ROLE_ARN =
-  /^arn:aws:iam::([0-9]{12}):role\/(?!\/)(?!.*\/\/)(?!.*\/$)([A-Za-z0-9+=,.@_/-]{1,512})$/u;
 const IAM_POLICY_ARN =
   /^arn:aws:iam::(?:(aws)|([0-9]{12})):policy\/(?!\/)(?!.*\/\/)(?!.*\/$)([A-Za-z0-9+=,.@_/-]{1,512})$/u;
 const POLICY_VERSION_ID = /^v[1-9][0-9]*(?:\.[A-Za-z0-9-]+)?$/u;
@@ -464,12 +464,20 @@ export const IAM_ROLE_PERMISSION_PROFILES = Object.freeze({
     actions: READ_ACTIONS,
     requiredActions: REQUIRED_ACTIONS.readRoleArn,
     oidcSubjects: Object.freeze({
-      full: Object.freeze([environmentSubject('assessment-release')]),
+      full: Object.freeze([
+        environmentSubject('assessment-release'),
+        environmentSubject('assessment-release-recovery'),
+        environmentSubject('assessment-release-reconciliation-recovery'),
+      ]),
       prerelease: Object.freeze([
         environmentSubject('assessment-prerelease'),
         environmentSubject('assessment-prerelease-external'),
       ]),
-      baseline: Object.freeze([environmentSubject('assessment-release')]),
+      baseline: Object.freeze([
+        environmentSubject('assessment-release'),
+        environmentSubject('assessment-release-recovery'),
+        environmentSubject('assessment-release-reconciliation-recovery'),
+      ]),
     }),
   }),
   deployRoleArn: Object.freeze({
@@ -1688,8 +1696,9 @@ export const normalizeIamPolicyDocument = ({
     authorizedRoleArns.length === 0 ||
     new Set(authorizedRoleArns).size !== authorizedRoleArns.length ||
     authorizedRoleArns.some(
-      (roleArn) => IAM_ROLE_ARN.exec(roleArn ?? '')?.[1] !== config.aws.accountId,
-    )
+      (roleArn) => parseIamRoleArn(roleArn)?.accountId !== config.aws.accountId,
+    ) ||
+    !hasUniqueIamRoleNames(authorizedRoleArns)
   ) {
     fail('E7_IAM_AUTHORIZED_ROLE_SET_INVALID');
   }
@@ -1764,12 +1773,9 @@ export const normalizeIamPolicyDocument = ({
 };
 
 const roleParts = (roleArn, accountId) => {
-  const match = IAM_ROLE_ARN.exec(roleArn ?? '');
-  if (match === null || match[1] !== accountId) fail('E7_IAM_ROLE_ARN_INVALID');
-  const path = match[2];
-  const roleName = path.split('/').at(-1);
-  if (!POLICY_NAME.test(roleName ?? '')) fail('E7_IAM_ROLE_ARN_INVALID');
-  return { roleName };
+  const identity = parseIamRoleArn(roleArn);
+  if (identity === null || identity.accountId !== accountId) fail('E7_IAM_ROLE_ARN_INVALID');
+  return { roleName: identity.roleName };
 };
 
 const managedPolicyParts = (policyArn, accountId) => {
@@ -2190,11 +2196,12 @@ const resolveAuxiliaryRoleAuthorities = ({
     ...Object.values(bootstrapRoleArns(config)),
   ];
   if (
-    roleArns.some((roleArn) => IAM_ROLE_ARN.exec(roleArn ?? '')?.[1] !== config.aws.accountId) ||
+    roleArns.some((roleArn) => parseIamRoleArn(roleArn)?.accountId !== config.aws.accountId) ||
     policyArns.some(
       (policyArn) => IAM_POLICY_ARN.exec(policyArn ?? '')?.[2] !== config.aws.accountId,
     ) ||
     new Set(roleArns).size !== roleArns.length ||
+    !hasUniqueIamRoleNames([...existingRoleArns, ...roleArns]) ||
     new Set(policyArns).size !== policyArns.length ||
     roleArns.some((roleArn) => existingRoleArns.includes(roleArn))
   ) {
@@ -2267,7 +2274,9 @@ export const collectIamEffectivePermissions = ({
     !Number.isFinite(now.getTime()) ||
     !ROLE_KEYS.every((roleKey) => typeof config.aws.roles[roleKey] === 'string') ||
     typeof config.aws.roles.baselineRoleArn !== 'string' ||
-    IAM_ROLE_ARN.exec(config.aws.roles.baselineRoleArn)?.[1] !== config.aws.accountId
+    Object.values(config.aws.roles).some(
+      (roleArn) => parseIamRoleArn(roleArn)?.accountId !== config.aws.accountId,
+    )
   ) {
     fail('E7_IAM_AUDIT_INPUT_INVALID');
   }
@@ -2283,7 +2292,11 @@ export const collectIamEffectivePermissions = ({
   ) {
     fail('E7_IAM_BOOTSTRAP_ASSET_BINDING_INVALID');
   }
-  if (new Set(ROLE_KEYS.map((roleKey) => config.aws.roles[roleKey])).size !== ROLE_KEYS.length) {
+  const primaryRoleArns = ROLE_KEYS.map((roleKey) => config.aws.roles[roleKey]);
+  if (
+    new Set(primaryRoleArns).size !== ROLE_KEYS.length ||
+    !hasUniqueIamRoleNames(primaryRoleArns)
+  ) {
     fail('E7_IAM_ROLE_SEPARATION_REQUIRED');
   }
   const suppliedAuxiliaryRoleAuthorities = {
@@ -2309,7 +2322,7 @@ export const collectIamEffectivePermissions = ({
   if (
     (scope === 'prerelease' &&
       (typeof cleanupWatchdogRoleArn !== 'string' ||
-        IAM_ROLE_ARN.exec(cleanupWatchdogRoleArn)?.[1] !== config.aws.accountId ||
+        parseIamRoleArn(cleanupWatchdogRoleArn)?.accountId !== config.aws.accountId ||
         Object.values(config.aws.roles).includes(cleanupWatchdogRoleArn))) ||
     (scope !== 'prerelease' && cleanupWatchdogRoleArn !== null)
   ) {
@@ -2319,7 +2332,7 @@ export const collectIamEffectivePermissions = ({
     (scope === 'baseline' &&
       (typeof baselineRoleArn !== 'string' ||
         baselineRoleArn !== config.aws.roles.baselineRoleArn ||
-        IAM_ROLE_ARN.exec(baselineRoleArn)?.[1] !== config.aws.accountId ||
+        parseIamRoleArn(baselineRoleArn)?.accountId !== config.aws.accountId ||
         ROLE_KEYS.some((roleKey) => config.aws.roles[roleKey] === baselineRoleArn))) ||
     (scope !== 'baseline' && baselineRoleArn !== null)
   ) {
@@ -2332,10 +2345,10 @@ export const collectIamEffectivePermissions = ({
     config.aws.roles.baselineRoleArn,
     ...Object.values(expectedBootstrapRoleArns),
   ];
+  const allAuthorityRoleArns = [...allAuditedRoleArns, ...(auxiliaryRoleAuthority?.roleArns ?? [])];
   if (
-    new Set(allAuditedRoleArns).size !== allAuditedRoleArns.length ||
-    (auxiliaryRoleAuthority !== null &&
-      auxiliaryRoleAuthority.roleArns.some((roleArn) => allAuditedRoleArns.includes(roleArn)))
+    new Set(allAuthorityRoleArns).size !== allAuthorityRoleArns.length ||
+    !hasUniqueIamRoleNames(allAuthorityRoleArns)
   ) {
     fail('E7_IAM_ROLE_SEPARATION_REQUIRED');
   }
@@ -3335,6 +3348,32 @@ export const selfTestIamEffectivePermissions = () => {
   const candidateSha = 'a'.repeat(40);
   const releaseId = 'rel-20260818-0100-aaaaaaa';
   const manifestSha256 = 'b'.repeat(64);
+  for (const invalidRoleArn of [
+    `arn:aws:iam::${fixture.accountId}:role/checkout/`,
+    `arn:aws:iam::${fixture.accountId}:role/checkout//read`,
+    `arn:aws:iam::${fixture.accountId}:role/${'r'.repeat(65)}`,
+  ]) {
+    expectCode(() => roleParts(invalidRoleArn, fixture.accountId), 'E7_IAM_ROLE_ARN_INVALID');
+  }
+  const collidingRoleNameConfig = structuredClone(fixture.config);
+  const readRoleName = collidingRoleNameConfig.aws.roles.readRoleArn.split('/').at(-1);
+  collidingRoleNameConfig.aws.roles.deployRoleArn = `arn:aws:iam::${fixture.accountId}:role/isolated/${readRoleName}`;
+  expectCode(
+    () =>
+      collectIamEffectivePermissions({
+        config: collidingRoleNameConfig,
+        scope: 'full',
+        candidateSha,
+        releaseId,
+        manifestSha256,
+        bootstrapAssetInventory: fixture.bootstrapAssetInventory,
+        ...fixture.auxiliaryRoleAuthorityInputs,
+        callAws: fixture.callAws,
+        validateTrust: () => true,
+        now: new Date('2026-08-18T01:00:00.000Z'),
+      }),
+    'E7_IAM_ROLE_SEPARATION_REQUIRED',
+  );
   const observedTrustSubjects = new Map();
   const evidence = collectIamEffectivePermissions({
     config: fixture.config,
@@ -3353,6 +3392,11 @@ export const selfTestIamEffectivePermissions = () => {
   assert.deepEqual(observedTrustSubjects.get('rollbackRoleArn'), [
     environmentSubject('assessment-release'),
     environmentSubject('assessment-release-recovery'),
+  ]);
+  assert.deepEqual(observedTrustSubjects.get('readRoleArn'), [
+    environmentSubject('assessment-release'),
+    environmentSubject('assessment-release-recovery'),
+    environmentSubject('assessment-release-reconciliation-recovery'),
   ]);
   validateIamEffectivePermissionsEvidence({
     value: evidence,
@@ -4774,7 +4818,7 @@ export const selfTestIamEffectivePermissions = () => {
 
   return {
     status: 'PASS',
-    canaries: 131,
+    canaries: 135,
     simulatedAwsRequests: fixture.calls.length,
     externalRequests: 0,
     mutationsPerformed: 0,

@@ -127,19 +127,19 @@ const RELEASE_AWS = new Map([
   ],
 ]);
 const PRERELEASE_AWS = new Map([
-  ['infra-diff', ['${{ vars.STAGE7_AWS_READ_ROLE_ARN }}', '--aws-read']],
+  ['infra-diff', ['${{ vars.STAGE7_PRERELEASE_AWS_READ_ROLE_ARN }}', '--aws-read']],
   [
     'prerelease-safety-readiness',
-    ['${{ vars.STAGE7_AWS_READ_ROLE_ARN }}', 'release:prerelease-safety -- capture'],
+    ['${{ vars.STAGE7_PRERELEASE_AWS_READ_ROLE_ARN }}', 'release:prerelease-safety -- capture'],
   ],
-  ['deploy-prerelease', ['${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}', '--aws-deploy']],
-  ['external-verification', ['${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}', '--aws-deploy']],
-  ['cleanup', ['${{ vars.STAGE7_AWS_CLEANUP_ROLE_ARN }}', '--aws-cleanup']],
+  ['deploy-prerelease', ['${{ vars.STAGE7_PRERELEASE_AWS_DEPLOY_ROLE_ARN }}', '--aws-deploy']],
+  ['external-verification', ['${{ vars.STAGE7_PRERELEASE_AWS_DEPLOY_ROLE_ARN }}', '--aws-deploy']],
+  ['cleanup', ['${{ vars.STAGE7_PRERELEASE_AWS_CLEANUP_ROLE_ARN }}', '--aws-cleanup']],
 ]);
 
-const CONFIG_FRAGMENTS = [
+const configFragments = (variableName) => [
   'EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}',
-  'STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}',
+  'STAGE7_CONFIG_B64: ${{ vars.' + variableName + ' }}',
   'test -n "${STAGE7_CONFIG_B64}"',
   '[[ "${EXPECTED_STAGE7_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]]',
   'umask 077',
@@ -675,6 +675,8 @@ const releaseSpec = {
   reusable: new Map([['rollback-resilience', ROLLBACK_RESILIENCE_WORKFLOW]]),
   publishJob: 'publish-release',
   alertJob: 'deploy-observability',
+  configVariable: 'STAGE7_CONFIG_B64',
+  regionVariable: 'STAGE7_AWS_REGION',
 };
 const prereleaseSpec = {
   jobs: PRERELEASE_JOBS,
@@ -712,6 +714,8 @@ const prereleaseSpec = {
   reusable: new Map(),
   publishJob: undefined,
   alertJob: 'deploy-prerelease',
+  configVariable: 'STAGE7_PRERELEASE_CONFIG_B64',
+  regionVariable: 'STAGE7_PRERELEASE_AWS_REGION',
 };
 
 const validateCommon = (name, input, spec) => {
@@ -751,7 +755,7 @@ const validateCommon = (name, input, spec) => {
   }
   for (const fragment of [
     'STAGE7_AWS_ACCOUNT_ID: ${{ vars.STAGE7_AWS_ACCOUNT_ID }}',
-    'STAGE7_AWS_REGION: ${{ vars.STAGE7_AWS_REGION }}',
+    'STAGE7_AWS_REGION: ${{ vars.' + spec.regionVariable + ' }}',
     'STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}',
     'STAGE7_RELEASE_ID: ${{ inputs.release_id }}',
     "github.event_name == 'workflow_dispatch'",
@@ -762,6 +766,19 @@ const validateCommon = (name, input, spec) => {
     'test "$(git rev-parse origin/master)" = "${CANDIDATE_SHA}"',
   ]) {
     if (!source.includes(fragment)) fail(`immutable candidate guard is missing: ${fragment}`);
+  }
+  if (
+    prereleaseSpec === spec &&
+    [
+      '${{ vars.STAGE7_CONFIG_B64 }}',
+      '${{ vars.STAGE7_AWS_REGION }}',
+      '${{ vars.STAGE7_AWS_READ_ROLE_ARN }}',
+      '${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}',
+      '${{ vars.STAGE7_AWS_ROLLBACK_ROLE_ARN }}',
+      '${{ vars.STAGE7_AWS_CLEANUP_ROLE_ARN }}',
+    ].some((binding) => source.includes(binding))
+  ) {
+    fail('prerelease must not reuse full-release config, region or role variables');
   }
   const workflowEnvironment = topLevelBlock(source, 'env');
   if (
@@ -1111,7 +1128,7 @@ const validateCommon = (name, input, spec) => {
       if (configSteps.length !== 1) {
         fail(`${id} must materialize the approved config exactly once`);
       } else {
-        for (const fragment of CONFIG_FRAGMENTS) {
+        for (const fragment of configFragments(spec.configVariable)) {
           if (!configSteps[0].includes(fragment))
             fail(`${id} config channel is missing: ${fragment}`);
         }
@@ -1511,9 +1528,9 @@ const validateCommon = (name, input, spec) => {
         }
       } else if (isPrereleaseExternal) {
         const expectedRoles = [
-          '${{ vars.STAGE7_AWS_READ_ROLE_ARN }}',
-          '${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}',
-          '${{ vars.STAGE7_AWS_READ_ROLE_ARN }}',
+          '${{ vars.STAGE7_PRERELEASE_AWS_READ_ROLE_ARN }}',
+          '${{ vars.STAGE7_PRERELEASE_AWS_DEPLOY_ROLE_ARN }}',
+          '${{ vars.STAGE7_PRERELEASE_AWS_READ_ROLE_ARN }}',
         ];
         const sessionIndexes = awsSteps.map((step) => steps.indexOf(step));
         for (const [index, role] of expectedRoles.entries()) {
@@ -1631,7 +1648,10 @@ const validateCommon = (name, input, spec) => {
       }
     }
   }
-  if (count(source, 'STAGE7_CONFIG_B64: ${{ vars.STAGE7_CONFIG_B64 }}') !== spec.configJobs.size) {
+  if (
+    count(source, 'STAGE7_CONFIG_B64: ${{ vars.' + spec.configVariable + ' }}') !==
+    spec.configJobs.size
+  ) {
     fail('the protected Stage 7 config channel must exist only in its required jobs');
   }
   const executeCount = count(source, '--execute');
@@ -3647,7 +3667,7 @@ export function validatePrereleaseWorkflow(name, input) {
   const deploy = jobs.get('deploy-prerelease') ?? '';
   const deploySteps = stepBlocks(deploy);
   const deployOidcStepIndex = deploySteps.findIndex((step) =>
-    step.includes('role-to-assume: ${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}'),
+    step.includes('role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_DEPLOY_ROLE_ARN }}'),
   );
   const deployOidcGate = deploySteps[deployOidcStepIndex - 1] ?? '';
   for (const fragment of [
@@ -3845,10 +3865,10 @@ export function validatePrereleaseWorkflow(name, input) {
     'chmod 600 "${target}"',
     'test "$(stat -c \'%a\' "${target}")" = \'600\'',
     'export STAGE7_EXTERNAL_AUTHORIZATIONS="${target}"',
-    'role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}',
+    'role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_READ_ROLE_ARN }}',
     'pnpm release:verify:observability -- --record .stage7/deployment/deployment.json --scope prerelease',
     "const required=['data','api','observability','web','seed','expiryRegistration','observabilityReadiness']",
-    'role-to-assume: ${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}',
+    'role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_DEPLOY_ROLE_ARN }}',
     '--api-record "${STAGE7_EVIDENCE_ROOT}/deployment.json"',
     '--seed-evidence "${STAGE7_EVIDENCE_ROOT}/deployment.json"',
     'output/evidence/runtime/stage-7-prerelease/deployment.json',
@@ -3867,15 +3887,17 @@ export function validatePrereleaseWorkflow(name, input) {
   const restoreIndex = external.indexOf(
     'name: Restore and validate the append-only prerelease deployment ledger',
   );
-  const readOidcIndex = external.indexOf('role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}');
+  const readOidcIndex = external.indexOf(
+    'role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_READ_ROLE_ARN }}',
+  );
   const readinessIndex = external.indexOf('pnpm release:verify:observability');
   const mergedLedgerIndex = external.indexOf("'observabilityReadiness']");
   const deployOidcIndex = external.indexOf(
-    'role-to-assume: ${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}',
+    'role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_DEPLOY_ROLE_ARN }}',
   );
   const activateIndex = external.indexOf('pnpm release:activate');
   const finalReadOidcIndex = external.lastIndexOf(
-    'role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}',
+    'role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_READ_ROLE_ARN }}',
   );
   const trafficIndex = external.indexOf('pnpm release:smoke');
   if (
@@ -3900,7 +3922,7 @@ export function validatePrereleaseWorkflow(name, input) {
     step.includes('name: Capture fresh activation safety under read authority'),
   );
   const activationDeployOidcStepIndex = externalSteps.findIndex((step) =>
-    step.includes('role-to-assume: ${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}'),
+    step.includes('role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_DEPLOY_ROLE_ARN }}'),
   );
   const activationStepIndex = externalSteps.findIndex((step) =>
     step.includes('name: Activate only after authorization and confirmed observability'),
@@ -4026,7 +4048,7 @@ export function validatePrereleaseWorkflow(name, input) {
     "if: ${{ always() && github.run_attempt == 1 && needs.approval.result == 'success' }}",
     'name: stage7-prerelease-candidate',
     'name: stage7-prerelease-candidate-manifest',
-    '${{ vars.STAGE7_AWS_CLEANUP_ROLE_ARN }}',
+    '${{ vars.STAGE7_PRERELEASE_AWS_CLEANUP_ROLE_ARN }}',
     '--aws-cleanup',
     "'DESTROY_EPHEMERAL_STACKS'].join('\\\\0')",
     '--execute',
@@ -5371,6 +5393,11 @@ const selfTestRelease = (source) =>
 const selfTestPrerelease = (source) =>
   runCanaries(PRERELEASE_WORKFLOW, source, validatePrereleaseWorkflow, [
     {
+      expected: 'prerelease must not reuse full-release config, region or role variables',
+      mutate: (value) =>
+        changed(value, '${{ vars.STAGE7_PRERELEASE_CONFIG_B64 }}', '${{ vars.STAGE7_CONFIG_B64 }}'),
+    },
+    {
       expected: 'only trigger',
       mutate: (value) =>
         changed(value, 'on:\n  workflow_dispatch:', 'on:\n  push:\n  workflow_dispatch:'),
@@ -5433,7 +5460,7 @@ const selfTestPrerelease = (source) =>
             step.includes('name: Revalidate live watchdog authority before deploy-role OIDC'),
           );
           const oidc = steps.find((step) =>
-            step.includes('role-to-assume: ${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}'),
+            step.includes('role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_DEPLOY_ROLE_ARN }}'),
           );
           assert.ok(gate && oidc);
           return block.replace(`${gate}\n${oidc}`, `${oidc}\n${gate}`);
@@ -5463,7 +5490,7 @@ const selfTestPrerelease = (source) =>
             step.includes('name: Capture fresh activation safety under read authority'),
           );
           const oidc = steps.find((step) =>
-            step.includes('role-to-assume: ${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}'),
+            step.includes('role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_DEPLOY_ROLE_ARN }}'),
           );
           assert.ok(capture && oidc);
           return block.replace(`${capture}\n${oidc}`, `${oidc}\n${capture}`);
@@ -5704,8 +5731,8 @@ const selfTestPrerelease = (source) =>
       mutate: (value) =>
         replaceJob(value, 'external-verification', (block) =>
           block.replace(
-            'role-session-name: e7pre-external-read-${{ github.run_id }}-${{ github.run_attempt }}\n          role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}',
-            'role-session-name: e7pre-external-read-${{ github.run_id }}-${{ github.run_attempt }}\n          role-to-assume: ${{ vars.STAGE7_AWS_DEPLOY_ROLE_ARN }}',
+            'role-session-name: e7pre-external-read-${{ github.run_id }}-${{ github.run_attempt }}\n          role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_READ_ROLE_ARN }}',
+            'role-session-name: e7pre-external-read-${{ github.run_id }}-${{ github.run_attempt }}\n          role-to-assume: ${{ vars.STAGE7_PRERELEASE_AWS_DEPLOY_ROLE_ARN }}',
           ),
         ),
     },

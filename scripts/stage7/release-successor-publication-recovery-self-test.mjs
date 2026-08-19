@@ -27,6 +27,7 @@ import {
   expectedRecoveryBoundaryPolicy,
   expectedRecoverySessionPolicy,
   expectedRecoveryTrustPolicy,
+  readPublicationRecoveryResultArchive,
   recoverySessionIsSubsetOfBase,
   validatePublicationRecoveryPlan,
   validatePublicationRecoveryReceipt,
@@ -770,6 +771,18 @@ export const selfTestPublicationRecovery = () => {
   }
   const postSuccess = postSuccessFixtures[0];
   const { intakeArguments, recoveryArtifacts, planArchive, resultArchive } = postSuccess;
+  for (const maliciousRecoveryRunId of ['7002|9999', '7002.*', '(?:7002)']) {
+    assert.throws(
+      () =>
+        readPublicationRecoveryResultArchive({
+          recoveryRunId: maliciousRecoveryRunId,
+          recoveryArtifacts,
+          planArchive,
+          resultArchive,
+        }),
+      (error) => error?.code === 'E7_PUBLICATION_RECOVERY_RESULT_RUN_INVALID',
+    );
+  }
   const forgedReceipt = clone(postSuccess.receipt);
   forgedReceipt.stage7GateClaimed = true;
   const forgedReceiptBody = { ...forgedReceipt };
@@ -931,7 +944,7 @@ export const selfTestPublicationRecovery = () => {
 
   return {
     status: 'PASS',
-    canaries: 44,
+    canaries: 47,
     sourceArtifacts: RECOVERY_SOURCE_ARTIFACTS.length,
     externalRequests: 0,
     awsMutations: 0,

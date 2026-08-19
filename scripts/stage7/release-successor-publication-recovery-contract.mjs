@@ -1915,17 +1915,10 @@ export const validatePublicationRecoveryReceipt = (value) => {
   return value;
 };
 
-const recoveryResultArtifactPattern = (recoveryRunId) =>
-  new RegExp(
-    `^stage7-release-successor-publication-recovery-result-s([1-9][0-9]{0,19})-r${recoveryRunId}-a1$`,
-    'u',
-  );
-
-const recoveryPlanArtifactPattern = (recoveryRunId) =>
-  new RegExp(
-    `^stage7-release-successor-publication-recovery-plan-s([1-9][0-9]{0,19})-r${recoveryRunId}-a1$`,
-    'u',
-  );
+const RECOVERY_RESULT_ARTIFACT_PATTERN =
+  /^stage7-release-successor-publication-recovery-result-s([1-9][0-9]{0,19})-r([1-9][0-9]{0,19})-a1$/u;
+const RECOVERY_PLAN_ARTIFACT_PATTERN =
+  /^stage7-release-successor-publication-recovery-plan-s([1-9][0-9]{0,19})-r([1-9][0-9]{0,19})-a1$/u;
 
 const exactArchiveRootFiles = (entries, expected) => {
   if (
@@ -1951,14 +1944,12 @@ export const readPublicationRecoveryResultArchive = ({
 }) => {
   const runId = String(recoveryRunId);
   if (!RUN_ID.test(runId)) fail('E7_PUBLICATION_RECOVERY_RESULT_RUN_INVALID');
-  const resultPattern = recoveryResultArtifactPattern(runId);
-  const planPattern = recoveryPlanArtifactPattern(runId);
   const observedArtifacts = normalizeArtifacts(recoveryArtifacts);
-  const resultMatches = observedArtifacts.filter((artifact) =>
-    resultPattern.test(artifact?.name ?? ''),
+  const resultMatches = observedArtifacts.filter(
+    (artifact) => RECOVERY_RESULT_ARTIFACT_PATTERN.exec(artifact?.name ?? '')?.[2] === runId,
   );
-  const planMatches = observedArtifacts.filter((artifact) =>
-    planPattern.test(artifact?.name ?? ''),
+  const planMatches = observedArtifacts.filter(
+    (artifact) => RECOVERY_PLAN_ARTIFACT_PATTERN.exec(artifact?.name ?? '')?.[2] === runId,
   );
   if (
     observedArtifacts.length !== 2 ||
@@ -1971,8 +1962,8 @@ export const readPublicationRecoveryResultArchive = ({
   }
   const resultArtifact = resultMatches[0];
   const planArtifact = planMatches[0];
-  const resultNameMatch = resultPattern.exec(resultArtifact.name);
-  const planNameMatch = planPattern.exec(planArtifact.name);
+  const resultNameMatch = RECOVERY_RESULT_ARTIFACT_PATTERN.exec(resultArtifact.name);
+  const planNameMatch = RECOVERY_PLAN_ARTIFACT_PATTERN.exec(planArtifact.name);
   const resultArchiveBytes = Buffer.isBuffer(resultArchive)
     ? Buffer.from(resultArchive)
     : Buffer.from(resultArchive ?? '');
@@ -2000,7 +1991,11 @@ export const readPublicationRecoveryResultArchive = ({
   };
   const planArtifactBinding = validateRecoveryArtifact(planArtifact, planArchiveBytes);
   const resultArtifactBinding = validateRecoveryArtifact(resultArtifact, resultArchiveBytes);
-  if (resultNameMatch?.[1] !== planNameMatch?.[1]) {
+  if (
+    resultNameMatch?.[1] !== planNameMatch?.[1] ||
+    resultNameMatch?.[2] !== runId ||
+    planNameMatch?.[2] !== runId
+  ) {
     fail('E7_PUBLICATION_RECOVERY_RESULT_ARTIFACT_INVALID');
   }
   const preMutationFiles = exactArchiveRootFiles(readReleaseSuccessorZipEntries(planArchiveBytes), [

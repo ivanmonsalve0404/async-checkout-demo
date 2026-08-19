@@ -4,8 +4,9 @@
   "private": true,
   "scripts": {
     "build": "tsc --noEmit",
-    "test": "tsx --test test/config.test.ts test/foundation-stack.test.ts test/release-stacks.test.ts test/release-authority-config.test.ts test/release-authority-stack.test.ts test/release-successor-publication-recovery-authority-config.test.ts test/release-successor-publication-recovery-authority-stack.test.ts",
+    "test": "tsx --test test/config.test.ts test/foundation-stack.test.ts test/release-stacks.test.ts test/release-authority-config.test.ts test/release-authority-stack.test.ts test/release-successor-publication-recovery-authority-config.test.ts test/release-successor-publication-recovery-authority-stack.test.ts test/stage7-account-bootstrap-config.test.ts test/stage7-account-bootstrap-stack.test.ts",
     "synth": "cdk synth --quiet",
+    "synth:account-bootstrap": "cdk synth --quiet --app \"pnpm exec tsx bin/account-bootstrap.ts\"",
     "synth:authority": "cdk synth --quiet --app \"pnpm exec tsx bin/authority.ts\"",
     "synth:publication-recovery-authority": "cdk synth --quiet --app \"pnpm exec tsx bin/publication-recovery-authority.ts\"",
     "typecheck": "tsc --noEmit",
