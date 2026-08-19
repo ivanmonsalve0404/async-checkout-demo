@@ -71,7 +71,7 @@ const isExactPullRequestOpenGateState = ({
     environment.GITHUB_ACTIONS === 'true' &&
     environment.GITHUB_EVENT_NAME === 'pull_request' &&
     results.every(({ status }) => status === 'PASS' || status === 'PARTIAL') &&
-    exactStringSet(partialIds, ['E6-ACCESSIBILITY', 'E6-SANDBOX-EVIDENCE', 'E6-UAT']) &&
+    exactStringSet(partialIds, ['E6-SANDBOX-EVIDENCE', 'E6-UAT']) &&
     closeout?.schemaVersion === 1 &&
     closeout?.stage === 6 &&
     closeout?.status === 'VERIFICATION_INCOMPLETE' &&
@@ -129,7 +129,7 @@ const selfTestPullRequestOpenGates = () => {
     environment: { CI: 'true', GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request' },
     results: [
       { id: 'E6-PREFLIGHT', status: 'PASS' },
-      { id: 'E6-ACCESSIBILITY', status: 'PARTIAL' },
+      { id: 'E6-ACCESSIBILITY', status: 'PASS' },
       { id: 'E6-SANDBOX-EVIDENCE', status: 'PARTIAL' },
       { id: 'E6-UAT', status: 'PARTIAL' },
     ],
@@ -197,6 +197,9 @@ const selfTestPullRequestOpenGates = () => {
     },
     (value) => {
       value.results[0].status = 'FAIL';
+    },
+    (value) => {
+      value.results[1].status = 'PARTIAL';
     },
     (value) => {
       value.closeout.status = 'RELEASE_CANDIDATE';
