@@ -47,7 +47,7 @@ const classificationFor = (run, result) => {
   if (value === 'high') return { kind: 'score', score: 7 };
   if (value !== undefined) {
     const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed > 0 && parsed <= 10
+    return Number.isFinite(parsed) && parsed >= 0 && parsed <= 10
       ? { kind: 'score', score: parsed }
       : { kind: 'security-unclassified' };
   }
@@ -160,6 +160,7 @@ const selfTest = () => {
     1,
   );
   assert.equal(summarizeCodeqlSarif([document('6.9')]).status, 'PASS');
+  assert.equal(summarizeCodeqlSarif([document('0.0')]).status, 'PASS');
   assert.equal(summarizeCodeqlSarif([document('7.0')]).status, 'FAIL');
   assert.equal(summarizeCodeqlSarif([document('9.0')]).findings.critical, 1);
   assert.equal(summarizeCodeqlSarif([document('not-a-score')]).status, 'FAIL');
@@ -248,5 +249,12 @@ if (process.argv.includes('--self-test')) {
         : '') +
       '\n',
   );
-  if (summary.status !== 'PASS') process.exitCode = 1;
+  if (summary.status !== 'PASS') {
+    const diagnostic =
+      `critical=${summary.findings.critical}, high=${summary.findings.high}, ` +
+      `security-unclassified=${summary.findings.securityUnclassified}, unresolved=${summary.findings.unresolved}, ` +
+      `blocking-rules=${summary.blockingRuleIds.join(',') || 'none'}`;
+    process.stderr.write(`::error title=CodeQL SARIF severity gate::${diagnostic}\n`);
+    process.exitCode = 1;
+  }
 }
