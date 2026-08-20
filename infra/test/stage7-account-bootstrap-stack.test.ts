@@ -172,8 +172,10 @@ void describe('Stage 7 regional account bootstrap stacks', () => {
       .StringEquals?.['token.actions.githubusercontent.com:sub'];
     assert.deepEqual(Array.isArray(readSubjects) ? readSubjects : [readSubjects], [
       'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release',
+      'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-read',
       'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-recovery',
       'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-reconciliation-recovery',
+      'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-sandbox',
     ]);
 
     const prereleaseRead = roleByName(prerelease, 'stage7-prerelease-read');
@@ -185,6 +187,7 @@ void describe('Stage 7 regional account bootstrap stacks', () => {
     assert.deepEqual(prereleaseSubjects, [
       'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease',
       'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease-external',
+      'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease-read',
     ]);
 
     const imageRole = roleByName(full, `cdk-hnb659fds-image-publishing-role-${ACCOUNT}-us-east-1`);

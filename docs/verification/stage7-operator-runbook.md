@@ -196,11 +196,14 @@ Esperar todos los checks del SHA final, ejecutar el [protocolo manual de accesib
 
 ## 6. Configurar GitHub
 
-Los ocho Environments protegidos son:
+Los once Environments protegidos son:
 
 - `assessment-prerelease`;
+- `assessment-prerelease-read`;
 - `assessment-prerelease-external`;
 - `assessment-release`;
+- `assessment-release-read`;
+- `assessment-release-sandbox`;
 - `assessment-release-baseline`;
 - `assessment-release-recovery`;
 - `assessment-release-reconciliation-recovery`;
@@ -209,7 +212,21 @@ Los ocho Environments protegidos son:
 
 Todos deben permitir sólo `master`.
 
-Los Environments `assessment-prerelease`, `assessment-release-baseline` y `assessment-release` deben tener al menos un reviewer requerido porque el workflow valida una aprobación humana real y exactamente una review aprobada. Mientras `ivanmonsalve0404` sea el único colaborador, puede configurarse como reviewer con **Prevent self-review** desactivado. Si se exige separación de funciones, primero se agrega un segundo colaborador autorizado, se lo configura como reviewer y sólo entonces se activa **Prevent self-review**. Dejar esos Environments sin reviewer hace que el flujo falle cerrado aunque el job pueda comenzar.
+Los Environments `assessment-prerelease`, `assessment-prerelease-external`,
+`assessment-release`, `assessment-release-sandbox`, `assessment-release-baseline` y
+`assessment-release-successor-post-success` deben tener al menos un reviewer requerido. Los dos
+Environments `*-read` y los tres Environments de recovery no deben tener reviewer: sólo permiten
+que los jobs de lectura produzcan el diff antes de solicitar aprobación o que una recuperación
+automática cierre de forma segura. Esta separación evita pedir una aprobación antes de que exista
+el hash que debe revisar el operador.
+
+Mientras `ivanmonsalve0404` sea el único colaborador, puede configurarse como reviewer con
+**Prevent self-review** desactivado. Si se exige separación de funciones, primero se agrega un
+segundo colaborador autorizado, se lo configura como reviewer y sólo entonces se activa
+**Prevent self-review**. Dejar un Environment de aprobación sin reviewer hace que el flujo falle
+cerrado aunque el job pueda comenzar. Cada aprobación IAM debe usar exactamente
+`STAGE7_IAM_DIFF_REVIEWED_SHA256=<hash>`; cada aprobación Sandbox debe usar exactamente
+`STAGE7_SANDBOX_CLAIM_REQUEST_SHA256=<hash>`.
 
 Variables estables de repositorio:
 
@@ -222,11 +239,27 @@ Variables estables de repositorio:
 Secrets por Environment:
 
 - `assessment-prerelease`: `STAGE7_ALERT_EMAIL`;
+- `assessment-prerelease-read`: ningún secret;
 - `assessment-prerelease-external`: cookies firmadas y los ocho valores Sandbox;
 - `assessment-release-baseline`: alerta y cookies baseline;
-- `assessment-release`: alerta, smoke inputs y los ocho valores Sandbox.
+- `assessment-release`: alerta y smoke inputs no Sandbox;
+- `assessment-release-read`: ningún secret;
+- `assessment-release-sandbox`: los ocho valores Sandbox.
 
-Las listas exactas de nombres están en `.env.example`. Los valores temporales de autorización se cargan sólo en el Environment y la ventana que corresponden.
+Las listas exactas de nombres están en `.env.example`. Las capacidades temporales no se cargan
+como variables generales del repositorio: se replican sólo en los Environments protegidos que las
+consumen y se reemplazan o eliminan al terminar la ventana:
+
+- PRERELEASE: `STAGE7_EXTERNAL_AUTHORIZATIONS_B64` y
+  `STAGE6_SANDBOX_AUTHORIZATION_B64` en `assessment-prerelease-external`;
+- FULL: `STAGE7_EXTERNAL_AUTHORIZATIONS_B64` en `assessment-release`,
+  `assessment-release-sandbox`, `assessment-release-recovery` y
+  `assessment-release-successor-publication-recovery`;
+- FULL Sandbox: `STAGE6_SANDBOX_AUTHORIZATION_B64` únicamente en
+  `assessment-release-sandbox`.
+
+Cada copia debe contener bytes idénticos para el mismo scope/run. No se reutiliza ninguna de estas
+capacidades entre PRERELEASE y FULL ni entre runs.
 
 Las cuatro variables de cookies firmadas (`STAGE7_CLOUDFRONT_*SIGNED_COOKIE_B64` y
 `STAGE7_BASELINE_*SIGNED_COOKIE_B64`) comparten un solo formato. Su valor es exactamente una

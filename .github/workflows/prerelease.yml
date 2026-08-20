@@ -449,7 +449,7 @@ jobs:
     name: 06 Read-only AWS identity and IaC diff
     if: ${{ github.run_attempt == 1 }}
     needs: infra-synth-test
-    environment: assessment-prerelease
+    environment: assessment-prerelease-read
     permissions:
       contents: read
       id-token: write

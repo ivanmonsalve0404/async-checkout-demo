@@ -468,17 +468,24 @@ export const IAM_ROLE_PERMISSION_PROFILES = Object.freeze({
     oidcSubjects: Object.freeze({
       full: Object.freeze([
         environmentSubject('assessment-release'),
+        environmentSubject('assessment-release-read'),
         environmentSubject('assessment-release-recovery'),
         environmentSubject('assessment-release-reconciliation-recovery'),
+        environmentSubject('assessment-release-sandbox'),
       ]),
       prerelease: Object.freeze([
         environmentSubject('assessment-prerelease'),
         environmentSubject('assessment-prerelease-external'),
+        environmentSubject('assessment-prerelease-read'),
       ]),
+      // FULL_RELEASE and baseline attest the same physical read role. The sandbox subject is
+      // selected only by the full workflow, but must remain in this exact shared trust policy.
       baseline: Object.freeze([
         environmentSubject('assessment-release'),
+        environmentSubject('assessment-release-read'),
         environmentSubject('assessment-release-recovery'),
         environmentSubject('assessment-release-reconciliation-recovery'),
+        environmentSubject('assessment-release-sandbox'),
       ]),
     }),
   }),
@@ -3398,9 +3405,27 @@ export const selfTestIamEffectivePermissions = () => {
   ]);
   assert.deepEqual(observedTrustSubjects.get('readRoleArn'), [
     environmentSubject('assessment-release'),
+    environmentSubject('assessment-release-read'),
     environmentSubject('assessment-release-recovery'),
     environmentSubject('assessment-release-reconciliation-recovery'),
+    environmentSubject('assessment-release-sandbox'),
   ]);
+  assert.deepEqual(IAM_ROLE_PERMISSION_PROFILES.readRoleArn.oidcSubjects.prerelease, [
+    environmentSubject('assessment-prerelease'),
+    environmentSubject('assessment-prerelease-external'),
+    environmentSubject('assessment-prerelease-read'),
+  ]);
+  assert.deepEqual(IAM_ROLE_PERMISSION_PROFILES.readRoleArn.oidcSubjects.baseline, [
+    environmentSubject('assessment-release'),
+    environmentSubject('assessment-release-read'),
+    environmentSubject('assessment-release-recovery'),
+    environmentSubject('assessment-release-reconciliation-recovery'),
+    environmentSubject('assessment-release-sandbox'),
+  ]);
+  assert.deepEqual(
+    IAM_ROLE_PERMISSION_PROFILES.readRoleArn.oidcSubjects.baseline,
+    IAM_ROLE_PERMISSION_PROFILES.readRoleArn.oidcSubjects.full,
+  );
   validateIamEffectivePermissionsEvidence({
     value: evidence,
     config: fixture.config,

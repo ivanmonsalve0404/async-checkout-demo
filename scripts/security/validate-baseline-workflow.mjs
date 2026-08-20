@@ -173,13 +173,14 @@ export const validateBaselineWorkflow = (name, input) => {
     fail('hidden freeze upload requires an exact pre-upload scan and include-hidden-files');
   }
   if (
-    !plan.includes('environment: assessment-release') ||
+    count(plan, '    environment: assessment-release-read') !== 1 ||
+    count(plan, '\n    environment:') !== 1 ||
     !plan.includes('role-to-assume: ${{ vars.STAGE7_AWS_READ_ROLE_ARN }}') ||
     plan.includes('STAGE7_AWS_BASELINE_ROLE_ARN') ||
     !plan.includes('--scope baseline --aws-read') ||
     !plan.includes('--cloud-assembly output/release/build/iac')
   ) {
-    fail('plan must use only assessment-release/readRole and the frozen assembly');
+    fail('plan must use only assessment-release-read/readRole and the frozen assembly');
   }
   if (!uploadIsProtected(plan, 'stage7-baseline-plan')) {
     fail('hidden plan upload requires an exact pre-upload scan and include-hidden-files');
@@ -283,6 +284,11 @@ export const selfTestBaselineWorkflow = (source) => {
       '--stage6-source-artifact-digest "${STAGE6_ARTIFACT_DIGEST}"',
       `--stage6-source-artifact-digest "sha256:${'0'.repeat(64)}"`,
       'Stage 6 GitHub provenance',
+    ],
+    [
+      '    environment: assessment-release-read',
+      '    environment: assessment-release',
+      'assessment-release-read/readRole',
     ],
     ['release:baseline -- seed', 'release:baseline -- ignored-seed', 'seed while disabled'],
     [
