@@ -186,7 +186,12 @@ El orden reproducible de aprovisionamiento, variables, aprobaciones y ejecución
 
 ## Entorno desplegado
 
-Los dominios autorizados se incorporan al candidato antes de congelarlo para que la publicación sea reproducible. Se considerarán enlaces de entrega verificados únicamente después de que smoke 18/18, edge, sandbox, rollback y re-promoción hayan pasado sobre el artefacto exacto.
+- Aplicación: https://app.checkout-assessment-ivan.com
+- API: https://app.checkout-assessment-ivan.com/api
+- OpenAPI: https://app.checkout-assessment-ivan.com/api/docs
+- Salud: https://app.checkout-assessment-ivan.com/api/health/ready
+- Repositorio: https://github.com/ivanmonsalve0404/async-checkout-demo
+
 <!-- STAGE7_URLS_END -->
 
 ## Aceptación, operación y cierre

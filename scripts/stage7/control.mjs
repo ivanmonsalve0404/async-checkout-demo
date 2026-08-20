@@ -8095,6 +8095,7 @@ const releaseReadme = (readme, urls) => {
   }
   const deploymentSection = [
     startMarker,
+    '',
     '## Entorno desplegado',
     '',
     `- Aplicación: ${urls.application}`,
@@ -8102,6 +8103,7 @@ const releaseReadme = (readme, urls) => {
     `- OpenAPI: ${urls.docs}`,
     `- Salud: ${urls.health}`,
     `- Repositorio: ${urls.repository}`,
+    '',
     endMarker,
   ].join('\n');
   return readme.replace(
@@ -14051,7 +14053,27 @@ export const selfTestStage7Control = async () => {
     '# Checkout\n\n<!-- STAGE7_URLS_START -->placeholder<!-- STAGE7_URLS_END -->\n',
     readmeUrlsFixture,
   );
-  assert.equal(releaseReadme(preparedReadmeFixture, readmeUrlsFixture), preparedReadmeFixture);
+  const expectedPreparedReadmeFixture = [
+    '# Checkout',
+    '',
+    '<!-- STAGE7_URLS_START -->',
+    '',
+    '## Entorno desplegado',
+    '',
+    '- Aplicación: https://checkout.example.test',
+    '- API: https://checkout.example.test/api',
+    '- OpenAPI: https://checkout.example.test/api/docs',
+    '- Salud: https://checkout.example.test/api/health/ready',
+    '- Repositorio: https://github.com/ivanmonsalve0404/async-checkout-demo',
+    '',
+    '<!-- STAGE7_URLS_END -->',
+    '',
+  ].join('\n');
+  assert.equal(preparedReadmeFixture, expectedPreparedReadmeFixture);
+  assert.equal(
+    releaseReadme(preparedReadmeFixture, readmeUrlsFixture),
+    expectedPreparedReadmeFixture,
+  );
   assert.ok(!preparedReadmeFixture.includes(candidateSha));
   assert.throws(
     () =>
