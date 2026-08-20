@@ -241,7 +241,7 @@ jobs:
     name: 03 Build or fetch immutable artifacts
     if: ${{ github.run_attempt == 1 }}
     needs: verify-candidate
-    environment: assessment-release
+    environment: assessment-release-read
     permissions:
       actions: read
       contents: read
@@ -493,7 +493,7 @@ jobs:
     name: 06 AWS read-only identity
     if: ${{ github.run_attempt == 1 }}
     needs: secret-scan
-    environment: assessment-release
+    environment: assessment-release-read
     permissions:
       contents: read
       id-token: write
@@ -668,7 +668,7 @@ jobs:
     needs:
       - infra-synth-test
       - aws-auth
-    environment: assessment-release
+    environment: assessment-release-read
     permissions:
       actions: read
       contents: read
@@ -1833,7 +1833,7 @@ jobs:
           chmod 600 "${request}"
           request_sha="$(sha256sum "${request}" | cut -d ' ' -f 1)"
           pnpm release:scan -- --pre-upload "${request}"
-          printf '%s\n' 'Sandbox request ready for the next protected job.' "Review sandbox-execution-request.json, then approve assessment-release with this exact comment:" "STAGE7_SANDBOX_CLAIM_REQUEST_SHA256=${request_sha}" >> "${GITHUB_STEP_SUMMARY}"
+          printf '%s\n' 'Sandbox request ready for the next protected job.' "Review sandbox-execution-request.json, then approve assessment-release-sandbox with this exact comment:" "STAGE7_SANDBOX_CLAIM_REQUEST_SHA256=${request_sha}" >> "${GITHUB_STEP_SUMMARY}"
       - name: Preserve sanitized quality evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -1853,7 +1853,7 @@ jobs:
     name: 17 Authorized sandbox smoke
     if: ${{ github.run_attempt == 1 }}
     needs: quality
-    environment: assessment-release
+    environment: assessment-release-sandbox
     permissions:
       actions: read
       contents: read
@@ -1949,7 +1949,7 @@ jobs:
           EXPECTED_STAGE7_CONFIG_SHA256: ${{ inputs.config_sha256 }}
           GITHUB_TOKEN: ${{ github.token }}
           STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          STAGE7_PROTECTED_ENVIRONMENT: assessment-release
+          STAGE7_PROTECTED_ENVIRONMENT: assessment-release-sandbox
           STAGE7_RELEASE_ID: ${{ inputs.release_id }}
           STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
@@ -2007,7 +2007,7 @@ jobs:
           STAGE6_SANDBOX_PRIVATE_KEY: ${{ secrets.STAGE6_SANDBOX_PRIVATE_KEY }}
           STAGE6_SANDBOX_PUBLIC_KEY: ${{ secrets.STAGE6_SANDBOX_PUBLIC_KEY }}
           STAGE7_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          STAGE7_PROTECTED_ENVIRONMENT: assessment-release
+          STAGE7_PROTECTED_ENVIRONMENT: assessment-release-sandbox
           STAGE7_RELEASE_ID: ${{ inputs.release_id }}
           STAGE7_RELEASE_TAG: ${{ inputs.release_tag }}
         run: pnpm release:sandbox-smoke -- --scope full --manifest .stage7/candidate-manifest/candidate-manifest.json --deployment .stage7/web --approved-environment

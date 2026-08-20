@@ -186,18 +186,27 @@ const validateContext = (context) => {
 
 const matchingReview = ({ response, repository, environment, diffSha256 }) => {
   if (!Array.isArray(response)) fail('E7_GITHUB_APPROVAL_RESPONSE_INVALID');
-  const matching = response.filter(
+  const expectedComment = `STAGE7_IAM_DIFF_REVIEWED_SHA256=${diffSha256}`;
+  const environmentReviews = response.filter(
     (review) =>
       object(review) &&
       Array.isArray(review.environments) &&
       review.environments.some((entry) => object(entry) && entry.name === environment),
   );
+  const matching = environmentReviews.filter(
+    (review) => review.state === 'approved' && review.comment === expectedComment,
+  );
+  if (matching.length === 0 && environmentReviews.length === 1) {
+    if (environmentReviews[0].state !== 'approved') {
+      fail('E7_GITHUB_APPROVAL_STATE_INVALID');
+    }
+    fail('E7_GITHUB_APPROVAL_IAM_ATTESTATION_INVALID');
+  }
   if (matching.length !== 1) fail('E7_GITHUB_APPROVAL_REVIEW_AMBIGUOUS');
   const review = matching[0];
   const environments = review.environments;
   const environmentRecord = environments[0];
   const reviewerAlias = review.user?.login?.toLowerCase();
-  const expectedComment = `STAGE7_IAM_DIFF_REVIEWED_SHA256=${diffSha256}`;
   if (
     environments.length !== 1 ||
     !object(environmentRecord) ||
@@ -461,6 +470,16 @@ export const selfTestGithubEnvironmentApproval = async () => {
     reviews: [fixtureReview({ diff }), fixtureReview({ diff })],
     code: 'E7_GITHUB_APPROVAL_REVIEW_AMBIGUOUS',
   });
+  const unrelatedHistory = fixtureReview({ diff });
+  unrelatedHistory.comment = 'Earlier approval before the reviewed diff existed.';
+  const exactAfterUnrelatedHistory = await captureGithubEnvironmentApproval({
+    context,
+    diff,
+    fetchImpl: fakeFetch([unrelatedHistory, fixtureReview({ diff })]),
+    now: () => new Date('2026-08-17T17:00:00.000Z'),
+  });
+  assert.equal(exactAfterUnrelatedHistory.status, 'PASS');
+  assert.equal(exactAfterUnrelatedHistory.iamReviewedDiffSha256, sha256(diff));
   const wrongComment = fixtureReview({ diff });
   wrongComment.comment = `STAGE7_IAM_DIFF_REVIEWED_SHA256=${'b'.repeat(64)}`;
   await expectReject({

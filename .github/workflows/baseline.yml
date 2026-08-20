@@ -201,7 +201,7 @@ jobs:
     name: 02 Read-only AWS preflight, IAM audit, and exact diff
     if: ${{ github.run_attempt == 1 }}
     needs: build-freeze
-    environment: assessment-release
+    environment: assessment-release-read
     permissions:
       actions: read
       contents: read

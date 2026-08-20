@@ -377,7 +377,8 @@ const stepShellCommands = (step) => {
   if (pending.length > 0) commands.push(pending);
   return commands;
 };
-const blockEnvironment = (block) => /^ {4}environment:\s*([^\s]+)\s*$/mu.exec(block)?.[1];
+const blockEnvironments = (block) =>
+  [...block.matchAll(/^ {4}environment:\s*([^\s]+)\s*$/gmu)].map((match) => match[1]);
 const replaceJob = (source, id, transform) => {
   const block = workflowJobs(source).get(id);
   if (block === undefined) throw new Error(`self-test fixture is missing ${id}`);
@@ -652,9 +653,6 @@ const releaseSpec = {
   protected: new Map(
     [
       'approval',
-      'build-or-fetch',
-      'aws-auth',
-      'infra-diff',
       'deploy-data',
       'deploy-api',
       'deploy-observability',
@@ -662,7 +660,6 @@ const releaseSpec = {
       'postdeploy-smoke',
       'edge-security',
       'quality',
-      'sandbox-smoke',
       'release-reconciliation-intent',
       'rollback-check',
       'release-reconciliation',
@@ -670,7 +667,13 @@ const releaseSpec = {
       'publish-release',
     ]
       .map((job) => [job, 'assessment-release'])
-      .concat([['emergency-recovery', 'assessment-release-recovery']]),
+      .concat([
+        ['build-or-fetch', 'assessment-release-read'],
+        ['aws-auth', 'assessment-release-read'],
+        ['infra-diff', 'assessment-release-read'],
+        ['sandbox-smoke', 'assessment-release-sandbox'],
+        ['emergency-recovery', 'assessment-release-recovery'],
+      ]),
   ),
   reusable: new Map([['rollback-resilience', ROLLBACK_RESILIENCE_WORKFLOW]]),
   publishJob: 'publish-release',
@@ -704,7 +707,7 @@ const prereleaseSpec = {
   aws: PRERELEASE_AWS,
   protected: new Map([
     ['approval', 'assessment-prerelease'],
-    ['infra-diff', 'assessment-prerelease'],
+    ['infra-diff', 'assessment-prerelease-read'],
     ['prerelease-safety-readiness', 'assessment-prerelease'],
     ['deploy-prerelease', 'assessment-prerelease'],
     ['external-verification', 'assessment-prerelease-external'],
@@ -1064,11 +1067,11 @@ const validateCommon = (name, input, spec) => {
     if (!same(jobNeeds(block), spec.needs.get(id) ?? []))
       fail(`${id} has an invalid fail-closed dependency chain`);
     const expectedEnvironment = spec.protected.get(id);
-    const actualEnvironment = blockEnvironment(block);
-    if (expectedEnvironment !== undefined && actualEnvironment !== expectedEnvironment) {
+    const actualEnvironments = blockEnvironments(block);
+    if (expectedEnvironment !== undefined && !same(actualEnvironments, [expectedEnvironment])) {
       fail(`${id} must use the protected ${expectedEnvironment} environment`);
     }
-    if (expectedEnvironment === undefined && actualEnvironment !== undefined) {
+    if (expectedEnvironment === undefined && actualEnvironments.length > 0) {
       fail(`${id} must not consume a protected deployment environment`);
     }
 
@@ -1849,12 +1852,15 @@ const validateSandboxWrapper = (name, block, { prerelease, requestProducer }) =>
     ),
   );
   const claimScope = prerelease ? 'prerelease' : 'full';
-  const protectedEnvironment = prerelease ? 'assessment-prerelease-external' : 'assessment-release';
+  const protectedEnvironment = prerelease
+    ? 'assessment-prerelease-external'
+    : 'assessment-release-sandbox';
   for (const fragment of [
     'name: Emit the exact sandbox execution approval request without credentials',
     `pnpm release:sandbox-claim -- --request --scope ${claimScope} --output "\${request}"`,
     'request="${STAGE7_EVIDENCE_ROOT}/sandbox-execution-request.json"',
     'request_sha="$(sha256sum "${request}" | cut -d \' \' -f 1)"',
+    `Review sandbox-execution-request.json, then approve ${protectedEnvironment} with this exact comment:`,
     'STAGE7_SANDBOX_CLAIM_REQUEST_SHA256=${request_sha}',
     'sandbox-execution-request.json',
   ]) {
@@ -1967,7 +1973,7 @@ const validateSandboxWrapper = (name, block, { prerelease, requestProducer }) =>
       : []),
     prerelease
       ? 'STAGE7_PROTECTED_ENVIRONMENT: assessment-prerelease-external'
-      : 'STAGE7_PROTECTED_ENVIRONMENT: assessment-release',
+      : 'STAGE7_PROTECTED_ENVIRONMENT: assessment-release-sandbox',
     'STAGE6_SANDBOX_EXECUTION: EXECUTE_AUTH02_ONCE',
     'STAGE6_SANDBOX_KILL_SWITCH: ARMED_AUTH02',
     "STAGE6_SANDBOX_MUTATION_LIMIT: '1'",
@@ -4234,6 +4240,15 @@ const selfTestRelease = (source) =>
         ),
     },
     {
+      expected: 'sandbox approval request handoff is missing',
+      mutate: (value) =>
+        changed(
+          value,
+          'Review sandbox-execution-request.json, then approve assessment-release-sandbox with this exact comment:',
+          'Review sandbox-execution-request.json, then approve assessment-release with this exact comment:',
+        ),
+    },
+    {
       expected: 'sandbox approval request producer must contain no secrets or authority',
       mutate: (value) =>
         replaceJob(value, 'quality', (block) =>
@@ -4572,10 +4587,50 @@ const selfTestRelease = (source) =>
         ),
     },
     {
-      expected: 'aws-auth must use the protected assessment-release environment',
+      expected: 'build-or-fetch must use the protected assessment-release-read environment',
+      mutate: (value) =>
+        replaceJob(value, 'build-or-fetch', (block) =>
+          block.replace(
+            '    environment: assessment-release-read\n',
+            '    environment: assessment-release\n',
+          ),
+        ),
+    },
+    {
+      expected: 'aws-auth must use the protected assessment-release-read environment',
       mutate: (value) =>
         replaceJob(value, 'aws-auth', (block) =>
-          block.replace('    environment: assessment-release\n', ''),
+          block.replace(
+            '    environment: assessment-release-read\n',
+            '    environment: assessment-release\n',
+          ),
+        ),
+    },
+    {
+      expected: 'infra-diff must use the protected assessment-release-read environment',
+      mutate: (value) =>
+        replaceJob(value, 'infra-diff', (block) =>
+          block.replace(
+            '    environment: assessment-release-read\n',
+            '    environment: assessment-release\n',
+          ),
+        ),
+    },
+    {
+      expected: 'sandbox-smoke must use the protected assessment-release-sandbox environment',
+      mutate: (value) =>
+        replaceJob(value, 'sandbox-smoke', (block) =>
+          block.replaceAll('assessment-release-sandbox', 'assessment-release'),
+        ),
+    },
+    {
+      expected: 'approval must use the protected assessment-release environment',
+      mutate: (value) =>
+        replaceJob(value, 'approval', (block) =>
+          block.replace(
+            '    environment: assessment-release\n',
+            '    environment: assessment-release-read\n',
+          ),
         ),
     },
     {
@@ -5593,10 +5648,23 @@ const selfTestPrerelease = (source) =>
         ),
     },
     {
-      expected: 'infra-diff must use the protected assessment-prerelease environment',
+      expected: 'infra-diff must use the protected assessment-prerelease-read environment',
       mutate: (value) =>
         replaceJob(value, 'infra-diff', (block) =>
-          block.replace('    environment: assessment-prerelease\n', ''),
+          block.replace(
+            '    environment: assessment-prerelease-read\n',
+            '    environment: assessment-prerelease\n',
+          ),
+        ),
+    },
+    {
+      expected: 'approval must use the protected assessment-prerelease environment',
+      mutate: (value) =>
+        replaceJob(value, 'approval', (block) =>
+          block.replace(
+            '    environment: assessment-prerelease\n',
+            '    environment: assessment-prerelease-read\n',
+          ),
         ),
     },
     {

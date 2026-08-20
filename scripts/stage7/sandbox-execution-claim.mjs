@@ -45,7 +45,7 @@ const SCOPES = Object.freeze({
     workflowFile: '.github/workflows/release.yml',
     producerJob: 'quality',
     job: 'sandbox-smoke',
-    environment: 'assessment-release',
+    environment: 'assessment-release-sandbox',
     stage7AuthorizationId: 'AUTH-E7-EXT-02',
   }),
   prerelease: Object.freeze({
@@ -1260,6 +1260,15 @@ export const selfTestSandboxExecutionClaim = async () => {
     );
     const fixture = fixtureEnvironment({ directory });
     const now = new Date('2026-08-18T12:00:00.000Z');
+    assert.equal(scopeContract('full').environment, 'assessment-release-sandbox');
+    assert.throws(
+      () =>
+        contextFromEnvironment(
+          { ...fixture.environment, STAGE7_PROTECTED_ENVIRONMENT: 'assessment-release' },
+          'full',
+        ),
+      (error) => error.code === 'E7_SANDBOX_CLAIM_CONTEXT_INVALID',
+    );
     const producerEnvironment = {
       ...fixture.environment,
       GITHUB_JOB: scopeContract('full').producerJob,

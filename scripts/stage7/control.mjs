@@ -2189,7 +2189,7 @@ export const validateGithubOidcTrustPolicy = ({ policy, accountId, expectedSubs 
     !/^[0-9]{12}$/u.test(accountId ?? '') ||
     !Array.isArray(expectedSubs) ||
     expectedSubs.length < 1 ||
-    expectedSubs.length > 3 ||
+    expectedSubs.length > 5 ||
     new Set(expectedSubs).size !== expectedSubs.length ||
     allowStatements.length < 1 ||
     allowStatements.length > expectedSubs.length ||
@@ -6408,6 +6408,11 @@ const qualityRelease = async (flags) => {
   }
 };
 
+const SANDBOX_PROTECTED_ENVIRONMENT_BY_SCOPE = Object.freeze({
+  full: 'assessment-release-sandbox',
+  prerelease: 'assessment-prerelease-external',
+});
+
 const sandboxSmokeRelease = async (flags) => {
   const scope = scopeOf(flags);
   if (
@@ -6418,8 +6423,7 @@ const sandboxSmokeRelease = async (flags) => {
   ) {
     fail('E7_SANDBOX_PROTECTED_EXECUTION_REQUIRED');
   }
-  const expectedEnvironment =
-    scope === 'full' ? 'assessment-release' : 'assessment-prerelease-external';
+  const expectedEnvironment = SANDBOX_PROTECTED_ENVIRONMENT_BY_SCOPE[scope];
   if (process.env.STAGE7_PROTECTED_ENVIRONMENT !== expectedEnvironment) {
     fail('E7_SANDBOX_PROTECTED_ENVIRONMENT_MISMATCH');
   }
@@ -13595,7 +13599,7 @@ export const selfTestStage7Control = async () => {
     runAttempt: 1,
     workflowSha: candidateSha,
     workflowJob: 'sandbox-smoke',
-    environment: 'assessment-release',
+    environment: 'assessment-release-sandbox',
     candidateSha,
     releaseId,
     configSha256: objectSha256(fullConfig),
@@ -14529,13 +14533,24 @@ export const selfTestStage7Control = async () => {
   const externalSub =
     'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease-external';
   const baseSub = 'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease';
+  const prereleaseReadSub =
+    'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease-read';
+  const releaseReadSub =
+    'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-read';
   const recoverySub =
     'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-recovery';
   const reconciliationRecoverySub =
     'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-reconciliation-recovery';
+  const releaseSandboxSub =
+    'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-sandbox';
+  assert.deepEqual(SANDBOX_PROTECTED_ENVIRONMENT_BY_SCOPE, {
+    full: 'assessment-release-sandbox',
+    prerelease: 'assessment-prerelease-external',
+  });
   assert.deepEqual(expectedGithubOidcSubjects(config, config.aws.roles.readRoleArn), [
     baseSub,
     externalSub,
+    prereleaseReadSub,
   ]);
   assert.deepEqual(expectedGithubOidcSubjects(config, config.aws.roles.deployRoleArn), [
     baseSub,
@@ -14545,35 +14560,63 @@ export const selfTestStage7Control = async () => {
   assert.deepEqual(expectedGithubOidcSubjects(config, config.aws.roles.cleanupRoleArn), [baseSub]);
   assert.deepEqual(expectedGithubOidcSubjects(fullConfig, fullConfig.aws.roles.readRoleArn), [
     sub,
+    releaseReadSub,
     recoverySub,
     reconciliationRecoverySub,
+    releaseSandboxSub,
   ]);
+  assert.deepEqual(
+    expectedGithubOidcSubjects(baselineConfig, baselineConfig.aws.roles.readRoleArn),
+    [sub, releaseReadSub, recoverySub, reconciliationRecoverySub, releaseSandboxSub],
+  );
   assert.deepEqual(expectedGithubOidcSubjects(fullConfig, fullConfig.aws.roles.rollbackRoleArn), [
     sub,
     recoverySub,
   ]);
   validateGithubOidcTrustPolicy({
-    policy: { Statement: [trustStatement([baseSub, externalSub])] },
+    policy: { Statement: [trustStatement([baseSub, externalSub, prereleaseReadSub])] },
     accountId: '123456789012',
-    expectedSubs: [baseSub, externalSub],
+    expectedSubs: [baseSub, externalSub, prereleaseReadSub],
   });
   validateGithubOidcTrustPolicy({
     policy: {
-      Statement: [trustStatement([sub, recoverySub, reconciliationRecoverySub])],
+      Statement: [
+        trustStatement([
+          sub,
+          releaseReadSub,
+          recoverySub,
+          reconciliationRecoverySub,
+          releaseSandboxSub,
+        ]),
+      ],
     },
     accountId: '123456789012',
-    expectedSubs: [sub, recoverySub, reconciliationRecoverySub],
+    expectedSubs: [sub, releaseReadSub, recoverySub, reconciliationRecoverySub, releaseSandboxSub],
   });
   assert.throws(
     () =>
       validateGithubOidcTrustPolicy({
         policy: {
           Statement: [
-            trustStatement([sub, recoverySub, reconciliationRecoverySub, `${sub}-extra`]),
+            trustStatement([
+              sub,
+              releaseReadSub,
+              recoverySub,
+              reconciliationRecoverySub,
+              releaseSandboxSub,
+              `${sub}-extra`,
+            ]),
           ],
         },
         accountId: '123456789012',
-        expectedSubs: [sub, recoverySub, reconciliationRecoverySub, `${sub}-extra`],
+        expectedSubs: [
+          sub,
+          releaseReadSub,
+          recoverySub,
+          reconciliationRecoverySub,
+          releaseSandboxSub,
+          `${sub}-extra`,
+        ],
       }),
     (error) => error.code === 'E7_AWS_ROLE_TRUST_INVALID',
   );

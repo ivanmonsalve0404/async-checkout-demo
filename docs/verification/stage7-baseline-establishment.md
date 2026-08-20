@@ -7,7 +7,8 @@ separate from the normal release workflow and must remain fail-closed.
 
 Create these GitHub environments and keep their reviewers separate:
 
-- `assessment-release`: read-only AWS preflight and CDK diff through the configured read role.
+- `assessment-release-read`: read-only AWS preflight and CDK diff through the configured read
+  role. This environment has no required reviewer, so the exact diff can exist before approval.
 - `assessment-release-baseline`: explicit human approval and the dedicated baseline role.
 - `assessment-release-recovery`: disable-only recovery through the rollback role. Do not add the
   baseline role to this environment.
@@ -55,8 +56,8 @@ exact value above and select `confirm_closed_baseline`.
 
 The workflow then stops at two distinct controls:
 
-1. `assessment-release` reads AWS prerequisites and produces the sanitized IAM evidence and exact
-   CDK diff. It cannot create the four release stacks.
+1. `assessment-release-read` reads AWS prerequisites and produces the sanitized IAM evidence and
+   exact CDK diff. It cannot create the four release stacks and has no required reviewer.
 2. `assessment-release-baseline` requires a reviewer to inspect that diff and use the exact
    `STAGE7_IAM_DIFF_REVIEWED_SHA256=<digest>` attestation shown in the job summary.
 
