@@ -3,7 +3,15 @@ import { Buffer } from 'node:buffer';
 import { lstatSync, readFileSync } from 'node:fs';
 import process from 'node:process';
 
-const COOKIE_NAMES = ['CloudFront-Key-Pair-Id', 'CloudFront-Policy', 'CloudFront-Signature'];
+import { CLOUDFRONT_PUBLIC_KEY_ID } from './core.mjs';
+
+const COOKIE_NAMES = [
+  'CloudFront-Key-Pair-Id',
+  'CloudFront-Policy',
+  'CloudFront-Signature',
+  'CloudFront-Hash-Algorithm',
+];
+const SENSITIVE_COOKIE_NAMES = COOKIE_NAMES.filter((name) => name !== 'CloudFront-Hash-Algorithm');
 const exactKeys = (value, expected) =>
   value !== null &&
   typeof value === 'object' &&
@@ -38,7 +46,13 @@ const decode = (source, alphabet = 'base64') => {
       ? source.replaceAll('-', '+').replaceAll('_', '=').replaceAll('~', '/')
       : source;
   try {
-    return Buffer.from(normalized, 'base64').toString('utf8');
+    const bytes = Buffer.from(normalized, 'base64');
+    const canonical =
+      alphabet === 'cloudfront'
+        ? bytes.toString('base64').replaceAll('+', '-').replaceAll('=', '_').replaceAll('/', '~')
+        : bytes.toString('base64');
+    if (canonical !== source) fail();
+    return bytes.toString('utf8');
   } catch {
     fail();
   }
@@ -69,11 +83,12 @@ export const readCloudFrontSignedCookies = ({
       : Math.floor(Date.parse(maxExpiresAtUtc) / 1000);
   if (
     !exactKeys(cookies, COOKIE_NAMES) ||
-    !/^[A-Z0-9]{8,64}$/u.test(cookies['CloudFront-Key-Pair-Id'] ?? '') ||
+    !CLOUDFRONT_PUBLIC_KEY_ID.test(cookies['CloudFront-Key-Pair-Id'] ?? '') ||
     (expectedPublicKeyId !== undefined &&
-      (!/^[A-Z0-9]{8,64}$/u.test(expectedPublicKeyId) ||
+      (!CLOUDFRONT_PUBLIC_KEY_ID.test(expectedPublicKeyId) ||
         cookies['CloudFront-Key-Pair-Id'] !== expectedPublicKeyId)) ||
     !/^[A-Za-z0-9_~-]{16,8192}$/u.test(cookies['CloudFront-Signature'] ?? '') ||
+    cookies['CloudFront-Hash-Algorithm'] !== 'SHA256' ||
     !exactKeys(policy, ['Statement']) ||
     !Array.isArray(policy.Statement) ||
     policy.Statement.length !== 1 ||
@@ -125,7 +140,12 @@ export const readCloudFrontSignedCookieFile = ({ filename, ...options }) => {
 
 export const assertCloudFrontAccessMaterialExcluded = (value, cookies) => {
   const serialized = JSON.stringify(value);
-  if (cookies.some(({ value: cookieValue }) => serialized.includes(cookieValue))) {
+  if (
+    cookies.some(
+      ({ name, value: cookieValue }) =>
+        SENSITIVE_COOKIE_NAMES.includes(name) && serialized.includes(cookieValue),
+    )
+  ) {
     throw new Error('E7_CLOUDFRONT_ACCESS_MATERIAL_LEAK');
   }
   return value;
@@ -181,6 +201,7 @@ export const selfTestCloudFrontAccess = () => {
         'CloudFront-Key-Pair-Id': 'K2STAGE7CHECKOUT',
         'CloudFront-Policy': encodePolicy(policy(1_800_000_000)),
         'CloudFront-Signature': 'syntheticSignatureValue1234567890',
+        'CloudFront-Hash-Algorithm': 'SHA256',
         ...overrides,
       }),
       'utf8',
@@ -192,7 +213,7 @@ export const selfTestCloudFrontAccess = () => {
     expectedPublicKeyId: 'K2STAGE7CHECKOUT',
     maxExpiresAtUtc: '2027-01-15T08:00:00.000Z',
   });
-  assert.equal(validCookies.length, 3);
+  assert.equal(validCookies.length, 4);
   assert.deepEqual(assertCloudFrontAccessMaterialExcluded({ status: 'PASS' }, validCookies), {
     status: 'PASS',
   });
@@ -206,6 +227,37 @@ export const selfTestCloudFrontAccess = () => {
       origin,
       source: encoded(),
       expectedPublicKeyId: 'K9DIFFERENTPUBLICKEY',
+    }),
+  );
+  assert.throws(() =>
+    readCloudFrontSignedCookies({
+      origin,
+      source: encoded({ 'CloudFront-Key-Pair-Id': 'c2f83d9a-4f1e-4d7a-8b21-6c9d3e5f7a10' }),
+    }),
+  );
+  assert.throws(() =>
+    readCloudFrontSignedCookies({
+      origin,
+      source: encoded(),
+      expectedPublicKeyId: 'c2f83d9a-4f1e-4d7a-8b21-6c9d3e5f7a10',
+    }),
+  );
+  assert.throws(() =>
+    readCloudFrontSignedCookies({
+      origin,
+      source: encoded({ 'CloudFront-Hash-Algorithm': 'SHA1' }),
+    }),
+  );
+  assert.throws(() =>
+    readCloudFrontSignedCookies({
+      origin,
+      source: encoded({ 'CloudFront-Hash-Algorithm': undefined }),
+    }),
+  );
+  assert.throws(() =>
+    readCloudFrontSignedCookies({
+      origin,
+      source: Buffer.from(encoded(), 'utf8').toString('base64'),
     }),
   );
   assert.throws(() =>
@@ -231,7 +283,7 @@ export const selfTestCloudFrontAccess = () => {
       now: new Date('2026-08-17T12:00:00.000Z'),
       expectedState: 'EXPIRED',
     }).length,
-    3,
+    4,
   );
   assert.throws(() =>
     readCloudFrontSignedCookies({

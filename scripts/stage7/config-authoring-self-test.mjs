@@ -140,13 +140,13 @@ export const buildStage7ConfigAuthoringSelfTestInput = () => ({
   },
   access: {
     full: {
-      keyGroupId: 'K3Q8N5R7W2M9VC',
+      keyGroupId: 'c2f83d9a-4f1e-4d7a-8b21-6c9d3e5f7a10',
       publicKeyId: 'K2P7D9F4H6T8XB',
       originTokenSecretArn: RELEASE_RUNTIME_REFERENCE_ARN,
       originTokenSecretVersionId: '7f3c9d2a-58b1-46e7-90ad-2c8f5b7134e6',
     },
     prerelease: {
-      keyGroupId: 'K7V2B9X4M6Q8HF',
+      keyGroupId: 'd7a21c6e-8b34-49f5-a062-1e3c7d9b4f80',
       publicKeyId: 'K5C8N3R7W9T2DP',
       originTokenSecretArn: PRERELEASE_RUNTIME_REFERENCE_ARN,
       originTokenSecretVersionId: '9b6e2f41-37c8-4d05-a1f9-68c2e7543b0d',
@@ -397,6 +397,12 @@ if (direct) {
   rejects((value) => {
     value.access.prerelease.originTokenSecretVersionId = 'a'.repeat(32);
   }, 'E7_CONFIG_AUTHORING_SECRET_VERSION_PLACEHOLDER_FORBIDDEN');
+  rejects((value) => {
+    value.access.full.keyGroupId = value.access.full.publicKeyId;
+  }, 'E7_CONFIG_AUTHORING_INPUT_SCHEMA_INVALID');
+  rejects((value) => {
+    value.access.full.publicKeyId = value.access.full.keyGroupId;
+  }, 'E7_CONFIG_AUTHORING_INPUT_SCHEMA_INVALID');
   rejects((value) => {
     value.domains.full.webCertificateArn = `arn:aws:acm:us-east-1:${ACCOUNT_ID}:certificate/11111111-1111-1111-1111-111111111111`;
   }, 'E7_CONFIG_AUTHORING_CERTIFICATE_ARN_INVALID');

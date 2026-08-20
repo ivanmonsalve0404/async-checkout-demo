@@ -18,6 +18,7 @@ import {
   STAGE7_ARTIFACTS,
   STAGE7_AUDITS,
   STAGE7_EVIDENCE,
+  STAGE7_PROVIDER_EGRESS_CAPABILITY,
   canonicalJson,
   createStage7CandidateRollbackRecord,
   createStage7PreviousReleaseManifest,
@@ -4135,6 +4136,12 @@ const selfTestCheckpoint = ({ plan, destination, startedAtUtc, completedAtUtc })
       orphaned: 0,
       duplicateEffects: 0,
       lostFacts: 0,
+      terminalStatusCounts: {
+        APPROVED: 0,
+        DECLINED: plan.pendingBaseline.trackedCount,
+        VOIDED: 0,
+        ERROR: 0,
+      },
     },
     dataFactsSha256: plan.dataFactsSha256,
     dataFactsChanged: false,
@@ -4281,6 +4288,7 @@ const selfTestInputs = () => {
       pendingReconciliationEvidenceSha256: '7'.repeat(64),
       smokeEvidenceSha256: '8'.repeat(64),
       smokeVerifiedAtUtc: '2026-08-17T10:15:00.000Z',
+      providerEgressCapability: STAGE7_PROVIDER_EGRESS_CAPABILITY,
     },
     handoff: {
       sourceKind: 'BASELINE_BOOTSTRAP',

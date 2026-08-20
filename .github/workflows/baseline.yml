@@ -379,11 +379,12 @@ jobs:
           test -n "${EXPIRED_COOKIE_B64}"
           umask 077
           mkdir -p .stage7/access
-          printf '%s' "${VALID_COOKIE_B64}" | base64 --decode > .stage7/access/valid-cookie.json
-          printf '%s' "${EXPIRED_COOKIE_B64}" | base64 --decode > .stage7/access/expired-cookie.json
+          printf '%s' "${VALID_COOKIE_B64}" > .stage7/access/valid-cookie.b64
+          printf '%s' "${EXPIRED_COOKIE_B64}" > .stage7/access/expired-cookie.b64
+          chmod 600 .stage7/access/valid-cookie.b64 .stage7/access/expired-cookie.b64
       - name: Execute the exact eight-request restricted smoke and compatibility checks
         id: smoke
-        run: pnpm release:baseline -- smoke --config .stage7/evidence/baseline-config.json --freeze .stage7/evidence/baseline-freeze.json --preflight .stage7/plan/baseline-aws-preflight.json --iam .stage7/plan/baseline-iam.json --plan .stage7/plan/baseline-plan.json --approval .stage7/establish/baseline-approval.json --github-approval .stage7/establish/baseline-github-approval.json --raw-diff .stage7/plan/baseline-infra-diff.txt --deployment .stage7/establish/baseline-deployment.json --notification .stage7/establish/baseline-notification.json --activation .stage7/establish/baseline-activation.json --seed .stage7/establish/baseline-seed.json --valid-cookie .stage7/access/valid-cookie.json --expired-cookie .stage7/access/expired-cookie.json --pending .stage7/evidence/baseline-pending-evidence.json --app output/release/build/iac --output-directory .stage7/smoke
+        run: pnpm release:baseline -- smoke --config .stage7/evidence/baseline-config.json --freeze .stage7/evidence/baseline-freeze.json --preflight .stage7/plan/baseline-aws-preflight.json --iam .stage7/plan/baseline-iam.json --plan .stage7/plan/baseline-plan.json --approval .stage7/establish/baseline-approval.json --github-approval .stage7/establish/baseline-github-approval.json --raw-diff .stage7/plan/baseline-infra-diff.txt --deployment .stage7/establish/baseline-deployment.json --notification .stage7/establish/baseline-notification.json --activation .stage7/establish/baseline-activation.json --seed .stage7/establish/baseline-seed.json --valid-cookie .stage7/access/valid-cookie.b64 --expired-cookie .stage7/access/expired-cookie.b64 --pending .stage7/evidence/baseline-pending-evidence.json --app output/release/build/iac --output-directory .stage7/smoke
       - name: Always return the baseline to disabled after any completed deployment
         id: disable
         if: ${{ always() && steps.deploy.outcome == 'success' }}
@@ -393,7 +394,7 @@ jobs:
         if: ${{ steps.smoke.outcome == 'success' && steps.disable.outcome == 'success' }}
         run: |
           set -euo pipefail
-          rm -f .stage7/access/valid-cookie.json .stage7/access/expired-cookie.json
+          rm -f .stage7/access/valid-cookie.b64 .stage7/access/expired-cookie.b64
           rmdir .stage7/access
           mkdir -p .stage7/capture-input
           cp .stage7/evidence/baseline-config.json .stage7/capture-input/baseline-config.json
@@ -415,8 +416,8 @@ jobs:
       - name: Scan the closed capture chain before transport to finalization
         run: |
           set -euo pipefail
-          test ! -e .stage7/capture-input/valid-cookie.json
-          test ! -e .stage7/capture-input/expired-cookie.json
+          test ! -e .stage7/capture-input/valid-cookie.b64
+          test ! -e .stage7/capture-input/expired-cookie.b64
           pnpm release:scan -- --pre-upload .stage7/capture-input
       - name: Preserve the closed capture chain for post-recovery finalization
         id: capture-chain-artifact

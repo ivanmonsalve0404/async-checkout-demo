@@ -55,7 +55,7 @@
           "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
         },
         "ownerAlias": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,31}$" },
-        "maxRequests": { "type": "integer", "minimum": 7, "maximum": 100 }
+        "maxRequests": { "type": "integer", "minimum": 8, "maximum": 100 }
       }
     },
     "target": {

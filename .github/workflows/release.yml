@@ -2776,13 +2776,18 @@ jobs:
           set -euo pipefail
           pnpm release:smoke -- --scope full --post-versioned-repromotion --previous-manifest .stage7/previous/previous-release-manifest.json --candidate-record .stage7/recovery-probe/versioned-rollback-candidate.json --rollback-evidence "${STAGE7_EVIDENCE_ROOT}/rollback.json" --transition "${STAGE7_EVIDENCE_ROOT}/versioned-repromotion-aws-transition.json" --manifest .stage7/candidate-manifest/candidate-manifest.json --evidence "${STAGE7_EVIDENCE_ROOT}/versioned-repromotion-smoke.json"
           node scripts/stage7/aws-ops.mjs finalize-versioned-rollback --app .stage7/candidate/iac --manifest .stage7/candidate-manifest/candidate-manifest.json --previous-manifest .stage7/previous/previous-release-manifest.json --previous-api-contract-evidence .stage7/previous/previous-api-contract-evidence.json --previous-pending-evidence .stage7/previous/previous-pending-evidence.json --previous-smoke-evidence .stage7/previous/previous-smoke-evidence.json --candidate-record .stage7/recovery-probe/versioned-rollback-candidate.json --approval .stage7/approval/approval.json --aws-auth .stage7/aws-auth/aws-auth.json --journal-role-effective-permissions .stage7/aws-auth/stage7-release-journal-role-effective-permissions.json --reconciliation-recovery-role-effective-permissions .stage7/aws-auth/stage7-release-reconciliation-recovery-role-effective-permissions.json --approved-plan .stage7/infra-diff/infra-diff.json --deployment-evidence .stage7/web/web.json --transition "${STAGE7_EVIDENCE_ROOT}/versioned-repromotion-aws-transition.json" --smoke-evidence "${STAGE7_EVIDENCE_ROOT}/versioned-repromotion-smoke.json" --output "${STAGE7_EVIDENCE_ROOT}/versioned-repromotion-checkpoint.json"
+      - name: Close the pending provider egress ledger with N-1 status evidence
+        if: ${{ steps.rollback-mode.outputs.mode == 'HAPPY_REHEARSAL' }}
+        env:
+          STAGE7_PROTECTED_ENVIRONMENT: assessment-release
+        run: pnpm release:smoke -- --scope full --close-versioned-rollback-pending-egress --manifest .stage7/candidate-manifest/candidate-manifest.json --previous-manifest .stage7/previous/previous-release-manifest.json --candidate-record .stage7/recovery-probe/versioned-rollback-candidate.json --rollback-evidence "${STAGE7_EVIDENCE_ROOT}/rollback.json" --rollback-checkpoint "${STAGE7_EVIDENCE_ROOT}/versioned-rollback-checkpoint.json" --repromotion-checkpoint "${STAGE7_EVIDENCE_ROOT}/versioned-repromotion-checkpoint.json" --pending-producer "${STAGE7_EVIDENCE_ROOT}/rollback-pending-producer.json" --approved-environment --evidence "${STAGE7_EVIDENCE_ROOT}/rollback-pending-egress-closeout.json"
       - name: Verify final CloudFormation drift under read-only authority
         if: ${{ steps.rollback-mode.outputs.mode == 'HAPPY_REHEARSAL' }}
         run: pnpm release:verify:drift -- --scope full --versioned-update --app .stage7/candidate/iac --manifest .stage7/candidate-manifest/candidate-manifest.json --previous-manifest .stage7/previous/previous-release-manifest.json --previous-api-contract-evidence .stage7/previous/previous-api-contract-evidence.json --previous-pending-evidence .stage7/previous/previous-pending-evidence.json --previous-smoke-evidence .stage7/previous/previous-smoke-evidence.json
       - name: Scan the complete public rehearsal ledger before upload
         id: scan-public-rollback
         if: ${{ steps.rollback-mode.outputs.mode == 'HAPPY_REHEARSAL' }}
-        run: pnpm release:scan -- --pre-upload "${STAGE7_EVIDENCE_ROOT}/rollback-smoke-input-preflight.json" "${STAGE7_EVIDENCE_ROOT}/rollback-pending-producer.json" "${STAGE7_EVIDENCE_ROOT}/versioned-rollback-aws-transition.json" "${STAGE7_EVIDENCE_ROOT}/versioned-rollback-smoke.json" "${STAGE7_EVIDENCE_ROOT}/versioned-rollback-checkpoint.json" "${STAGE7_EVIDENCE_ROOT}/versioned-repromotion-aws-transition.json" "${STAGE7_EVIDENCE_ROOT}/versioned-repromotion-smoke.json" "${STAGE7_EVIDENCE_ROOT}/versioned-repromotion-checkpoint.json" "${STAGE7_EVIDENCE_ROOT}/rollback.json" "${STAGE7_EVIDENCE_ROOT}/drift.json"
+        run: pnpm release:scan -- --pre-upload "${STAGE7_EVIDENCE_ROOT}/rollback-smoke-input-preflight.json" "${STAGE7_EVIDENCE_ROOT}/rollback-pending-producer.json" "${STAGE7_EVIDENCE_ROOT}/rollback-pending-egress-closeout.json" "${STAGE7_EVIDENCE_ROOT}/versioned-rollback-aws-transition.json" "${STAGE7_EVIDENCE_ROOT}/versioned-rollback-smoke.json" "${STAGE7_EVIDENCE_ROOT}/versioned-rollback-checkpoint.json" "${STAGE7_EVIDENCE_ROOT}/versioned-repromotion-aws-transition.json" "${STAGE7_EVIDENCE_ROOT}/versioned-repromotion-smoke.json" "${STAGE7_EVIDENCE_ROOT}/versioned-repromotion-checkpoint.json" "${STAGE7_EVIDENCE_ROOT}/rollback.json" "${STAGE7_EVIDENCE_ROOT}/drift.json"
       - name: Publish the fail-closed rehearsal decision
         id: rollback-outcome
         if: ${{ always() }}
@@ -2805,6 +2810,7 @@ jobs:
           path: |
             output/evidence/runtime/stage-7/rollback-smoke-input-preflight.json
             output/evidence/runtime/stage-7/rollback-pending-producer.json
+            output/evidence/runtime/stage-7/rollback-pending-egress-closeout.json
             output/evidence/runtime/stage-7/versioned-rollback-aws-transition.json
             output/evidence/runtime/stage-7/versioned-rollback-smoke.json
             output/evidence/runtime/stage-7/versioned-rollback-checkpoint.json
@@ -3244,6 +3250,7 @@ jobs:
             --sandbox .stage7/sandbox/sandbox-smoke.json \
             --rollback-smoke-input .stage7/rollback/rollback-smoke-input-preflight.json \
             --pending-producer .stage7/rollback/rollback-pending-producer.json \
+            --pending-egress-closeout .stage7/rollback/rollback-pending-egress-closeout.json \
             --rollback-smoke .stage7/rollback/versioned-rollback-smoke.json \
             --repromotion-smoke .stage7/rollback/versioned-repromotion-smoke.json \
             --journal-cleanup-role "${STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN}" \
@@ -3362,6 +3369,7 @@ jobs:
             --sandbox .stage7/sandbox/sandbox-smoke.json \
             --rollback-smoke-input .stage7/rollback/rollback-smoke-input-preflight.json \
             --pending-producer .stage7/rollback/rollback-pending-producer.json \
+            --pending-egress-closeout .stage7/rollback/rollback-pending-egress-closeout.json \
             --rollback-smoke .stage7/rollback/versioned-rollback-smoke.json \
             --repromotion-smoke .stage7/rollback/versioned-repromotion-smoke.json \
             --journal-cleanup-role "${STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN}" \
@@ -3678,6 +3686,7 @@ jobs:
             --sandbox .stage7/sandbox/sandbox-smoke.json \
             --rollback-smoke-input .stage7/rollback/rollback-smoke-input-preflight.json \
             --pending-producer .stage7/rollback/rollback-pending-producer.json \
+            --pending-egress-closeout .stage7/rollback/rollback-pending-egress-closeout.json \
             --rollback-smoke .stage7/rollback/versioned-rollback-smoke.json \
             --repromotion-smoke .stage7/rollback/versioned-repromotion-smoke.json \
             --journal-cleanup-role "${STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN}" \

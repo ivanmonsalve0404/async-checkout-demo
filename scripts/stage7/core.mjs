@@ -56,6 +56,9 @@ const LAMBDA_VERSION = /^[1-9][0-9]*$/u;
 const S3_BUCKET = /^(?=.{3,63}$)(?![0-9]+(?:\.[0-9]+){3}$)[a-z0-9][a-z0-9.-]*[a-z0-9]$/u;
 const S3_VERSION_ID = /^[A-Za-z0-9._~+/=-]{1,1024}$/u;
 const CLOUDFRONT_DISTRIBUTION_ID = /^[A-Z0-9]{8,64}$/u;
+export const CLOUDFRONT_KEY_GROUP_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+export const CLOUDFRONT_PUBLIC_KEY_ID = /^K[A-Z0-9]{8,63}$/u;
 const WEB_OBJECT_KEY =
   /^(?!\/)(?!.*\\)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9][A-Za-z0-9._/-]{0,1023}$/u;
 const AUTHORIZATION_SCOPES = [
@@ -92,6 +95,17 @@ export const expectedStage7Stacks = (environment) => [
   `checkout-${environment}-observability`,
   `checkout-${environment}-web`,
 ];
+
+export const STAGE7_PROVIDER_EGRESS_CAPABILITY = Object.freeze({
+  schemaVersion: 1,
+  eventName: 'provider.sandbox.egress.attempted',
+  correlationVersion: 'stage7-sandbox-egress/v1',
+  cloudWatchReader: 'FILTER_LOG_EVENTS_PAGINATED_STRICT',
+  runtimeOperations: Object.freeze({
+    api: Object.freeze(['MERCHANT_CONFIGURATION', 'TRANSACTION_CREATE']),
+    worker: Object.freeze(['TRANSACTION_STATUS']),
+  }),
+});
 
 const ARTIFACT_NAMES = [
   'Plan de release',
@@ -555,9 +569,9 @@ export const validateStage7Config = (value, { now = new Date() } = {}) => {
       (authorization.scope === 'EPHEMERAL_PRERELEASE' &&
         prereleaseAccess.mode === 'CLOUDFRONT_SIGNED_COOKIE' &&
         typeof prereleaseAccess.keyGroupId === 'string' &&
-        /^[A-Z0-9]{8,64}$/u.test(prereleaseAccess.keyGroupId) &&
+        CLOUDFRONT_KEY_GROUP_ID.test(prereleaseAccess.keyGroupId) &&
         typeof prereleaseAccess.publicKeyId === 'string' &&
-        /^[A-Z0-9]{8,64}$/u.test(prereleaseAccess.publicKeyId) &&
+        CLOUDFRONT_PUBLIC_KEY_ID.test(prereleaseAccess.publicKeyId) &&
         typeof prereleaseAccess.originTokenSecretArn === 'string' &&
         /^arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]{1,256}$/u.test(
           prereleaseAccess.originTokenSecretArn,
@@ -1504,6 +1518,7 @@ export const validateStage7PreviousReleaseManifest = (manifest) => {
       'pendingReconciliationEvidenceSha256',
       'smokeEvidenceSha256',
       'smokeVerifiedAtUtc',
+      'providerEgressCapability',
     ]) ||
     manifest.compatibility.status !== 'PASS' ||
     manifest.compatibility.schemaStrategy !== 'EXPAND_CONTRACT_N_AND_N_MINUS_1' ||
@@ -1515,6 +1530,8 @@ export const validateStage7PreviousReleaseManifest = (manifest) => {
     ].every((digest) => SHA256.test(digest ?? '')) ||
     !isoUtc(manifest.compatibility.smokeVerifiedAtUtc) ||
     Date.parse(manifest.compatibility.smokeVerifiedAtUtc) > Date.parse(manifest.capturedAtUtc) ||
+    canonicalJson(manifest.compatibility.providerEgressCapability) !==
+      canonicalJson(STAGE7_PROVIDER_EGRESS_CAPABILITY) ||
     !exactKeys(manifest.handoff, [
       'sourceKind',
       'sourceBundleSha256',
@@ -2054,6 +2071,7 @@ export const validateStage7VersionedRollbackCheckpoint = (
       'orphaned',
       'duplicateEffects',
       'lostFacts',
+      'terminalStatusCounts',
     ]) ||
     checkpoint.pendingIntegrity.status !== 'PASS' ||
     checkpoint.pendingIntegrity.beforeSnapshotSha256 !== plan.pendingBaseline.snapshotSha256 ||
@@ -2073,6 +2091,19 @@ export const validateStage7VersionedRollbackCheckpoint = (
     checkpoint.pendingIntegrity.orphaned !== 0 ||
     checkpoint.pendingIntegrity.duplicateEffects !== 0 ||
     checkpoint.pendingIntegrity.lostFacts !== 0 ||
+    !exactKeys(checkpoint.pendingIntegrity.terminalStatusCounts, [
+      'APPROVED',
+      'DECLINED',
+      'VOIDED',
+      'ERROR',
+    ]) ||
+    !Object.values(checkpoint.pendingIntegrity.terminalStatusCounts).every(
+      (count) => Number.isSafeInteger(count) && count >= 0,
+    ) ||
+    Object.values(checkpoint.pendingIntegrity.terminalStatusCounts).reduce(
+      (total, count) => total + count,
+      0,
+    ) !== checkpoint.pendingIntegrity.reconciled ||
     checkpoint.dataFactsSha256 !== plan.dataFactsSha256 ||
     checkpoint.dataFactsChanged !== false ||
     checkpoint.dataRollbackPerformed !== false ||
@@ -3078,7 +3109,7 @@ const validConfigFixture = ({ scope = 'FULL_RELEASE_VERSIONED_UPDATE' } = {}) =>
     scope === 'EPHEMERAL_PRERELEASE'
       ? {
           mode: 'CLOUDFRONT_SIGNED_COOKIE',
-          keyGroupId: 'K2STAGE7CHECKOUT',
+          keyGroupId: 'c2f83d9a-4f1e-4d7a-8b21-6c9d3e5f7a10',
           publicKeyId: 'K2STAGE7PUBLIC',
           originTokenSecretArn: [
             'arn:aws:secretsmanager:us-east-1:123456789012',
@@ -3215,6 +3246,14 @@ export const selfTestStage7 = () => {
     { ...prereleaseAccess.prereleaseAccess, mode: 'NOT_APPLICABLE' },
     { ...prereleaseAccess.prereleaseAccess, keyGroupId: null },
     { ...prereleaseAccess.prereleaseAccess, publicKeyId: null },
+    {
+      ...prereleaseAccess.prereleaseAccess,
+      keyGroupId: prereleaseAccess.prereleaseAccess.publicKeyId,
+    },
+    {
+      ...prereleaseAccess.prereleaseAccess,
+      publicKeyId: prereleaseAccess.prereleaseAccess.keyGroupId,
+    },
     { ...prereleaseAccess.prereleaseAccess, originTokenSecretArn: null },
     { ...prereleaseAccess.prereleaseAccess, enabled: true },
   ]) {
@@ -3597,6 +3636,7 @@ export const selfTestStage7 = () => {
         pendingReconciliationEvidenceSha256: '7'.repeat(64),
         smokeEvidenceSha256: '8'.repeat(64),
         smokeVerifiedAtUtc: '2026-08-17T10:15:00.000Z',
+        providerEgressCapability: STAGE7_PROVIDER_EGRESS_CAPABILITY,
       },
       handoff: {
         sourceKind: 'BASELINE_BOOTSTRAP',
@@ -3838,6 +3878,7 @@ export const selfTestStage7 = () => {
         orphaned: 0,
         duplicateEffects: 0,
         lostFacts: 0,
+        terminalStatusCounts: { APPROVED: 1, DECLINED: 1, VOIDED: 0, ERROR: 0 },
       },
       dataFactsSha256: rollbackPlan.dataFactsSha256,
       dataFactsChanged: false,
@@ -3927,6 +3968,7 @@ export const selfTestStage7 = () => {
         orphaned: 0,
         duplicateEffects: 0,
         lostFacts: 0,
+        terminalStatusCounts: { APPROVED: 0, DECLINED: 0, VOIDED: 0, ERROR: 0 },
       },
       dataFactsSha256: repromotionPlan.dataFactsSha256,
       smoke: {

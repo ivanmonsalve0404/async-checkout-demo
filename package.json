@@ -17,8 +17,8 @@
     "build": "pnpm --filter @checkout/contracts build && pnpm --filter @checkout/api build && pnpm --filter @checkout/web build",
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "eslint . --max-warnings 0",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format": "node scripts/format-repository.mjs write",
+    "format:check": "node scripts/format-repository.mjs check",
     "boundaries": "node scripts/check-boundaries.mjs --self-test && node scripts/check-boundaries.mjs",
     "workspace:check": "node scripts/check-workspace.mjs",
     "traceability:check": "node scripts/check-test-traceability.mjs",
@@ -93,6 +93,8 @@
     "release:control:self-test": "node scripts/stage7/control.mjs self-test",
     "stage7:config:author": "node scripts/stage7/config-authoring.mjs author",
     "stage7:config:author:self-test": "node scripts/stage7/config-authoring-self-test.mjs",
+    "stage7:runtime-secrets": "node scripts/stage7/runtime-secrets.mjs",
+    "stage7:runtime-secrets:self-test": "node scripts/stage7/runtime-secrets-self-test.mjs",
     "release:baseline": "node scripts/stage7/baseline-cli.mjs",
     "release:baseline:self-test": "node scripts/stage7/baseline-cli.mjs self-test",
     "stage8:self-test": "node scripts/stage8/cli.mjs self-test",
@@ -104,11 +106,12 @@
     "security:secrets": "node scripts/security/scan-repository.mjs --history --evidence output/evidence/runtime/stage-5-secrets.json",
     "security:dependencies": "node scripts/security/audit-dependencies.mjs",
     "security:dependencies:all": "pnpm audit --audit-level high --json",
-    "verify": "pnpm workspace:check && pnpm traceability:check && pnpm test:focus-check && pnpm format:check && pnpm lint && pnpm boundaries && pnpm typecheck && pnpm openapi:lint && pnpm contracts:check && pnpm stage7:config:author:self-test && pnpm test:coverage && pnpm test:contract && pnpm --filter @checkout/infra test && pnpm build && pnpm infra:synth && pnpm security:secrets && pnpm security:dependencies && pnpm test:integration && pnpm test:smoke && pnpm evidence:check"
+    "verify": "pnpm workspace:check && pnpm traceability:check && pnpm test:focus-check && pnpm format:check && pnpm lint && pnpm boundaries && pnpm typecheck && pnpm openapi:lint && pnpm contracts:check && pnpm stage7:config:author:self-test && pnpm stage7:runtime-secrets:self-test && pnpm test:coverage && pnpm test:contract && pnpm --filter @checkout/infra test && pnpm build && pnpm infra:synth && pnpm security:secrets && pnpm security:dependencies && pnpm test:integration && pnpm test:smoke && pnpm evidence:check"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.62.1",
+    "@redocly/ajv": "8.11.2",
     "@types/node": "24.13.3",
     "concurrently": "10.0.4",
     "esbuild": "0.28.2",

@@ -14,7 +14,7 @@ node scripts/stage6/sandbox-authorized/run.mjs --execute
 
 - the worktree is clean and the authorization file matches `HEAD`;
 - the authorization is a regular local JSON file matching `authorization.schema.json`;
-- `AUTH-E6-02` is active, approves the exact sandbox host hash, and allows at least seven requests;
+- `AUTH-E6-02` is active, approves the exact sandbox host hash, and allows at least eight requests;
 - the explicit execution arm, per-request kill switch, fixture approval, and mutation limit of one
   are present;
 - the exact HTTPS sandbox origin is selected and redirects are rejected;
@@ -51,7 +51,8 @@ successful authorized execution writes one sanitized, same-SHA external-evidence
 stdout. It contains only hashes, bounded counters, aliases, enums, and UTC timestamps. Store it in a
 restricted temporary location and ingest it through the existing external-evidence channel.
 
-The request plan is fixed at seven: two configuration reads, one client tokenization, one transaction
+The request plan is fixed at eight: three configuration reads (including the dynamic merchant read
+immediately before transaction creation), one client tokenization, one transaction
 creation, one status read, one non-mutating error-mapping read, and one reconciliation replay read.
 There is at most one tokenization POST and at most one transaction POST. The candidate client adapter,
 server provider, and in-memory repository are used directly; production application defaults remain

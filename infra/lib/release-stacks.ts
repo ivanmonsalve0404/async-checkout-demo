@@ -461,6 +461,11 @@ export class ReleaseApiStack extends ReleaseStack {
     );
 
     this.releaseOutput('ApiOriginUrl', 'https://' + this.apiOriginDomainName, 'API HTTPS origin');
+    this.releaseOutput(
+      'ApiLogGroupName',
+      this.apiLogGroup.logGroupName,
+      'Exact API application log group for read-only release evidence',
+    );
     this.releaseOutput('HttpApiId', this.httpApi.httpApiId, 'Exact HTTP API rollback target');
     this.releaseOutput(
       'ApiCustomDomainName',
@@ -478,6 +483,11 @@ export class ReleaseApiStack extends ReleaseStack {
       'WorkerAliasArn',
       this.workerAlias.functionArn,
       'Rollback target for worker',
+    );
+    this.releaseOutput(
+      'WorkerLogGroupName',
+      this.workerLogGroup.logGroupName,
+      'Exact worker application log group for read-only release evidence',
     );
     this.releaseOutput(
       'WorkerFunctionVersion',

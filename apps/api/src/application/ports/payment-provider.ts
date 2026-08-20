@@ -64,7 +64,10 @@ export interface PaymentProvider {
     command: ProviderPaymentCommand,
   ): Promise<Result<ProviderCreateOutcome, ProviderError>>;
   getByReference(reference: string): Promise<Result<ProviderObservation, ProviderError>>;
-  getById(providerId: string): Promise<Result<ProviderObservation, ProviderError>>;
+  getById(
+    providerId: string,
+    expectedReference?: string,
+  ): Promise<Result<ProviderObservation, ProviderError>>;
   verifyAndNormalizeEvent(
     eventName: string,
   ): Result<Readonly<{ eventName: string }>, ProviderError>;

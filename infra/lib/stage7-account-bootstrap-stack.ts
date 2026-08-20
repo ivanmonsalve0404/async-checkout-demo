@@ -278,6 +278,7 @@ const ACTION_RESOURCE_CLASSES: Readonly<Record<ResourceClass, readonly string[]>
     'logs:deleteretentionpolicy',
     'logs:describeloggroups',
     'logs:describemetricfilters',
+    'logs:filterlogevents',
     'logs:putmetricfilter',
     'logs:putretentionpolicy',
     'logs:tagloggroup',

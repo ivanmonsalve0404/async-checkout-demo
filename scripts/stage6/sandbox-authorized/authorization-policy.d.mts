@@ -1,6 +1,6 @@
 export const SANDBOX_ORIGIN: 'https://sandbox.wompi.co';
 export const SANDBOX_HOST: 'sandbox.wompi.co';
-export const EXPECTED_EXTERNAL_REQUESTS: 7;
+export const EXPECTED_EXTERNAL_REQUESTS: 8;
 
 export interface SandboxAuthorization {
   readonly schemaId: 'async-checkout-stage6-auth02-authorization';

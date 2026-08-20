@@ -28,16 +28,115 @@ const canonicalBase64Url = (value: string): boolean =>
   /^[A-Za-z0-9_-]{43,128}$/u.test(value) &&
   Buffer.from(value, 'base64url').toString('base64url') === value;
 
-const providerAcceptanceToken = (value: unknown): value is string =>
-  typeof value === 'string' && value.length >= 8 && value.length <= 8_192;
+const canonicalJwtSegment = (value: string): boolean =>
+  value.length > 0 &&
+  /^[A-Za-z0-9_-]+$/u.test(value) &&
+  Buffer.from(value, 'base64url').toString('base64url') === value;
 
-const providerPermalink = (value: unknown): value is string => {
+const jwtObjectSegment = (value: string): Readonly<Record<string, unknown>> | undefined => {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as unknown;
+  } catch {
+    return undefined;
+  }
+  return typeof decoded === 'object' && decoded !== null && !Array.isArray(decoded)
+    ? (decoded as Readonly<Record<string, unknown>>)
+    : undefined;
+};
+
+type ProviderAcceptanceTokenInspection = Readonly<{
+  valid: boolean;
+  expiration?: number;
+}>;
+
+const inspectProviderAcceptanceToken = (value: unknown): ProviderAcceptanceTokenInspection => {
+  if (
+    typeof value !== 'string' ||
+    value.length < 8 ||
+    value.length > 8_192 ||
+    !/^[\x21-\x7e]+$/u.test(value)
+  ) {
+    return { valid: false };
+  }
+  if (!value.includes('.')) return { valid: true };
+  const segments = value.split('.');
+  if (segments.length !== 3 || !segments.every(canonicalJwtSegment)) return { valid: false };
+  let payload: unknown;
+  try {
+    payload = JSON.parse(
+      Buffer.from(segments[1] as string, 'base64url').toString('utf8'),
+    ) as unknown;
+  } catch {
+    return { valid: false };
+  }
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    return { valid: false };
+  }
+  const expiration = (payload as Readonly<Record<string, unknown>>).exp;
+  if (expiration === undefined) return { valid: true };
+  return Number.isSafeInteger(expiration) && (expiration as number) > 0
+    ? { valid: true, expiration: expiration as number }
+    : { valid: false };
+};
+
+export const isProviderAcceptanceTokenStructurallyValid = (value: unknown): value is string =>
+  inspectProviderAcceptanceToken(value).valid;
+
+export const isProviderAcceptanceTokenUsable = (
+  value: unknown,
+  now: Date,
+  minimumRemainingSeconds = 0,
+): value is string => {
+  if (
+    !Number.isFinite(now.getTime()) ||
+    !Number.isSafeInteger(minimumRemainingSeconds) ||
+    minimumRemainingSeconds < 0
+  ) {
+    return false;
+  }
+  const inspection = inspectProviderAcceptanceToken(value);
+  if (!inspection.valid) return false;
+  if (inspection.expiration === undefined) return true;
+  // The unverified payload can only make the adapter reject a token; it never grants authority.
+  return inspection.expiration > now.getTime() / 1_000 + minimumRemainingSeconds;
+};
+
+export const isProviderAcceptanceJwtUsable = (
+  value: unknown,
+  now: Date,
+  minimumRemainingSeconds = 0,
+): value is string => {
+  if (typeof value !== 'string') return false;
+  const segments = value.split('.');
+  if (segments.length !== 3 || !segments.every(canonicalJwtSegment)) return false;
+  const header = jwtObjectSegment(segments[0] as string);
+  if (header === undefined) return false;
+  const algorithm = header.alg;
+  const type = header.typ;
+  if (
+    typeof algorithm !== 'string' ||
+    !/^[A-Za-z0-9_-]{2,64}$/u.test(algorithm) ||
+    algorithm.toLowerCase() === 'none' ||
+    (type !== undefined && type !== 'JWT')
+  ) {
+    return false;
+  }
+  return isProviderAcceptanceTokenUsable(value, now, minimumRemainingSeconds);
+};
+
+export const isWompiProviderPermalink = (value: unknown): value is string => {
   if (typeof value !== 'string' || value.length === 0 || value.length > 2_048) return false;
   try {
     const parsed = new URL(value);
+    const officialHost =
+      parsed.hostname === 'wompi.co' ||
+      parsed.hostname.endsWith('.wompi.co') ||
+      parsed.hostname === 'wompi.com' ||
+      parsed.hostname.endsWith('.wompi.com');
     return (
       parsed.protocol === 'https:' &&
-      (parsed.hostname === 'wompi.co' || parsed.hostname.endsWith('.wompi.co')) &&
+      officialHost &&
       parsed.username.length === 0 &&
       parsed.password.length === 0 &&
       parsed.toString() === value
@@ -118,10 +217,10 @@ const parseRuntimeSecret = (
     !/^prv_test_[A-Za-z0-9_-]{8,256}$/u.test(privateKey) ||
     typeof integritySecret !== 'string' ||
     !/^test_integrity_[A-Za-z0-9_-]{8,256}$/u.test(integritySecret) ||
-    !providerAcceptanceToken(termsAcceptanceToken) ||
-    !providerPermalink(termsPermalink) ||
-    !providerAcceptanceToken(personalDataAcceptanceToken) ||
-    !providerPermalink(personalDataPermalink)
+    !isProviderAcceptanceTokenStructurallyValid(termsAcceptanceToken) ||
+    !isWompiProviderPermalink(termsPermalink) ||
+    !isProviderAcceptanceTokenStructurallyValid(personalDataAcceptanceToken) ||
+    !isWompiProviderPermalink(personalDataPermalink)
   ) {
     throw new Error('RUNTIME_SECRET_INVALID');
   }

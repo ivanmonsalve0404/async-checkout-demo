@@ -2194,7 +2194,7 @@ const selfTestFixtureConfig = (now) => {
     },
     prereleaseAccess: {
       mode: 'CLOUDFRONT_SIGNED_COOKIE',
-      keyGroupId: 'K2STAGE7KEYGROUP',
+      keyGroupId: 'c2f83d9a-4f1e-4d7a-8b21-6c9d3e5f7a10',
       publicKeyId: 'K2STAGE7CHECKOUT',
       originTokenSecretArn,
       originTokenSecretVersionId: 'a'.repeat(32),

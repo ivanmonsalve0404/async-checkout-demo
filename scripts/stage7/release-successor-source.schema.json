@@ -46,8 +46,8 @@
     "journalSnapshotBinding": { "$ref": "#/$defs/journalSnapshotBinding" },
     "files": {
       "type": "array",
-      "minItems": 56,
-      "maxItems": 56,
+      "minItems": 57,
+      "maxItems": 57,
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/rawFile" }
     },

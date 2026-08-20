@@ -77,6 +77,7 @@ export const RELEASE_SUCCESSOR_SOURCE_LAYOUT = Object.freeze({
   publicationProof: 'release-successor-publication-proof.json',
   apiDeployment: 'release-successor-api-deployment.json',
   pendingProducer: 'release-successor-pending-producer.json',
+  pendingEgressCloseout: 'release-successor-pending-egress-closeout.json',
   postdeploySmoke: 'release-successor-postdeploy-smoke.json',
   repromotionSmoke: 'release-successor-repromotion-smoke.json',
   releaseFence: 'release-successor-completion-fence.json',

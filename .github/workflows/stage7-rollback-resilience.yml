@@ -244,6 +244,7 @@ jobs:
             --sandbox .stage7/sandbox/sandbox-smoke.json \
             --rollback-smoke-input .stage7/rollback/rollback-smoke-input-preflight.json \
             --pending-producer .stage7/rollback/rollback-pending-producer.json \
+            --pending-egress-closeout .stage7/rollback/rollback-pending-egress-closeout.json \
             --rollback-smoke .stage7/rollback/versioned-rollback-smoke.json \
             --repromotion-smoke .stage7/rollback/versioned-repromotion-smoke.json \
             --journal-cleanup-role "${STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN}" \
@@ -316,6 +317,7 @@ jobs:
             --sandbox .stage7/sandbox/sandbox-smoke.json \
             --rollback-smoke-input .stage7/rollback/rollback-smoke-input-preflight.json \
             --pending-producer .stage7/rollback/rollback-pending-producer.json \
+            --pending-egress-closeout .stage7/rollback/rollback-pending-egress-closeout.json \
             --rollback-smoke .stage7/rollback/versioned-rollback-smoke.json \
             --repromotion-smoke .stage7/rollback/versioned-repromotion-smoke.json \
             --journal-cleanup-role "${STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN}" \

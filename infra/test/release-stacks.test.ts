@@ -33,6 +33,8 @@ interface ReleaseAssembly {
 
 const RELEASE_SHA = ['01234567', '89abcdef', '01234567', '89abcdef', '01234567'].join('');
 const TEST_ACCOUNT = ['000', '000', '000', '000'].join('');
+const KEY_GROUP_ID = 'c2f83d9a-4f1e-4d7a-8b21-6c9d3e5f7a10';
+const PUBLIC_KEY_ID = 'K2STAGE7CHECKOUT';
 const certificateArn = (id: string): string =>
   `arn:aws:acm:us-east-1:${TEST_ACCOUNT}:certificate/${id}`;
 const runtimeReference = (): string =>
@@ -90,8 +92,8 @@ function releaseAssembly(
     ...(environment.startsWith('assessment-prerelease-') || releaseMode === 'baseline'
       ? {
           ...(releaseMode === 'baseline' ? { baselineConfigSha256: 'b'.repeat(64) } : {}),
-          prereleaseKeyGroupId: 'K2STAGE7KEYGROUP',
-          prereleasePublicKeyId: 'K2STAGE7CHECKOUT',
+          prereleaseKeyGroupId: KEY_GROUP_ID,
+          prereleasePublicKeyId: PUBLIC_KEY_ID,
           runtimeSecretArn: runtimeReference(),
           runtimeSecretVersionId: 'a'.repeat(32),
         }
@@ -514,7 +516,7 @@ void describe('assessment release assembly', () => {
       distributionConfig.DefaultCacheBehavior,
       ...distributionConfig.CacheBehaviors,
     ]) {
-      assert.deepEqual(behavior.TrustedKeyGroups, ['K2STAGE7KEYGROUP']);
+      assert.deepEqual(behavior.TrustedKeyGroups, [KEY_GROUP_ID]);
     }
     const apiOrigin = distributionConfig.Origins.find((origin) =>
       JSON.stringify(origin.DomainName).includes('execute-api'),
@@ -542,8 +544,8 @@ void describe('assessment release assembly', () => {
         .update(
           [
             'CLOUDFRONT_SIGNED_COOKIE',
-            'K2STAGE7KEYGROUP',
-            'K2STAGE7CHECKOUT',
+            KEY_GROUP_ID,
+            PUBLIC_KEY_ID,
             runtimeReference(),
             'a'.repeat(32),
           ].join('\n'),
@@ -684,7 +686,7 @@ void describe('assessment release assembly', () => {
       distributionConfig.DefaultCacheBehavior,
       ...distributionConfig.CacheBehaviors,
     ]) {
-      assert.deepEqual(behavior.TrustedKeyGroups, ['K2STAGE7KEYGROUP']);
+      assert.deepEqual(behavior.TrustedKeyGroups, [KEY_GROUP_ID]);
     }
     const apiOrigin = distributionConfig.Origins.find((origin) =>
       Array.isArray(origin.OriginCustomHeaders),

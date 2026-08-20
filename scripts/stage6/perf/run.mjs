@@ -17,6 +17,7 @@ import {
   withLocalPreview,
 } from '../compat/harness.mjs';
 import { evidenceBase, writeEvidence } from '../compat/evidence.mjs';
+import { roundAggregateMetric } from './evidence.mjs';
 import { writePerformanceHtml } from './html-report.mjs';
 import { runLighthouseAudit } from './lighthouse-matrix.mjs';
 
@@ -57,7 +58,7 @@ const browserLab = async (target) => {
       await page.goto(`${WEB_ORIGIN}${PRODUCT_PATH}`, { waitUntil: 'networkidle' });
       await expect(page.getByTestId('product-surface')).toBeVisible({ timeout: 5_000 });
       await page.waitForTimeout(500);
-      const metrics = await page.evaluate(() => {
+      const rawMetrics = await page.evaluate(() => {
         const navigation = performance.getEntriesByType('navigation')[0];
         const image = document.querySelector('.product-media img');
         return {
@@ -71,6 +72,12 @@ const browserLab = async (target) => {
           imageNaturalHeight: image?.naturalHeight ?? 0,
         };
       });
+      const metrics = {
+        ...rawMetrics,
+        cls: roundAggregateMetric(rawMetrics.cls),
+        lcpMs: roundAggregateMetric(rawMetrics.lcpMs),
+        navigationDurationMs: roundAggregateMetric(rawMetrics.navigationDurationMs),
+      };
 
       check(metrics.lcpMs !== null && metrics.lcpMs > 0, 'LCP_NOT_OBSERVED');
       check(metrics.lcpMs < 2_500, 'LCP_BUDGET_EXCEEDED');
@@ -87,9 +94,8 @@ const browserLab = async (target) => {
       const interactionStartedAt = await page.evaluate(() => performance.now());
       await page.getByTestId('product-checkout-cta').click();
       await expect(page.getByLabel('Número de tarjeta')).toBeVisible({ timeout: 5_000 });
-      const syntheticInteractionMs = await page.evaluate(
-        (start) => performance.now() - start,
-        interactionStartedAt,
+      const syntheticInteractionMs = roundAggregateMetric(
+        await page.evaluate((start) => performance.now() - start, interactionStartedAt),
       );
 
       const counts = network.counts();

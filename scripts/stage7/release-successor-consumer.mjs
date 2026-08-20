@@ -7,6 +7,7 @@ import path from 'node:path';
 import { parseStrictJsonSource } from '../stage6/strict-json.mjs';
 import {
   canonicalJson,
+  STAGE7_PROVIDER_EGRESS_CAPABILITY,
   createStage7PreviousReleaseManifest,
   objectSha256,
   validateFreezeManifest,
@@ -919,6 +920,7 @@ const createReleaseSuccessorTargetProjection = ({
       pendingReconciliationEvidenceSha256: source.pending.rawSha256,
       smokeEvidenceSha256: source.smoke.rawSha256,
       smokeVerifiedAtUtc: source.smoke.value.verifiedAtUtc,
+      providerEgressCapability: STAGE7_PROVIDER_EGRESS_CAPABILITY,
     },
     handoff: {
       sourceKind: 'RELEASE_SUCCESSOR',

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
+import { scanText } from '../../security/scan-repository.mjs';
+
 const RUN_ID = /^e6-[0-9]{8}t[0-9]{6}z-[0-9a-f]{8}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const COMMIT_SHA = /^[0-9a-f]{40}$/u;
@@ -45,7 +47,10 @@ const SUMMARY_METRICS = {
 
 const exact = (actual, expected) => JSON.stringify(actual) === JSON.stringify(expected);
 const finiteNonNegative = (value) => Number.isFinite(value) && value >= 0;
-const rounded = (value) => Number(value.toFixed(3));
+export const roundAggregateMetric = (value) =>
+  Number.isFinite(value) ? Number(value.toFixed(3)) : value;
+const rounded = roundAggregateMetric;
+const hasAggregatePrecision = (value) => finiteNonNegative(value) && rounded(value) === value;
 const validSample = (value, unit) =>
   finiteNonNegative(value) &&
   (unit !== 'ratio' || value <= 1) &&
@@ -211,15 +216,15 @@ const validBrowserLab = (lab, budgets) =>
     'syntheticInteractionMs',
     'inp',
   ]) &&
-  finiteNonNegative(lab.metrics.lcpMs) &&
+  hasAggregatePrecision(lab.metrics.lcpMs) &&
   lab.metrics.lcpMs > 0 &&
   lab.metrics.lcpMs < budgets.lcpMsMaximumExclusive &&
   lab.metrics.lcpTargetMs === budgets.lcpMsMaximumExclusive &&
-  finiteNonNegative(lab.metrics.cls) &&
+  hasAggregatePrecision(lab.metrics.cls) &&
   lab.metrics.cls < budgets.clsMaximumExclusive &&
   lab.metrics.clsTarget === budgets.clsMaximumExclusive &&
-  finiteNonNegative(lab.metrics.navigationDurationMs) &&
-  finiteNonNegative(lab.metrics.syntheticInteractionMs) &&
+  hasAggregatePrecision(lab.metrics.navigationDurationMs) &&
+  hasAggregatePrecision(lab.metrics.syntheticInteractionMs) &&
   lab.metrics.inp === 'NOT_RUN_FIELD_REQUIRED' &&
   lab.mediaReservation?.status === 'PASS' &&
   Number(lab.mediaReservation.widthAttribute) === lab.mediaReservation.naturalWidth &&
@@ -505,6 +510,25 @@ export const selfTestPerformanceEvidence = () => {
   const rawPersisted = structuredClone(valid);
   rawPersisted.sanitizedHtml.rawArtifactsPersisted = true;
   assert.equal(validatePerformanceEvidence(rawPersisted), false);
+
+  const luhnHighPrecisionMetric = Number(['78', ['29999999', '981376'].join('')].join('.'));
+  const excessiveBrowserMetricPrecision = structuredClone(valid);
+  excessiveBrowserMetricPrecision.browserLab.metrics.navigationDurationMs = luhnHighPrecisionMetric;
+  assert.equal(validatePerformanceEvidence(excessiveBrowserMetricPrecision), false);
+  assert.equal(roundAggregateMetric(luhnHighPrecisionMetric), 78.3);
+  assert.equal(
+    scanText('raw-performance-canary.json', JSON.stringify(excessiveBrowserMetricPrecision)).some(
+      ({ rule }) => rule === 'PAN_LUHN',
+    ),
+    true,
+  );
+  excessiveBrowserMetricPrecision.browserLab.metrics.navigationDurationMs = roundAggregateMetric(
+    excessiveBrowserMetricPrecision.browserLab.metrics.navigationDurationMs,
+  );
+  assert.deepEqual(
+    scanText('rounded-performance-canary.json', JSON.stringify(excessiveBrowserMetricPrecision)),
+    [],
+  );
 };
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

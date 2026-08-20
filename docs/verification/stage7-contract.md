@@ -236,8 +236,10 @@ otro `run_id` falla antes de credenciales y antes del proveedor.
 
 La referencia enviada a Wompi se deriva de ese mismo binding y deja de usar azar.
 Wompi exige que la referencia sea única y rechaza duplicados; esa respuesta es una
-segunda barrera, no sustituye el claim ni su consumo atómico. El presupuesto sigue
-siendo exactamente 7 requests, una tokenización y una creación de transacción.
+segunda barrera, no sustituye el claim ni su consumo atómico. El presupuesto es
+exactamente 8 requests: tres lecturas de configuración (incluida la lectura dinámica
+inmediata), una tokenización y una creación de transacción, más las lecturas de estado
+acotadas del contrato.
 Ningún claim, recibo ni dato de tarjeta se publica como artifact.
 
 ## Documento final

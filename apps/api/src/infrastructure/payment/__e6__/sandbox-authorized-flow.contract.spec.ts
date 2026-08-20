@@ -21,6 +21,13 @@ const paymentStatus = (status: ProviderObservation['status']): PaymentStatus => 
   return status;
 };
 
+const providerAcceptanceJwt = (subject: string): string =>
+  [
+    Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
+    Buffer.from(JSON.stringify({ sub: subject, exp: 4_102_444_800 })).toString('base64url'),
+    Buffer.from(`synthetic-signature-${subject}`).toString('base64url'),
+  ].join('.');
+
 const reconcile = async (
   repository: InMemoryCheckoutRepository,
   transactionId: string,
@@ -162,15 +169,33 @@ describe('authorized sandbox provider candidate contract', () => {
       })
       .mockResolvedValueOnce(response('APPROVED'))
       .mockResolvedValueOnce(response('APPROVED'));
+    const providerContracts = [
+      {
+        type: 'TERMS',
+        permalink: 'https://comercios.wompi.co/terminos/synthetic',
+        version: 'terms-synthetic',
+      },
+      {
+        type: 'PERSONAL_DATA',
+        permalink: 'https://wompi.com/datos/synthetic',
+        version: 'personal-synthetic',
+      },
+    ] as const;
     const provider = new SandboxPaymentProvider({
       enabled: true,
       publicKey,
       privateKey,
       integritySecret,
-      providerAcceptances: {
-        terms: 'provider-terms-synthetic',
-        personalData: 'provider-personal-synthetic',
-      },
+      acceptanceReader: () =>
+        Promise.resolve({
+          contracts: providerContracts,
+          providerAcceptances: {
+            terms: providerAcceptanceJwt('provider-terms-synthetic'),
+            personalData: providerAcceptanceJwt('provider-personal-synthetic'),
+          },
+        }),
+      expectedContracts: providerContracts,
+      quoteTtlSeconds: 900,
       authorizedUntilUtc: '2099-01-01T00:00:00.000Z',
       transport,
     });
@@ -190,11 +215,11 @@ describe('authorized sandbox provider candidate contract', () => {
     );
     if (created.kind !== 'ACKNOWLEDGED') throw new Error('create was not acknowledged');
     await reconcile(repository, transactionId, created, 0);
-    const firstRead = valueOf(await provider.getById(created.providerId));
+    const firstRead = valueOf(await provider.getById(created.providerId, reference));
     await reconcile(repository, transactionId, firstRead, 1);
     const beforeReplayProduct = valueOf(await catalog.findById(productId));
     const beforeReplayTransaction = valueOf(await repository.findTransaction(transactionId));
-    const replayRead = valueOf(await provider.getById(created.providerId));
+    const replayRead = valueOf(await provider.getById(created.providerId, reference));
     await reconcile(repository, transactionId, replayRead, 2);
     await reconcile(repository, transactionId, replayRead, 2);
     const afterReplayProduct = valueOf(await catalog.findById(productId));

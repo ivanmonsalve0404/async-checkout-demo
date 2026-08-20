@@ -28,6 +28,7 @@ export const FULL_REQUEST_BUDGET_USAGE_IDS = Object.freeze([
   'POST_ROLLBACK_VERSIONED',
   'ACTIVATION_REPROMOTION',
   'POST_REPROMOTION_VERSIONED',
+  'RB_E7_05_PENDING_EGRESS_CLOSEOUT',
   'ROLLBACK_RESILIENCE',
   'RECONCILIATION_ROLLBACK_CHECK_SMOKE',
   'RECONCILIATION_ROLLBACK_RESILIENCE_SMOKE',
@@ -52,7 +53,7 @@ const EXACT_USAGE_COUNTS = Object.freeze({
   ACTIVATION_CANDIDATE: ZERO,
   QUALITY_FOCAL: Object.freeze(counts(0, 0, 24)),
   EDGE_PASSIVE: Object.freeze(counts(0, 0, 12)),
-  SANDBOX_ONE_USE: Object.freeze(counts(0, 7, 0)),
+  SANDBOX_ONE_USE: Object.freeze(counts(0, 8, 0)),
   ROLLBACK_PENDING_INPUT_PREFLIGHT: ZERO,
   POST_ROLLBACK_VERSIONED: Object.freeze(counts(3, 0, 0)),
   ACTIVATION_REPROMOTION: ZERO,
@@ -63,7 +64,11 @@ const EXACT_USAGE_COUNTS = Object.freeze({
   PUBLICATION_TARGET_PREFLIGHT: Object.freeze(counts(3, 0, 0)),
 });
 
-const VARIABLE_USAGE_IDS = Object.freeze(['SMOKE_POST_DEPLOY', 'RB_E7_05_PENDING_PRODUCER']);
+const VARIABLE_USAGE_IDS = Object.freeze([
+  'SMOKE_POST_DEPLOY',
+  'RB_E7_05_PENDING_PRODUCER',
+  'RB_E7_05_PENDING_EGRESS_CLOSEOUT',
+]);
 
 export const FULL_REQUEST_BUDGET_FIXED_COMPONENTS = Object.freeze([
   Object.freeze({ componentId: 'QUALITY_FOCAL', requestCounts: Object.freeze(counts(0, 0, 24)) }),
@@ -75,7 +80,7 @@ export const FULL_REQUEST_BUDGET_FIXED_COMPONENTS = Object.freeze([
     componentId: 'EDGE_PASSIVE_ZAP_EXACT_INVENTORY',
     requestCounts: Object.freeze(counts(0, 0, 6)),
   }),
-  Object.freeze({ componentId: 'SANDBOX_ONE_USE', requestCounts: Object.freeze(counts(0, 7, 0)) }),
+  Object.freeze({ componentId: 'SANDBOX_ONE_USE', requestCounts: Object.freeze(counts(0, 8, 0)) }),
   Object.freeze({
     componentId: 'POST_ROLLBACK_VERSIONED',
     requestCounts: Object.freeze(counts(3, 0, 0)),
@@ -199,6 +204,7 @@ const planBody = ({
     requiredEnforcement: {
       browserRouteBeforeContinue: true,
       pendingRouteBeforeContinue: true,
+      backendReadbackBeforePhaseClose: true,
       zapBeforeEgress: true,
       zapExactRequestCount: 6,
       cumulativeBeforeEveryPhase: true,
@@ -290,7 +296,7 @@ const validateUsage = (usage, plan) => {
   if (expected !== undefined && canonical(usage.requestCounts) !== canonical(expected)) {
     fail('E7_EXTERNAL_REQUEST_BUDGET_FIXED_USAGE_INVALID');
   }
-  if (usage.usageId === 'SMOKE_POST_DEPLOY' || usage.usageId === 'RB_E7_05_PENDING_PRODUCER') {
+  if (VARIABLE_USAGE_IDS.includes(usage.usageId)) {
     if (usage.requestCounts[PASSIVE_ID] !== 0) {
       fail('E7_EXTERNAL_REQUEST_BUDGET_VARIABLE_USAGE_INVALID');
     }
@@ -328,12 +334,9 @@ const validateFullExternalRequestBudgetCheckpointInternal = ({ plan, usages, pha
     (total, usage) => addCounts(total, usage.requestCounts),
     zeroCounts(),
   );
-  const variableUsed = counts(
-    (seen.get('SMOKE_POST_DEPLOY')?.requestCounts[OWNED_ID] ?? 0) +
-      (seen.get('RB_E7_05_PENDING_PRODUCER')?.requestCounts[OWNED_ID] ?? 0),
-    (seen.get('SMOKE_POST_DEPLOY')?.requestCounts[SANDBOX_ID] ?? 0) +
-      (seen.get('RB_E7_05_PENDING_PRODUCER')?.requestCounts[SANDBOX_ID] ?? 0),
-    0,
+  const variableUsed = VARIABLE_USAGE_IDS.reduce(
+    (total, usageId) => addCounts(total, seen.get(usageId)?.requestCounts ?? ZERO),
+    zeroCounts(),
   );
   if (
     FULL_EXTERNAL_AUTHORIZATION_IDS.some(
@@ -431,6 +434,20 @@ export const createFullExternalRequestCounter = ({ plan, usages, usageId }) => {
       current = next;
       return { usageId, authorizationId, count: current[authorizationId] };
     },
+    recordObservedRequests(authorizationId, count) {
+      if (
+        closed ||
+        !allowedIds.includes(authorizationId) ||
+        !Number.isSafeInteger(count) ||
+        count < 0
+      ) {
+        fail('E7_EXTERNAL_REQUEST_BUDGET_COUNTER_OBSERVATION_INVALID');
+      }
+      const next = { ...current, [authorizationId]: current[authorizationId] + count };
+      assertFullExternalRequestAllowed({ plan, usages, usageId, requestCounts: next });
+      current = next;
+      return { usageId, authorizationId, count: current[authorizationId] };
+    },
     close() {
       if (closed) fail('E7_EXTERNAL_REQUEST_BUDGET_COUNTER_CLOSED');
       const result = document();
@@ -504,13 +521,14 @@ export const selfTestExternalRequestBudget = () => {
     requestLimits: counts(100, 20, 100),
   });
   assert.equal(validateFullExternalRequestBudgetPlan(plan), plan);
-  assert.deepEqual(plan.fixedReservations, counts(26, 7, 36));
-  assert.deepEqual(plan.variableCapacity, counts(74, 13, 64));
+  assert.deepEqual(plan.fixedReservations, counts(26, 8, 36));
+  assert.deepEqual(plan.variableCapacity, counts(74, 12, 64));
 
   const dynamic = {
     SMOKE_POST_DEPLOY: counts(40, 3, 0),
     EDGE_PASSIVE: counts(0, 0, 12),
     RB_E7_05_PENDING_PRODUCER: counts(10, 2, 0),
+    RB_E7_05_PENDING_EGRESS_CLOSEOUT: counts(0, 4, 0),
   };
   const usages = FULL_REQUEST_BUDGET_USAGE_IDS.map((usageId) =>
     usage(plan, usageId, dynamic[usageId] ?? EXACT_USAGE_COUNTS[usageId]),
@@ -520,17 +538,17 @@ export const selfTestExternalRequestBudget = () => {
     usages: usages.filter(({ usageId }) => usageId !== 'PUBLICATION_TARGET_PREFLIGHT'),
     phase: 'PRE_FENCE',
   });
-  assert.deepEqual(preFence.actualTotals, counts(73, 12, 36));
+  assert.deepEqual(preFence.actualTotals, counts(73, 17, 36));
   assert.deepEqual(preFence.reservedTotals, counts(3, 0, 0));
-  assert.deepEqual(preFence.committedTotals, counts(76, 12, 36));
+  assert.deepEqual(preFence.committedTotals, counts(76, 17, 36));
   const final = validateFullExternalRequestBudgetCheckpoint({
     plan,
     usages,
     phase: 'POST_PUBLICATION',
   });
-  assert.deepEqual(final.actualTotals, counts(76, 12, 36));
+  assert.deepEqual(final.actualTotals, counts(76, 17, 36));
   assert.deepEqual(final.reservedTotals, counts(0, 0, 0));
-  assert.deepEqual(final.remaining, counts(24, 8, 64));
+  assert.deepEqual(final.remaining, counts(24, 3, 64));
 
   const beforePending = usages.filter(({ usageId }) => usageId === 'SMOKE_POST_DEPLOY');
   assert.equal(
@@ -538,7 +556,7 @@ export const selfTestExternalRequestBudget = () => {
       plan,
       usages: beforePending,
       usageId: 'RB_E7_05_PENDING_PRODUCER',
-      requestCounts: counts(34, 10, 0),
+      requestCounts: counts(34, 9, 0),
     }).status,
     'WITHIN_AUTHORIZED_LIMITS',
   );
@@ -548,7 +566,7 @@ export const selfTestExternalRequestBudget = () => {
         plan,
         usages: beforePending,
         usageId: 'RB_E7_05_PENDING_PRODUCER',
-        requestCounts: counts(35, 11, 0),
+        requestCounts: counts(35, 10, 0),
       }),
     (error) => error.code === 'E7_EXTERNAL_REQUEST_BUDGET_EXCEEDED',
   );
@@ -565,6 +583,17 @@ export const selfTestExternalRequestBudget = () => {
   );
   const smokeUsage = smokeCounter.close();
   assert.equal(smokeUsage.requestCounts[OWNED_ID], 74);
+  const observedCounter = createFullExternalRequestCounter({
+    plan,
+    usages: [],
+    usageId: 'SMOKE_POST_DEPLOY',
+  });
+  observedCounter.recordObservedRequests(SANDBOX_ID, 12);
+  assert.equal(observedCounter.close().requestCounts[SANDBOX_ID], 12);
+  assert.throws(
+    () => observedCounter.recordObservedRequests(SANDBOX_ID, 1),
+    (error) => error.code === 'E7_EXTERNAL_REQUEST_BUDGET_COUNTER_OBSERVATION_INVALID',
+  );
   assert.throws(
     () => smokeCounter.beforeRequest(SANDBOX_ID),
     (error) => error.code === 'E7_EXTERNAL_REQUEST_BUDGET_COUNTER_REQUEST_INVALID',
@@ -701,12 +730,12 @@ export const selfTestExternalRequestBudget = () => {
     () =>
       createFullExternalRequestBudgetPlan({
         ...plan,
-        requestLimits: counts(26, 7, 36),
+        requestLimits: counts(26, 8, 36),
       }),
     (error) => error.code === 'E7_EXTERNAL_REQUEST_BUDGET_CAPACITY_INVALID',
   );
 
-  return { assertions: 25, externalRequests: 0, mutationsPerformed: 0 };
+  return { assertions: 27, externalRequests: 0, mutationsPerformed: 0 };
 };
 
 const main = () => {

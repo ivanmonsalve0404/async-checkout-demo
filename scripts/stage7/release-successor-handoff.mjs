@@ -345,6 +345,7 @@ const DOCUMENT_ARTIFACT_ORIGIN = Object.freeze({
   publicationProof: 'stage7-publication',
   apiDeployment: 'stage7-api',
   pendingProducer: 'stage7-rollback',
+  pendingEgressCloseout: 'stage7-rollback',
   postdeploySmoke: 'stage7-smoke',
   repromotionSmoke: 'stage7-rollback',
 });
@@ -392,6 +393,7 @@ const DOCUMENT_ARTIFACT_BASENAME = Object.freeze({
   publicationProof: 'publication-proof.json',
   apiDeployment: 'api.json',
   pendingProducer: 'rollback-pending-producer.json',
+  pendingEgressCloseout: 'rollback-pending-egress-closeout.json',
   postdeploySmoke: 'smoke.json',
   repromotionSmoke: 'versioned-repromotion-smoke.json',
 });
@@ -2470,6 +2472,7 @@ const LEDGER_SOURCE_DOCUMENT_MAP = Object.freeze({
   ],
   activation: ['activation', 'stage7-activation'],
   drift: ['drift', 'stage7-rollback'],
+  rollbackPendingEgressCloseout: ['pendingEgressCloseout', 'stage7-rollback'],
   rollbackResilienceSourceBinding: ['rollbackSourceBinding', 'stage7-rollback-resilience'],
   rollbackResilienceProtectedRun: ['rollbackProtectedRun', 'stage7-rollback-resilience'],
   rollbackResilienceCompletion: ['rollbackCompletion', 'stage7-rollback-resilience'],
@@ -2628,15 +2631,81 @@ const validateReleaseApi = ({ apiDeployment, freeze, config, observation }) => {
   }
 };
 
-const validateReleasePending = ({ pendingProducer, freeze }) => {
+const validateReleasePending = ({
+  pendingProducer,
+  pendingEgressCloseout,
+  freeze,
+  predecessor,
+}) => {
   const value = pendingProducer.value;
+  const closeout = pendingEgressCloseout.value;
+  const terminal = closeout?.terminalReadback;
+  const providerEgress = closeout?.backendProviderEgress;
+  const attempts = providerEgress?.attempts;
+  const previousCandidateSha = predecessor?.previous?.candidateSha;
+  const previousReleaseId = predecessor?.previous?.releaseId;
+  const predecessorIdentityValid =
+    SHA.test(previousCandidateSha ?? '') && RELEASE_ID.test(previousReleaseId ?? '');
+  const previousIdentity = `${previousCandidateSha}\0${previousReleaseId}`;
+  const candidateIdentity = `${freeze.candidateSha}\0${freeze.releaseId}`;
+  const expectedAllowedIdentitySetSha256 = predecessorIdentityValid
+    ? sha256([candidateIdentity, previousIdentity].toSorted().join('\0'))
+    : null;
+  const expectedRequiredStatusIdentitySha256 = predecessorIdentityValid
+    ? sha256(previousIdentity)
+    : null;
   if (
+    !predecessorIdentityValid ||
+    predecessor?.target?.candidateSha !== freeze.candidateSha ||
+    predecessor?.target?.releaseId !== freeze.releaseId ||
     value.kind !== 'VERSIONED_ROLLBACK_PENDING_PRODUCER' ||
-    value.status !== 'PASS' ||
+    value.status !== 'PENDING_OBSERVED' ||
     value.candidateSha !== freeze.candidateSha ||
     value.releaseId !== freeze.releaseId ||
     value.containsSensitiveData !== false ||
-    !object(value.authorizationUsage)
+    !object(value.authorizationUsage) ||
+    !object(value.providerEgress) ||
+    !SHA256.test(value.providerEgress.correlationSha256 ?? '') ||
+    !SHA256.test(value.providerEgress.correlationSetSha256 ?? '') ||
+    !['DECLINED', 'ERROR'].includes(value.expectedTerminalStatus) ||
+    closeout?.kind !== 'ROLLBACK_PENDING_EGRESS_CLOSEOUT' ||
+    closeout?.status !== 'PASS' ||
+    closeout?.candidateSha !== freeze.candidateSha ||
+    closeout?.releaseId !== freeze.releaseId ||
+    closeout?.pendingProducerSha256 !== pendingProducer.canonicalSha256 ||
+    closeout?.expectedTerminalStatus !== value.expectedTerminalStatus ||
+    closeout?.mutationsPerformed !== 0 ||
+    closeout?.rawIdentifiersCaptured !== false ||
+    closeout?.containsSensitiveData !== false ||
+    !object(closeout?.authorizationUsage) ||
+    terminal?.status !== 'PASS' ||
+    terminal?.trackedBefore !== 1 ||
+    terminal?.reconciled !== 1 ||
+    terminal?.stillPending !== 0 ||
+    terminal?.orphaned !== 0 ||
+    terminal?.duplicateEffects !== 0 ||
+    terminal?.lostFacts !== 0 ||
+    !exactKeys(terminal?.terminalStatusCounts, ['APPROVED', 'DECLINED', 'VOIDED', 'ERROR']) ||
+    terminal.terminalStatusCounts[value.expectedTerminalStatus] !== 1 ||
+    Object.entries(terminal.terminalStatusCounts).some(
+      ([status, count]) => status !== value.expectedTerminalStatus && count !== 0,
+    ) ||
+    providerEgress?.kind !== 'BACKEND_PROVIDER_EGRESS_EVIDENCE' ||
+    providerEgress?.status !== 'PASS' ||
+    providerEgress?.correlationSetSha256 !== value.providerEgress.correlationSetSha256 ||
+    providerEgress?.allowedReleaseIdentitySetSha256 !== expectedAllowedIdentitySetSha256 ||
+    providerEgress?.requiredStatusReleaseIdentitySha256 !== expectedRequiredStatusIdentitySha256 ||
+    providerEgress?.rawIdentifiersCaptured !== false ||
+    providerEgress?.containsSensitiveData !== false ||
+    !object(attempts) ||
+    attempts.transactionCreate !== 1 ||
+    attempts.merchantConfiguration > 1 ||
+    attempts.transactionStatus < 1 ||
+    attempts.total !==
+      attempts.merchantConfiguration + attempts.transactionCreate + attempts.transactionStatus ||
+    attempts.byRuntime?.api !== attempts.merchantConfiguration + attempts.transactionCreate ||
+    attempts.byRuntime?.worker !== attempts.transactionStatus ||
+    closeout.externalRequests !== attempts.total
   ) {
     fail('E7_RELEASE_SUCCESSOR_PENDING_RECONCILIATION_INVALID');
   }
@@ -2955,6 +3024,7 @@ const validateApiContractEvidence = (value, { freeze, apiDeployment, observedAtU
 const createPendingReconciliationEvidence = ({
   freeze,
   pendingProducer,
+  pendingEgressCloseout,
   rollbackCompletion,
   rehearsal,
 }) => {
@@ -2967,6 +3037,10 @@ const createPendingReconciliationEvidence = ({
     releaseId: freeze.releaseId,
     policy: 'FORWARD_ONLY_NO_DATA_ROLLBACK',
     pendingProducer: jsonBinding(RELEASE_SUCCESSOR_SOURCE_LAYOUT.pendingProducer, pendingProducer),
+    pendingEgressCloseout: jsonBinding(
+      RELEASE_SUCCESSOR_SOURCE_LAYOUT.pendingEgressCloseout,
+      pendingEgressCloseout,
+    ),
     rollbackCompletion: jsonBinding(
       RELEASE_SUCCESSOR_SOURCE_LAYOUT.rollbackCompletion,
       rollbackCompletion,
@@ -2981,7 +3055,7 @@ const createPendingReconciliationEvidence = ({
 
 const validatePendingReconciliationEvidence = (
   value,
-  { freeze, pendingProducer, rollbackCompletion, rehearsal },
+  { freeze, pendingProducer, pendingEgressCloseout, rollbackCompletion, rehearsal },
 ) => {
   if (
     !exactKeys(value, [
@@ -2993,6 +3067,7 @@ const validatePendingReconciliationEvidence = (
       'releaseId',
       'policy',
       'pendingProducer',
+      'pendingEgressCloseout',
       'rollbackCompletion',
       'pendingScenarioIds',
       'dataRollbackPerformed',
@@ -3010,6 +3085,10 @@ const validatePendingReconciliationEvidence = (
     canonicalJson(value.pendingProducer) !==
       canonicalJson(
         jsonBinding(RELEASE_SUCCESSOR_SOURCE_LAYOUT.pendingProducer, pendingProducer),
+      ) ||
+    canonicalJson(value.pendingEgressCloseout) !==
+      canonicalJson(
+        jsonBinding(RELEASE_SUCCESSOR_SOURCE_LAYOUT.pendingEgressCloseout, pendingEgressCloseout),
       ) ||
     canonicalJson(value.rollbackCompletion) !==
       canonicalJson(
@@ -3145,6 +3224,7 @@ const PRE_FINALIZATION_SOURCE_KEYS = Object.freeze([
   'publicationProofSource',
   'apiDeploymentSource',
   'pendingProducerSource',
+  'pendingEgressCloseoutSource',
   'postdeploySmokeSource',
   'repromotionSmokeSource',
   'releaseFenceSource',
@@ -3309,6 +3389,10 @@ const parseAndValidateReleaseSources = (
     pendingProducer: strictJsonDocument(
       options.pendingProducerSource,
       'E7_RELEASE_SUCCESSOR_PENDING_SOURCE_INVALID',
+    ),
+    pendingEgressCloseout: strictJsonDocument(
+      options.pendingEgressCloseoutSource,
+      'E7_RELEASE_SUCCESSOR_PENDING_EGRESS_CLOSEOUT_SOURCE_INVALID',
     ),
     postdeploySmoke: strictJsonDocument(
       options.postdeploySmokeSource,
@@ -3579,7 +3663,12 @@ const parseAndValidateReleaseSources = (
     config,
     observation,
   });
-  validateReleasePending({ pendingProducer: documents.pendingProducer, freeze });
+  validateReleasePending({
+    pendingProducer: documents.pendingProducer,
+    pendingEgressCloseout: documents.pendingEgressCloseout,
+    freeze,
+    predecessor,
+  });
   validateReleaseSmoke({
     postdeploySmoke: documents.postdeploySmoke,
     repromotionSmoke: documents.repromotionSmoke,
@@ -3885,6 +3974,7 @@ const createSourceFiles = (validated) => {
   const pendingReconciliation = createPendingReconciliationEvidence({
     freeze,
     pendingProducer: documents.pendingProducer,
+    pendingEgressCloseout: documents.pendingEgressCloseout,
     rollbackCompletion: documents.rollbackCompletion,
     rehearsal,
   });
@@ -3903,6 +3993,7 @@ const createSourceFiles = (validated) => {
   validatePendingReconciliationEvidence(pendingReconciliation, {
     freeze,
     pendingProducer: documents.pendingProducer,
+    pendingEgressCloseout: documents.pendingEgressCloseout,
     rollbackCompletion: documents.rollbackCompletion,
     rehearsal,
   });
@@ -3962,6 +4053,7 @@ const createSourceFiles = (validated) => {
     [RELEASE_SUCCESSOR_SOURCE_LAYOUT.publicationProof]: documents.publicationProof.bytes,
     [RELEASE_SUCCESSOR_SOURCE_LAYOUT.apiDeployment]: documents.apiDeployment.bytes,
     [RELEASE_SUCCESSOR_SOURCE_LAYOUT.pendingProducer]: documents.pendingProducer.bytes,
+    [RELEASE_SUCCESSOR_SOURCE_LAYOUT.pendingEgressCloseout]: documents.pendingEgressCloseout.bytes,
     [RELEASE_SUCCESSOR_SOURCE_LAYOUT.postdeploySmoke]: documents.postdeploySmoke.bytes,
     [RELEASE_SUCCESSOR_SOURCE_LAYOUT.repromotionSmoke]: documents.repromotionSmoke.bytes,
     [RELEASE_SUCCESSOR_SOURCE_LAYOUT.releaseFence]: documents.releaseFence.bytes,
@@ -4397,6 +4489,10 @@ export const validateReleaseSuccessorSourceBundleDirectory = (directory) => {
     files[RELEASE_SUCCESSOR_SOURCE_LAYOUT.pendingProducer],
     'E7_RELEASE_SUCCESSOR_SOURCE_PENDING_PRODUCER_INVALID',
   );
+  const pendingEgressCloseout = strictJsonDocument(
+    files[RELEASE_SUCCESSOR_SOURCE_LAYOUT.pendingEgressCloseout],
+    'E7_RELEASE_SUCCESSOR_SOURCE_PENDING_EGRESS_CLOSEOUT_INVALID',
+  );
   const postdeploySmoke = strictJsonDocument(
     files[RELEASE_SUCCESSOR_SOURCE_LAYOUT.postdeploySmoke],
     'E7_RELEASE_SUCCESSOR_SOURCE_POSTDEPLOY_SMOKE_INVALID',
@@ -4513,12 +4609,13 @@ export const validateReleaseSuccessorSourceBundleDirectory = (directory) => {
     ).value,
     { freeze, apiDeployment, observedAtUtc: observation.observedAtUtc },
   );
+  validateReleasePending({ pendingProducer, pendingEgressCloseout, freeze, predecessor });
   validatePendingReconciliationEvidence(
     strictJsonDocument(
       files[RELEASE_SUCCESSOR_SOURCE_LAYOUT.pendingReconciliation],
       'E7_RELEASE_SUCCESSOR_SOURCE_PENDING_INVALID',
     ).value,
-    { freeze, pendingProducer, rollbackCompletion, rehearsal },
+    { freeze, pendingProducer, pendingEgressCloseout, rollbackCompletion, rehearsal },
   );
   validateSmokeEvidence(
     strictJsonDocument(
@@ -5250,9 +5347,153 @@ export const selfTestReleaseSuccessorHandoff = () => {
   assert.notEqual(objectSha256(authoritySet), objectSha256(receiptRawSwapSet));
   assert.notEqual(objectSha256(authoritySet), objectSha256(recoveryIamRawSwapSet));
   assert.notEqual(objectSha256(authoritySet), objectSha256(emergencyOutcomeRawSwapSet));
+  const pendingFreeze = {
+    candidateSha: previousReleaseManifest.target.candidateSha,
+    releaseId: previousReleaseManifest.target.releaseId,
+  };
+  const correlationSha256 = '1'.repeat(64);
+  const correlationSetSha256 = '2'.repeat(64);
+  const pendingProducer = strictJsonDocument(
+    jsonBytes({
+      kind: 'VERSIONED_ROLLBACK_PENDING_PRODUCER',
+      status: 'PENDING_OBSERVED',
+      candidateSha: pendingFreeze.candidateSha,
+      releaseId: pendingFreeze.releaseId,
+      expectedTerminalStatus: 'DECLINED',
+      providerEgress: { correlationSha256, correlationSetSha256 },
+      authorizationUsage: {},
+      containsSensitiveData: false,
+    }),
+    'E7_RELEASE_SUCCESSOR_SELF_TEST_PENDING_INVALID',
+  );
+  const previousProviderIdentity = `${previousReleaseManifest.previous.candidateSha}\0${previousReleaseManifest.previous.releaseId}`;
+  const candidateProviderIdentity = `${pendingFreeze.candidateSha}\0${pendingFreeze.releaseId}`;
+  const allowedReleaseIdentitySetSha256 = sha256(
+    [candidateProviderIdentity, previousProviderIdentity].toSorted().join('\0'),
+  );
+  const requiredStatusReleaseIdentitySha256 = sha256(previousProviderIdentity);
+  const pendingCloseoutBody = {
+    kind: 'ROLLBACK_PENDING_EGRESS_CLOSEOUT',
+    status: 'PASS',
+    candidateSha: pendingFreeze.candidateSha,
+    releaseId: pendingFreeze.releaseId,
+    pendingProducerSha256: pendingProducer.canonicalSha256,
+    expectedTerminalStatus: 'DECLINED',
+    terminalReadback: {
+      status: 'PASS',
+      trackedBefore: 1,
+      reconciled: 1,
+      stillPending: 0,
+      orphaned: 0,
+      duplicateEffects: 0,
+      lostFacts: 0,
+      terminalStatusCounts: { APPROVED: 0, DECLINED: 1, VOIDED: 0, ERROR: 0 },
+    },
+    backendProviderEgress: {
+      kind: 'BACKEND_PROVIDER_EGRESS_EVIDENCE',
+      status: 'PASS',
+      correlationSetSha256,
+      allowedReleaseIdentitySetSha256,
+      requiredStatusReleaseIdentitySha256,
+      attempts: {
+        total: 3,
+        merchantConfiguration: 1,
+        transactionCreate: 1,
+        transactionStatus: 1,
+        byRuntime: { api: 2, worker: 1 },
+      },
+      rawIdentifiersCaptured: false,
+      containsSensitiveData: false,
+    },
+    authorizationUsage: {},
+    externalRequests: 3,
+    mutationsPerformed: 0,
+    rawIdentifiersCaptured: false,
+    containsSensitiveData: false,
+  };
+  const pendingCloseout = strictJsonDocument(
+    jsonBytes(pendingCloseoutBody),
+    'E7_RELEASE_SUCCESSOR_SELF_TEST_PENDING_CLOSEOUT_INVALID',
+  );
+  validateReleasePending({
+    pendingProducer,
+    pendingEgressCloseout: pendingCloseout,
+    freeze: pendingFreeze,
+    predecessor: previousReleaseManifest,
+  });
+  for (const mutate of [
+    (value) => ({ ...value, rawIdentifiersCaptured: true }),
+    (value) => ({
+      ...value,
+      terminalReadback: {
+        ...value.terminalReadback,
+        terminalStatusCounts: { APPROVED: 0, DECLINED: 0, VOIDED: 0, ERROR: 1 },
+      },
+    }),
+    (value) => ({
+      ...value,
+      backendProviderEgress: {
+        ...value.backendProviderEgress,
+        attempts: {
+          ...value.backendProviderEgress.attempts,
+          total: 2,
+          transactionStatus: 0,
+          byRuntime: { api: 2, worker: 0 },
+        },
+      },
+      externalRequests: 2,
+    }),
+    (value) => ({
+      ...value,
+      backendProviderEgress: {
+        ...value.backendProviderEgress,
+        requiredStatusReleaseIdentitySha256: '3'.repeat(64),
+      },
+    }),
+    (value) => {
+      const forgedPreviousIdentity = `${'f'.repeat(40)}\0rel-20260817-0000-fffffff`;
+      return {
+        ...value,
+        backendProviderEgress: {
+          ...value.backendProviderEgress,
+          allowedReleaseIdentitySetSha256: sha256(
+            [candidateProviderIdentity, forgedPreviousIdentity].toSorted().join('\0'),
+          ),
+          requiredStatusReleaseIdentitySha256: sha256(forgedPreviousIdentity),
+        },
+      };
+    },
+  ]) {
+    assert.throws(
+      () =>
+        validateReleasePending({
+          pendingProducer,
+          pendingEgressCloseout: strictJsonDocument(
+            jsonBytes(mutate(pendingCloseoutBody)),
+            'E7_RELEASE_SUCCESSOR_SELF_TEST_PENDING_CLOSEOUT_INVALID',
+          ),
+          freeze: pendingFreeze,
+          predecessor: previousReleaseManifest,
+        }),
+      (error) => error.code === 'E7_RELEASE_SUCCESSOR_PENDING_RECONCILIATION_INVALID',
+    );
+  }
+  assert.throws(
+    () =>
+      validateReleasePending({
+        pendingProducer: strictJsonDocument(
+          jsonBytes({ ...pendingProducer.value, status: 'PASS' }),
+          'E7_RELEASE_SUCCESSOR_SELF_TEST_PENDING_INVALID',
+        ),
+        pendingEgressCloseout: pendingCloseout,
+        freeze: pendingFreeze,
+        predecessor: previousReleaseManifest,
+      }),
+    (error) => error.code === 'E7_RELEASE_SUCCESSOR_PENDING_RECONCILIATION_INVALID',
+  );
   return {
     status: 'PASS',
-    canaries: 17,
+    canaries: 23,
     externalRequests: 0,
     observationSha256: observation.observationSha256,
     projectionIndexSha256: projectionIndex.projectionIndexSha256,

@@ -271,6 +271,7 @@ const transition = ({
       orphaned: 0,
       duplicateEffects: 0,
       lostFacts: 0,
+      terminalStatusCounts: { APPROVED: 0, DECLINED: 0, VOIDED: 0, ERROR: 0 },
     },
     dataFactsSha256: 'b'.repeat(64),
     dataFactsChanged: false,
@@ -2067,7 +2068,24 @@ try {
       'protected-run',
       'completion',
     ]);
-    assert.equal(RELEASE_SUCCESSOR_ROLLBACK_PREPARATION_ONLY_CLI_FLAGS.length, 15);
+    assert.deepEqual(RELEASE_SUCCESSOR_ROLLBACK_PREPARATION_ONLY_CLI_FLAGS, [
+      'rollback',
+      'reconciliation-recovery-role-effective-permissions',
+      'observability',
+      'smoke-input',
+      'smoke',
+      'edge',
+      'quality',
+      'sandbox',
+      'rollback-smoke-input',
+      'pending-producer',
+      'pending-egress-closeout',
+      'rollback-smoke',
+      'repromotion-smoke',
+      'journal-cleanup-role',
+      'assembly',
+      'max-polls',
+    ]);
     assert.match(cliSource, /ROLLBACK_CHECK: 'ROLLBACK_CHECK'/u);
     assert.match(cliSource, /ROLLBACK_RESILIENCE_COMPLETED: 'RECONCILIATION'/u);
     assert.match(cliSource, /ROLLBACK_RESILIENCE_INCOMPLETE: 'INCOMPLETE_RECONCILIATION'/u);

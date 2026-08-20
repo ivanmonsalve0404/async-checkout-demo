@@ -117,7 +117,7 @@ const exactChildResult = (result, execution) => {
       'outsideAllowlist',
     ]) ||
     requests.total !== EXPECTED_EXTERNAL_REQUESTS ||
-    requests.configurationReads !== 2 ||
+    requests.configurationReads !== 3 ||
     requests.paymentMethodCreations !== 1 ||
     requests.transactionCreates !== 1 ||
     requests.statusReads !== 1 ||

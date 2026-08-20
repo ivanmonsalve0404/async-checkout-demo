@@ -93,6 +93,9 @@ const RELEASE_ENVIRONMENT_PATTERN = /^assessment-prerelease-[a-z0-9][a-z0-9-]{0,
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const FQDN_PATTERN = /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 const HOSTED_ZONE_ID_PATTERN = /^Z[A-Z0-9]{5,31}$/;
+const CLOUDFRONT_KEY_GROUP_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CLOUDFRONT_PUBLIC_KEY_ID_PATTERN = /^K[A-Z0-9]{8,63}$/;
 
 function asBoolean(value: unknown, fallback: boolean, name: string): boolean {
   const resolved = value ?? fallback;
@@ -345,9 +348,9 @@ export function parseFoundationConfig(raw: RawFoundationConfig): FoundationConfi
   if (
     (restrictedAccess &&
       (prereleaseKeyGroupId === undefined ||
-        !/^[A-Z0-9]{8,64}$/u.test(prereleaseKeyGroupId) ||
+        !CLOUDFRONT_KEY_GROUP_ID_PATTERN.test(prereleaseKeyGroupId) ||
         prereleasePublicKeyId === undefined ||
-        !/^[A-Z0-9]{8,64}$/u.test(prereleasePublicKeyId) ||
+        !CLOUDFRONT_PUBLIC_KEY_ID_PATTERN.test(prereleasePublicKeyId) ||
         runtimeSecretArn === undefined)) ||
     (!restrictedAccess &&
       (prereleaseKeyGroupId !== undefined || prereleasePublicKeyId !== undefined))

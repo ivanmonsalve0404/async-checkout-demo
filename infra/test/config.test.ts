@@ -8,6 +8,8 @@ import { inspectReleaseArtifact } from '../lib/release-artifact';
 
 const SHA = ['01234567', '89abcdef', '01234567', '89abcdef', '01234567'].join('');
 const TEST_ACCOUNT = ['000', '000', '000', '000'].join('');
+const KEY_GROUP_ID = 'c2f83d9a-4f1e-4d7a-8b21-6c9d3e5f7a10';
+const PUBLIC_KEY_ID = 'K2STAGE7CHECKOUT';
 const certificateArn = (id: string): string =>
   `arn:aws:acm:us-east-1:${TEST_ACCOUNT}:certificate/${id}`;
 const runtimeReference = (): string =>
@@ -68,8 +70,8 @@ void describe('foundation configuration', () => {
     const parsed = parseFoundationConfig(
       release({
         environment: 'assessment-prerelease-local-plan',
-        prereleaseKeyGroupId: 'K2STAGE7KEYGROUP',
-        prereleasePublicKeyId: 'K2STAGE7CHECKOUT',
+        prereleaseKeyGroupId: KEY_GROUP_ID,
+        prereleasePublicKeyId: PUBLIC_KEY_ID,
         publicationMode: 'EPHEMERAL_NON_PUBLIC',
         runtimeSecretArn: runtimeReference(),
         runtimeSecretVersionId: 'a'.repeat(32),
@@ -92,8 +94,8 @@ void describe('foundation configuration', () => {
     const parsed = parseFoundationConfig(
       release({
         environment: 'assessment-prerelease-pr-42-a11y',
-        prereleaseKeyGroupId: 'K2STAGE7KEYGROUP',
-        prereleasePublicKeyId: 'K2STAGE7CHECKOUT',
+        prereleaseKeyGroupId: KEY_GROUP_ID,
+        prereleasePublicKeyId: PUBLIC_KEY_ID,
         publicationMode: 'EPHEMERAL_NON_PUBLIC',
         runtimeSecretArn: runtimeReference(),
         runtimeSecretVersionId: 'a'.repeat(32),
@@ -159,15 +161,15 @@ void describe('foundation configuration', () => {
       release({
         ...sandbox,
         environment: 'assessment-prerelease-sandbox',
-        prereleaseKeyGroupId: 'K2STAGE7KEYGROUP',
-        prereleasePublicKeyId: 'K2STAGE7CHECKOUT',
+        prereleaseKeyGroupId: KEY_GROUP_ID,
+        prereleasePublicKeyId: PUBLIC_KEY_ID,
         publicationMode: 'EPHEMERAL_NON_PUBLIC',
       }),
     );
     assert.equal(managedPrerelease.environment, 'assessment-prerelease-sandbox');
     assert.equal(managedPrerelease.domain, undefined);
-    assert.equal(managedPrerelease.prereleaseKeyGroupId, 'K2STAGE7KEYGROUP');
-    assert.equal(managedPrerelease.prereleasePublicKeyId, 'K2STAGE7CHECKOUT');
+    assert.equal(managedPrerelease.prereleaseKeyGroupId, KEY_GROUP_ID);
+    assert.equal(managedPrerelease.prereleasePublicKeyId, PUBLIC_KEY_ID);
     const parsed = parseFoundationConfig(release({ ...sandbox, ...domain() }));
     assert.equal(parsed.environment, 'assessment-release');
     if (parsed.environment !== 'assessment-release') assert.fail('release config expected');
@@ -208,12 +210,29 @@ void describe('foundation configuration', () => {
           release({
             ...sandbox,
             ...domain(),
-            prereleaseKeyGroupId: 'K2STAGE7KEYGROUP',
-            prereleasePublicKeyId: 'K2STAGE7CHECKOUT',
+            prereleaseKeyGroupId: KEY_GROUP_ID,
+            prereleasePublicKeyId: PUBLIC_KEY_ID,
           }),
         ),
       /other modes forbid them/,
     );
+    for (const edgeAccess of [
+      { prereleaseKeyGroupId: PUBLIC_KEY_ID, prereleasePublicKeyId: PUBLIC_KEY_ID },
+      { prereleaseKeyGroupId: KEY_GROUP_ID, prereleasePublicKeyId: KEY_GROUP_ID },
+    ]) {
+      assert.throws(
+        () =>
+          parseFoundationConfig(
+            release({
+              ...sandbox,
+              ...edgeAccess,
+              environment: 'assessment-prerelease-swapped-edge-id',
+              publicationMode: 'EPHEMERAL_NON_PUBLIC',
+            }),
+          ),
+        /key-group\/public-key IDs/,
+      );
+    }
   });
 
   void test('rejects ambiguous identity, partial domains and cross-region secrets', () => {

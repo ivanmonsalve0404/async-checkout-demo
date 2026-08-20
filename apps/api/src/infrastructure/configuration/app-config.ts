@@ -28,6 +28,8 @@ const canonicalUtc = z
     const parsed = new Date(value);
     return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
   }, 'an exact UTC timestamp is required');
+const candidateSha = z.string().regex(/^[0-9a-f]{40}$/u);
+const releaseId = z.string().regex(/^rel-\d{8}-\d{4}-[0-9a-f]{7}$/u);
 
 const environmentSchema = z
   .object({
@@ -37,6 +39,7 @@ const environmentSchema = z
     APP_ENV: z.enum(['local', 'test', 'preview', 'assessment']).default('local'),
     AWS_REGION: awsRegion.default('us-east-1'),
     CATALOG_TABLE_NAME: z.string().min(3).max(255).default('checkout-catalog-local'),
+    CANDIDATE_SHA: candidateSha.optional(),
     CHECKOUT_TABLE_NAME: z.string().min(3).max(255).default('checkout-session-local'),
     DATA_ADAPTER: z.enum(['memory', 'dynamodb']).default('memory'),
     CHECKOUT_TTL_SECONDS: z.coerce.number().int().min(0).max(86_400).default(1800),
@@ -83,6 +86,7 @@ const environmentSchema = z
       .enum(['disabled', 'origin_gate', 'cloudfront_signed_cookie'])
       .default('disabled'),
     PUBLIC_ASSET_ORIGIN: httpOrigin.default('http://localhost:5173'),
+    RELEASE_ID: releaseId.optional(),
     AUTO_SEED_CATALOG: z.enum(['true', 'false']).default('true'),
     RUNTIME_SECURITY_ROOT_KEY: z
       .string()
@@ -189,6 +193,18 @@ const environmentSchema = z
         message: 'payments require the authorized assessment sandbox configuration',
       });
     }
+    if (
+      paymentsEnabled &&
+      (configuration.CANDIDATE_SHA === undefined ||
+        configuration.RELEASE_ID === undefined ||
+        !configuration.RELEASE_ID.endsWith(configuration.CANDIDATE_SHA.slice(0, 7)))
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['CANDIDATE_SHA'],
+        message: 'payments require the exact candidate and release identity',
+      });
+    }
     if (configuration.APP_ENV === 'assessment' && configuration.AUTO_SEED_CATALOG !== 'false') {
       context.addIssue({
         code: 'custom',
@@ -228,6 +244,7 @@ export interface AppConfig {
   readonly awsRegion: string;
   readonly autoSeedCatalog: boolean;
   readonly catalogTableName: string;
+  readonly candidateSha: string | undefined;
   readonly checkoutTableName: string;
   readonly dataAdapter: 'memory' | 'dynamodb';
   readonly checkoutTtlSeconds: number;
@@ -266,6 +283,7 @@ export interface AppConfig {
   readonly productSeedId: string;
   readonly prereleaseAccessMode: 'disabled' | 'origin_gate' | 'cloudfront_signed_cookie';
   readonly publicAssetOrigin: string;
+  readonly releaseId: string | undefined;
   readonly tokenizationMode: 'disabled' | 'direct_jwe';
   readonly runtimeSecurityRootKey: string | undefined;
   readonly runtimeSecretArn: string | undefined;
@@ -283,6 +301,7 @@ export const loadAppConfig = (environment: NodeJS.ProcessEnv): AppConfig => {
     awsRegion: parsed.AWS_REGION,
     autoSeedCatalog: parsed.AUTO_SEED_CATALOG === 'true',
     catalogTableName: parsed.CATALOG_TABLE_NAME,
+    candidateSha: parsed.CANDIDATE_SHA,
     checkoutTableName: parsed.CHECKOUT_TABLE_NAME,
     dataAdapter: parsed.DATA_ADAPTER,
     dynamoDbEndpoint:
@@ -299,6 +318,7 @@ export const loadAppConfig = (environment: NodeJS.ProcessEnv): AppConfig => {
     productSeedId: parsed.PRODUCT_SEED_ID,
     prereleaseAccessMode: parsed.PRERELEASE_ACCESS_MODE,
     publicAssetOrigin: parsed.PUBLIC_ASSET_ORIGIN,
+    releaseId: parsed.RELEASE_ID,
     tokenizationMode: parsed.TOKENIZATION_MODE,
     runtimeSecurityRootKey: parsed.RUNTIME_SECURITY_ROOT_KEY,
     runtimeSecretArn: parsed.RUNTIME_SECRET_ARN,

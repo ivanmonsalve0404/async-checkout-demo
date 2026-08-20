@@ -164,6 +164,7 @@ const PRIOR_AUTHORIZATION_USAGE_IDS = [
   'POST_ROLLBACK_VERSIONED',
   'ACTIVATION_REPROMOTION',
   'POST_REPROMOTION_VERSIONED',
+  'RB_E7_05_PENDING_EGRESS_CLOSEOUT',
 ];
 const AUTHORIZATION_USAGE_KEYS = [
   'schemaVersion',
@@ -317,6 +318,233 @@ const sourceDocument = (source, code) => {
     rawSha256,
     canonicalSha256,
   };
+};
+
+export const validateRollbackPendingEgressCloseoutEvidence = ({
+  pendingProducer,
+  pendingEgressCloseout,
+  config,
+  freezeManifest,
+  previousReleaseManifest,
+  baseRehearsal,
+  externalAuthorization,
+}) => {
+  const producerEgress = pendingProducer?.providerEgress;
+  const producerRequests = pendingProducer?.requests;
+  const closeout = pendingEgressCloseout;
+  const terminal = closeout?.terminalReadback;
+  const providerEgress = closeout?.backendProviderEgress;
+  const attempts = providerEgress?.attempts;
+  const rollbackCheckpoint = baseRehearsal?.rollback?.checkpoint;
+  const repromotionCheckpoint = baseRehearsal?.repromotion?.checkpoint;
+  const previousIdentity = previousReleaseManifest?.previous;
+  const identitySetSha256 = sha256(
+    [
+      `${freezeManifest?.candidateSha}\0${freezeManifest?.releaseId}`,
+      `${previousIdentity?.candidateSha}\0${previousIdentity?.releaseId}`,
+    ]
+      .toSorted()
+      .join('\0'),
+  );
+  const expectedStatusIdentitySha256 = sha256(
+    `${previousIdentity?.candidateSha}\0${previousIdentity?.releaseId}`,
+  );
+  const authorizationBindingValid = (value) =>
+    exactKeys(value, [
+      'authorizationSha256',
+      'authorizationIds',
+      'ownedOriginSha256',
+      'sandboxHostSha256',
+    ]) &&
+    value.authorizationSha256 === externalAuthorization?.authorizationSha256 &&
+    value.authorizationIds?.join('\0') === AUTHORIZATION_IDS.join('\0') &&
+    value.ownedOriginSha256 === externalAuthorization?.ownedOriginSha256 &&
+    value.sandboxHostSha256 === externalAuthorization?.sandboxHostSha256;
+  if (
+    !exactKeys(pendingProducer, [
+      'schemaVersion',
+      'stage',
+      'kind',
+      'status',
+      'candidateSha',
+      'releaseId',
+      'configSha256',
+      'targetOriginSha256',
+      'transactionCorrelationSha256',
+      'checkoutCorrelationSha256',
+      'providerEgress',
+      'observedAtUtc',
+      'requests',
+      'syntheticOnly',
+      'expectedTerminalStatus',
+      'containsSensitiveData',
+      'manifestSha256',
+      'externalAuthorization',
+      'authorizationUsage',
+      'externalRequests',
+      'mutationsPerformed',
+    ]) ||
+    pendingProducer.schemaVersion !== 1 ||
+    pendingProducer.stage !== 7 ||
+    pendingProducer.kind !== 'VERSIONED_ROLLBACK_PENDING_PRODUCER' ||
+    pendingProducer.status !== 'PENDING_OBSERVED' ||
+    pendingProducer.candidateSha !== freezeManifest.candidateSha ||
+    pendingProducer.releaseId !== freezeManifest.releaseId ||
+    pendingProducer.configSha256 !== objectSha256(config) ||
+    pendingProducer.manifestSha256 !== freezeManifest.manifestSha256 ||
+    !/^[0-9a-f]{64}$/u.test(pendingProducer.targetOriginSha256 ?? '') ||
+    !/^[0-9a-f]{64}$/u.test(pendingProducer.transactionCorrelationSha256 ?? '') ||
+    !/^[0-9a-f]{64}$/u.test(pendingProducer.checkoutCorrelationSha256 ?? '') ||
+    !exactKeys(producerEgress, [
+      'observationStartedAtUtc',
+      'correlationSha256',
+      'correlationSetSha256',
+    ]) ||
+    !utc(producerEgress.observationStartedAtUtc) ||
+    !/^[0-9a-f]{64}$/u.test(producerEgress.correlationSha256 ?? '') ||
+    producerEgress.correlationSetSha256 !== sha256(producerEgress.correlationSha256) ||
+    !utc(pendingProducer.observedAtUtc) ||
+    Date.parse(producerEgress.observationStartedAtUtc) >
+      Date.parse(pendingProducer.observedAtUtc) ||
+    !exactKeys(producerRequests, ['ownedOrigin', 'sandbox', 'outsideAllowlist', 'mutations']) ||
+    !Object.values(producerRequests).every((count) => Number.isSafeInteger(count) && count >= 0) ||
+    producerRequests.sandbox !== 2 ||
+    producerRequests.outsideAllowlist !== 0 ||
+    producerRequests.mutations !== 1 ||
+    pendingProducer.externalRequests !== producerRequests.ownedOrigin + producerRequests.sandbox ||
+    pendingProducer.mutationsPerformed !== producerRequests.mutations ||
+    pendingProducer.syntheticOnly !== true ||
+    !['DECLINED', 'ERROR'].includes(pendingProducer.expectedTerminalStatus) ||
+    pendingProducer.containsSensitiveData !== false ||
+    !authorizationBindingValid(pendingProducer.externalAuthorization) ||
+    !exactKeys(closeout, [
+      'schemaVersion',
+      'stage',
+      'kind',
+      'status',
+      'candidateSha',
+      'releaseId',
+      'stage7ConfigSha256',
+      'manifestSha256',
+      'pendingProducerSha256',
+      'rollbackCheckpointSha256',
+      'repromotionCheckpointSha256',
+      'expectedTerminalStatus',
+      'terminalReadback',
+      'backendProviderEgress',
+      'externalAuthorization',
+      'authorizationUsage',
+      'externalRequests',
+      'mutationsPerformed',
+      'rawIdentifiersCaptured',
+      'containsSensitiveData',
+    ]) ||
+    closeout.schemaVersion !== 1 ||
+    closeout.stage !== 7 ||
+    closeout.kind !== 'ROLLBACK_PENDING_EGRESS_CLOSEOUT' ||
+    closeout.status !== 'PASS' ||
+    closeout.candidateSha !== freezeManifest.candidateSha ||
+    closeout.releaseId !== freezeManifest.releaseId ||
+    closeout.stage7ConfigSha256 !== objectSha256(config) ||
+    closeout.manifestSha256 !== freezeManifest.manifestSha256 ||
+    closeout.pendingProducerSha256 !== objectSha256(pendingProducer) ||
+    closeout.rollbackCheckpointSha256 !== rollbackCheckpoint?.checkpointSha256 ||
+    closeout.repromotionCheckpointSha256 !== repromotionCheckpoint?.checkpointSha256 ||
+    closeout.expectedTerminalStatus !== pendingProducer.expectedTerminalStatus ||
+    !exactKeys(terminal, [
+      'status',
+      'trackedBefore',
+      'reconciled',
+      'stillPending',
+      'orphaned',
+      'duplicateEffects',
+      'lostFacts',
+      'terminalStatusCounts',
+      'correlationEvidenceSha256',
+    ]) ||
+    terminal.status !== 'PASS' ||
+    terminal.trackedBefore !== 1 ||
+    terminal.reconciled !== 1 ||
+    terminal.stillPending !== 0 ||
+    terminal.orphaned !== 0 ||
+    terminal.duplicateEffects !== 0 ||
+    terminal.lostFacts !== 0 ||
+    !exactKeys(terminal.terminalStatusCounts, ['APPROVED', 'DECLINED', 'VOIDED', 'ERROR']) ||
+    terminal.terminalStatusCounts[pendingProducer.expectedTerminalStatus] !== 1 ||
+    Object.entries(terminal.terminalStatusCounts).some(
+      ([status, count]) => status !== pendingProducer.expectedTerminalStatus && count !== 0,
+    ) ||
+    canonicalJson(terminal.terminalStatusCounts) !==
+      canonicalJson(rollbackCheckpoint?.pendingIntegrity?.terminalStatusCounts) ||
+    terminal.correlationEvidenceSha256 !==
+      rollbackCheckpoint?.pendingIntegrity?.correlationEvidenceSha256 ||
+    !exactKeys(providerEgress, [
+      'schemaVersion',
+      'stage',
+      'kind',
+      'status',
+      'observationWindow',
+      'allowedReleaseIdentitySetSha256',
+      'logGroupSetSha256',
+      'correlationSetSha256',
+      'attempts',
+      'cloudWatchReadCount',
+      'eventSetSha256',
+      'requiredStatusReleaseIdentitySha256',
+      'rawIdentifiersCaptured',
+      'containsSensitiveData',
+    ]) ||
+    providerEgress.schemaVersion !== 1 ||
+    providerEgress.stage !== 7 ||
+    providerEgress.kind !== 'BACKEND_PROVIDER_EGRESS_EVIDENCE' ||
+    providerEgress.status !== 'PASS' ||
+    !exactKeys(providerEgress.observationWindow, ['startedAtUtc', 'endedAtUtc']) ||
+    !utc(providerEgress.observationWindow.startedAtUtc) ||
+    !utc(providerEgress.observationWindow.endedAtUtc) ||
+    Date.parse(providerEgress.observationWindow.startedAtUtc) >
+      Date.parse(producerEgress.observationStartedAtUtc) ||
+    Date.parse(providerEgress.observationWindow.endedAtUtc) <
+      Date.parse(repromotionCheckpoint?.completedAtUtc ?? '') ||
+    providerEgress.allowedReleaseIdentitySetSha256 !== identitySetSha256 ||
+    !/^[0-9a-f]{64}$/u.test(providerEgress.logGroupSetSha256 ?? '') ||
+    providerEgress.correlationSetSha256 !== producerEgress.correlationSetSha256 ||
+    providerEgress.requiredStatusReleaseIdentitySha256 !== expectedStatusIdentitySha256 ||
+    !exactKeys(attempts, [
+      'total',
+      'merchantConfiguration',
+      'transactionCreate',
+      'transactionStatus',
+      'byRuntime',
+    ]) ||
+    !exactKeys(attempts.byRuntime, ['api', 'worker']) ||
+    ![
+      attempts.total,
+      attempts.merchantConfiguration,
+      attempts.transactionCreate,
+      attempts.transactionStatus,
+      attempts.byRuntime.api,
+      attempts.byRuntime.worker,
+      providerEgress.cloudWatchReadCount,
+    ].every((count) => Number.isSafeInteger(count) && count >= 0) ||
+    attempts.transactionCreate !== 1 ||
+    attempts.merchantConfiguration > 1 ||
+    attempts.transactionStatus < 1 ||
+    attempts.total !==
+      attempts.merchantConfiguration + attempts.transactionCreate + attempts.transactionStatus ||
+    attempts.byRuntime.api !== attempts.merchantConfiguration + attempts.transactionCreate ||
+    attempts.byRuntime.worker !== attempts.transactionStatus ||
+    !/^[0-9a-f]{64}$/u.test(providerEgress.eventSetSha256 ?? '') ||
+    providerEgress.rawIdentifiersCaptured !== false ||
+    providerEgress.containsSensitiveData !== false ||
+    !authorizationBindingValid(closeout.externalAuthorization) ||
+    closeout.externalRequests !== attempts.total ||
+    closeout.mutationsPerformed !== 0 ||
+    closeout.rawIdentifiersCaptured !== false ||
+    closeout.containsSensitiveData !== false
+  ) {
+    fail('E7_RESILIENCE_PENDING_EGRESS_CLOSEOUT_INVALID');
+  }
+  return closeout;
 };
 
 const validateAuthorizationUsage = ({ usage, authorization, config, freezeManifest }) => {
@@ -642,6 +870,7 @@ export const prepareRollbackResilienceArtifacts = ({
   sandboxEvidenceSource,
   rollbackSmokeInputSource,
   pendingProducerSource,
+  pendingEgressCloseoutSource,
   rollbackSmokeSource,
   repromotionSmokeSource,
   journalCleanupRoleArn,
@@ -714,6 +943,10 @@ export const prepareRollbackResilienceArtifacts = ({
       pendingProducerSource,
       'E7_RESILIENCE_PENDING_PRODUCER_SOURCE_INVALID',
     ),
+    pendingEgressCloseout: sourceDocument(
+      pendingEgressCloseoutSource,
+      'E7_RESILIENCE_PENDING_EGRESS_CLOSEOUT_SOURCE_INVALID',
+    ),
     rollbackSmoke: sourceDocument(
       rollbackSmokeSource,
       'E7_RESILIENCE_ROLLBACK_SMOKE_SOURCE_INVALID',
@@ -723,6 +956,15 @@ export const prepareRollbackResilienceArtifacts = ({
       'E7_RESILIENCE_REPROMOTION_SMOKE_SOURCE_INVALID',
     ),
   };
+  validateRollbackPendingEgressCloseoutEvidence({
+    pendingProducer: authorizationDocuments.pendingProducer.value,
+    pendingEgressCloseout: authorizationDocuments.pendingEgressCloseout.value,
+    config,
+    freezeManifest,
+    previousReleaseManifest,
+    baseRehearsal,
+    externalAuthorization: authorizationDocuments.externalAuthorization.value,
+  });
   let iamEffectivePermissions;
   try {
     if (
@@ -944,6 +1186,11 @@ export const prepareRollbackResilienceArtifacts = ({
         basename: 'versioned-repromotion-smoke.json',
         document: authorizationDocuments.repromotionSmoke,
         usage: authorizationDocuments.repromotionSmoke.value.authorizationUsage,
+      },
+      {
+        basename: 'rollback-pending-egress-closeout.json',
+        document: authorizationDocuments.pendingEgressCloseout,
+        usage: authorizationDocuments.pendingEgressCloseout.value.authorizationUsage,
       },
     ],
   });
@@ -1286,6 +1533,119 @@ export const validateRollbackResilienceCompletionEnvelope = ({
 
 export const selfTestRollbackResilienceIntegration = () => {
   const fixture = createRollbackResilienceSelfTestFixture();
+  const externalAuthorization = JSON.parse(
+    fixture.inputs.documents.externalAuthorizationEvidence.content,
+  );
+  const pendingUsage = JSON.parse(
+    fixture.authorizationSources.pendingProducer.content,
+  ).authorizationUsage;
+  const producerCorrelationSha256 = '9'.repeat(64);
+  const pendingProducerValue = {
+    schemaVersion: 1,
+    stage: 7,
+    kind: 'VERSIONED_ROLLBACK_PENDING_PRODUCER',
+    status: 'PENDING_OBSERVED',
+    candidateSha: fixture.inputs.freezeManifest.candidateSha,
+    releaseId: fixture.inputs.freezeManifest.releaseId,
+    configSha256: objectSha256(fixture.inputs.config),
+    targetOriginSha256: '4'.repeat(64),
+    transactionCorrelationSha256: '5'.repeat(64),
+    checkoutCorrelationSha256: '6'.repeat(64),
+    providerEgress: {
+      observationStartedAtUtc: '2026-08-17T11:05:30.000Z',
+      correlationSha256: producerCorrelationSha256,
+      correlationSetSha256: sha256(producerCorrelationSha256),
+    },
+    observedAtUtc: '2026-08-17T11:06:00.000Z',
+    requests: { ownedOrigin: 1, sandbox: 2, outsideAllowlist: 0, mutations: 1 },
+    syntheticOnly: true,
+    expectedTerminalStatus: 'DECLINED',
+    containsSensitiveData: false,
+    manifestSha256: fixture.inputs.freezeManifest.manifestSha256,
+    externalAuthorization: {
+      authorizationSha256: externalAuthorization.authorizationSha256,
+      authorizationIds: externalAuthorization.authorizationIds,
+      ownedOriginSha256: externalAuthorization.ownedOriginSha256,
+      sandboxHostSha256: externalAuthorization.sandboxHostSha256,
+    },
+    authorizationUsage: pendingUsage,
+    externalRequests: 3,
+    mutationsPerformed: 1,
+  };
+  const pendingProducerSource = publicJsonSource(pendingProducerValue);
+  const rollbackCheckpoint = fixture.inputs.baseRehearsal.rollback.checkpoint;
+  const repromotionCheckpoint = fixture.inputs.baseRehearsal.repromotion.checkpoint;
+  const previousIdentity = fixture.inputs.previousReleaseManifest.previous;
+  const closeoutUsage = {
+    ...pendingUsage,
+    usageId: 'RB_E7_05_PENDING_EGRESS_CLOSEOUT',
+    requestCounts: { ...pendingUsage.requestCounts, 'AUTH-E7-EXT-02': 2 },
+  };
+  const pendingEgressCloseoutSource = publicJsonSource({
+    schemaVersion: 1,
+    stage: 7,
+    kind: 'ROLLBACK_PENDING_EGRESS_CLOSEOUT',
+    status: 'PASS',
+    candidateSha: fixture.inputs.freezeManifest.candidateSha,
+    releaseId: fixture.inputs.freezeManifest.releaseId,
+    stage7ConfigSha256: objectSha256(fixture.inputs.config),
+    manifestSha256: fixture.inputs.freezeManifest.manifestSha256,
+    pendingProducerSha256: objectSha256(pendingProducerValue),
+    rollbackCheckpointSha256: rollbackCheckpoint.checkpointSha256,
+    repromotionCheckpointSha256: repromotionCheckpoint.checkpointSha256,
+    expectedTerminalStatus: 'DECLINED',
+    terminalReadback: {
+      status: rollbackCheckpoint.pendingIntegrity.status,
+      trackedBefore: rollbackCheckpoint.pendingIntegrity.trackedBefore,
+      reconciled: rollbackCheckpoint.pendingIntegrity.reconciled,
+      stillPending: rollbackCheckpoint.pendingIntegrity.stillPending,
+      orphaned: rollbackCheckpoint.pendingIntegrity.orphaned,
+      duplicateEffects: rollbackCheckpoint.pendingIntegrity.duplicateEffects,
+      lostFacts: rollbackCheckpoint.pendingIntegrity.lostFacts,
+      terminalStatusCounts: rollbackCheckpoint.pendingIntegrity.terminalStatusCounts,
+      correlationEvidenceSha256: rollbackCheckpoint.pendingIntegrity.correlationEvidenceSha256,
+    },
+    backendProviderEgress: {
+      schemaVersion: 1,
+      stage: 7,
+      kind: 'BACKEND_PROVIDER_EGRESS_EVIDENCE',
+      status: 'PASS',
+      observationWindow: {
+        startedAtUtc: '2026-08-17T11:05:25.000Z',
+        endedAtUtc: '2026-08-17T11:13:05.000Z',
+      },
+      allowedReleaseIdentitySetSha256: sha256(
+        [
+          `${fixture.inputs.freezeManifest.candidateSha}\0${fixture.inputs.freezeManifest.releaseId}`,
+          `${previousIdentity.candidateSha}\0${previousIdentity.releaseId}`,
+        ]
+          .toSorted()
+          .join('\0'),
+      ),
+      logGroupSetSha256: '7'.repeat(64),
+      correlationSetSha256: pendingProducerValue.providerEgress.correlationSetSha256,
+      attempts: {
+        total: 2,
+        merchantConfiguration: 0,
+        transactionCreate: 1,
+        transactionStatus: 1,
+        byRuntime: { api: 1, worker: 1 },
+      },
+      cloudWatchReadCount: 2,
+      eventSetSha256: '8'.repeat(64),
+      requiredStatusReleaseIdentitySha256: sha256(
+        `${previousIdentity.candidateSha}\0${previousIdentity.releaseId}`,
+      ),
+      rawIdentifiersCaptured: false,
+      containsSensitiveData: false,
+    },
+    externalAuthorization: pendingProducerValue.externalAuthorization,
+    authorizationUsage: closeoutUsage,
+    externalRequests: 2,
+    mutationsPerformed: 0,
+    rawIdentifiersCaptured: false,
+    containsSensitiveData: false,
+  });
   const authorizationSourceInputs = {
     externalAuthorizationSource: fixture.inputs.documents.externalAuthorizationEvidence.content,
     smokeInputSource: fixture.authorizationSources.smokeInput.content,
@@ -1294,7 +1654,8 @@ export const selfTestRollbackResilienceIntegration = () => {
     qualityEvidenceSource: fixture.authorizationSources.quality.content,
     sandboxEvidenceSource: fixture.authorizationSources.sandbox.content,
     rollbackSmokeInputSource: fixture.authorizationSources.rollbackSmokeInput.content,
-    pendingProducerSource: fixture.authorizationSources.pendingProducer.content,
+    pendingProducerSource,
+    pendingEgressCloseoutSource,
     rollbackSmokeSource: fixture.authorizationSources.rollbackSmoke.content,
     repromotionSmokeSource: fixture.authorizationSources.repromotionSmoke.content,
   };
@@ -1561,6 +1922,46 @@ export const selfTestRollbackResilienceIntegration = () => {
         }),
       (error) => error.code === 'E7_RESILIENCE_AUTHORIZATION_USAGE_INVALID',
     );
+    assert.throws(
+      () => prepareAuthorizationCanary({ pendingEgressCloseoutSource: undefined }),
+      (error) => error.code === 'E7_RESILIENCE_PENDING_EGRESS_CLOSEOUT_SOURCE_INVALID',
+    );
+    const wrongCloseoutKind = JSON.parse(Buffer.from(pendingEgressCloseoutSource).toString('utf8'));
+    wrongCloseoutKind.kind = 'VERSIONED_ROLLBACK_PENDING_EGRESS_CLOSEOUT';
+    assert.throws(
+      () =>
+        prepareAuthorizationCanary({
+          pendingEgressCloseoutSource: publicJsonSource(wrongCloseoutKind),
+        }),
+      (error) => error.code === 'E7_RESILIENCE_PENDING_EGRESS_CLOSEOUT_INVALID',
+    );
+    const wrongTerminalStatus = JSON.parse(
+      Buffer.from(pendingEgressCloseoutSource).toString('utf8'),
+    );
+    wrongTerminalStatus.terminalReadback.terminalStatusCounts = {
+      APPROVED: 0,
+      DECLINED: 0,
+      VOIDED: 0,
+      ERROR: 1,
+    };
+    assert.throws(
+      () =>
+        prepareAuthorizationCanary({
+          pendingEgressCloseoutSource: publicJsonSource(wrongTerminalStatus),
+        }),
+      (error) => error.code === 'E7_RESILIENCE_PENDING_EGRESS_CLOSEOUT_INVALID',
+    );
+    const duplicateCloseoutUsage = JSON.parse(
+      Buffer.from(pendingEgressCloseoutSource).toString('utf8'),
+    );
+    duplicateCloseoutUsage.authorizationUsage.usageId = 'RB_E7_05_PENDING_PRODUCER';
+    assert.throws(
+      () =>
+        prepareAuthorizationCanary({
+          pendingEgressCloseoutSource: publicJsonSource(duplicateCloseoutUsage),
+        }),
+      (error) => error.code === 'E7_RESILIENCE_AUTHORIZATION_USAGE_INVALID',
+    );
     for (const reusedRoleArn of [
       fixture.inputs.config.aws.roles.rollbackRoleArn,
       fixture.inputs.config.aws.roles.cleanupRoleArn,
@@ -1572,7 +1973,7 @@ export const selfTestRollbackResilienceIntegration = () => {
     }
     return {
       status: 'PASS',
-      canaries: 18,
+      canaries: 22,
       externalRequests: 0,
       sourceBindingSha256: prepared.sourceBinding.sourceBindingSha256,
     };

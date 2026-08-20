@@ -406,6 +406,7 @@ jobs:
             --sandbox .stage7/post-success/artifacts/stage7-sandbox/sandbox-smoke.json \
             --rollback-smoke-input .stage7/post-success/artifacts/stage7-rollback/rollback-smoke-input-preflight.json \
             --pending-producer .stage7/post-success/artifacts/stage7-rollback/rollback-pending-producer.json \
+            --pending-egress-closeout .stage7/post-success/artifacts/stage7-rollback/rollback-pending-egress-closeout.json \
             --rollback-smoke .stage7/post-success/artifacts/stage7-rollback/versioned-rollback-smoke.json \
             --repromotion-smoke .stage7/post-success/artifacts/stage7-rollback/versioned-repromotion-smoke.json \
             --journal-cleanup-role "${JOURNAL_ROLE_ARN}" \
@@ -459,6 +460,7 @@ jobs:
             --publication-proof .stage7/post-success/artifacts/stage7-publication/publication-proof.json
             --api-deployment .stage7/post-success/artifacts/stage7-api/api.json
             --pending-producer .stage7/post-success/artifacts/stage7-rollback/rollback-pending-producer.json
+            --pending-egress-closeout .stage7/post-success/artifacts/stage7-rollback/rollback-pending-egress-closeout.json
             --postdeploy-smoke .stage7/post-success/artifacts/stage7-smoke/smoke.json
             --repromotion-smoke .stage7/post-success/artifacts/stage7-rollback/versioned-repromotion-smoke.json
             --fence .stage7/post-success/artifacts/stage7-release-successor-fence/release-successor-completion-fence.json

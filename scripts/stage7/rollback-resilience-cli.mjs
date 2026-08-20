@@ -344,6 +344,7 @@ const main = async () => {
       'sandbox',
       'rollback-smoke-input',
       'pending-producer',
+      'pending-egress-closeout',
       'rollback-smoke',
       'repromotion-smoke',
       'journal-cleanup-role',
@@ -418,6 +419,12 @@ const main = async () => {
       ),
       pendingProducerSource: readFileSync(
         insideWorkspace(flags['pending-producer'], 'E7_RESILIENCE_PENDING_PRODUCER_PATH_INVALID'),
+      ),
+      pendingEgressCloseoutSource: readFileSync(
+        insideWorkspace(
+          flags['pending-egress-closeout'],
+          'E7_RESILIENCE_PENDING_EGRESS_CLOSEOUT_PATH_INVALID',
+        ),
       ),
       rollbackSmokeSource: readFileSync(
         insideWorkspace(flags['rollback-smoke'], 'E7_RESILIENCE_ROLLBACK_SMOKE_PATH_INVALID'),
@@ -600,6 +607,11 @@ const main = async () => {
           flags,
           'pending-producer',
           'E7_RESILIENCE_PENDING_PRODUCER_PATH_INVALID',
+        ),
+        pendingEgressCloseoutSource: sourceFile(
+          flags,
+          'pending-egress-closeout',
+          'E7_RESILIENCE_PENDING_EGRESS_CLOSEOUT_PATH_INVALID',
         ),
         rollbackSmokeSource: sourceFile(
           flags,

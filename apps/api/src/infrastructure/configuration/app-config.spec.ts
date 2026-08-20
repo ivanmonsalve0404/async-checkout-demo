@@ -43,11 +43,13 @@ describe('loadAppConfig', () => {
       APP_ENV: 'assessment',
       AUTO_SEED_CATALOG: 'false',
       AWS_REGION: 'us-east-1',
+      CANDIDATE_SHA: 'a'.repeat(40),
       DATA_ADAPTER: 'dynamodb',
       PAYMENT_ADAPTER: 'sandbox',
       PAYMENTS_ENABLED: 'true',
       PRERELEASE_ACCESS_MODE: 'origin_gate',
       PUBLIC_ASSET_ORIGIN: 'https://checkout.example.test',
+      RELEASE_ID: 'rel-20260819-1200-aaaaaaa',
       RUNTIME_SECRET_ARN: [
         'arn:aws:secretsmanager:us-east-1:000000000000',
         'secret',
@@ -98,8 +100,10 @@ describe('loadAppConfig', () => {
       DATA_ADAPTER: 'dynamodb',
       PAYMENT_ADAPTER: 'sandbox',
       PAYMENTS_ENABLED: 'true',
+      CANDIDATE_SHA: 'a'.repeat(40),
       PRERELEASE_ACCESS_MODE: 'cloudfront_signed_cookie',
       PUBLIC_ASSET_ORIGIN: 'https://d111111abcdef8.cloudfront.net',
+      RELEASE_ID: 'rel-20260819-1200-aaaaaaa',
       RUNTIME_SECRET_ARN: [
         'arn:aws:secretsmanager:us-east-1:000000000000',
         'secret',
@@ -110,6 +114,7 @@ describe('loadAppConfig', () => {
       TOKENIZATION_MODE: 'direct_jwe',
     };
     expect(loadAppConfig(base).prereleaseAccessMode).toBe('cloudfront_signed_cookie');
+    expect(() => loadAppConfig({ ...base, RELEASE_ID: 'rel-20260819-1200-bbbbbbb' })).toThrow();
     expect(() => loadAppConfig({ ...base, RUNTIME_SECRET_ARN: undefined })).toThrow();
     expect(() =>
       loadAppConfig({

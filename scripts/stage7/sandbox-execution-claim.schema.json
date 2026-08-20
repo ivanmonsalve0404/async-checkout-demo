@@ -110,7 +110,7 @@
       "additionalProperties": false,
       "required": ["externalRequests", "tokenizations", "transactions"],
       "properties": {
-        "externalRequests": { "const": 7 },
+        "externalRequests": { "const": 8 },
         "tokenizations": { "const": 1 },
         "transactions": { "const": 1 }
       }

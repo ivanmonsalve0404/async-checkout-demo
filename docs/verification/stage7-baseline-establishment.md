@@ -26,7 +26,9 @@ Configure these environment secrets:
   destination hash in the configuration.
 - `STAGE7_BASELINE_SIGNED_COOKIE_B64` and `STAGE7_BASELINE_EXPIRED_SIGNED_COOKIE_B64` in
   `assessment-release-baseline`. They are used only for the eight-request restricted smoke and are
-  deleted before any artifact is uploaded.
+  deleted before any artifact is uploaded. Each value is exactly one standard base64 encoding of a
+  compact JSON object containing `CloudFront-Key-Pair-Id`, `CloudFront-Policy`,
+  `CloudFront-Signature`, and `CloudFront-Hash-Algorithm: SHA256`. Do not encode the JSON twice.
 
 The origin token stays in AWS Secrets Manager. Record its ARN and immutable VersionId in the
 approved configuration; never copy the token into GitHub.

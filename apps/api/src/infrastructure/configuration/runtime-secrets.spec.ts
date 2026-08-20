@@ -11,11 +11,13 @@ const assessmentConfig = loadAppConfig({
   ALLOWED_ORIGIN: 'https://checkout.example.test',
   APP_ENV: 'assessment',
   AUTO_SEED_CATALOG: 'false',
+  CANDIDATE_SHA: 'a'.repeat(40),
   DATA_ADAPTER: 'dynamodb',
   PAYMENT_ADAPTER: 'sandbox',
   PAYMENTS_ENABLED: 'true',
   PRERELEASE_ACCESS_MODE: 'origin_gate',
   PUBLIC_ASSET_ORIGIN: 'https://checkout.example.test',
+  RELEASE_ID: 'rel-20260819-1200-aaaaaaa',
   RUNTIME_SECRET_ARN: secretArn,
   RUNTIME_SECRET_VERSION_ID: secretVersionId,
   SANDBOX_AUTHORIZED_UNTIL_UTC: '2099-01-01T00:00:00.000Z',
@@ -25,6 +27,7 @@ const fakeAssessmentConfig = loadAppConfig({
   ALLOWED_ORIGIN: 'https://checkout.example.test',
   APP_ENV: 'assessment',
   AUTO_SEED_CATALOG: 'false',
+  CANDIDATE_SHA: 'a'.repeat(40),
   DATA_ADAPTER: 'dynamodb',
   PAYMENT_ADAPTER: 'fake',
   PAYMENTS_ENABLED: 'false',
@@ -38,18 +41,27 @@ const prereleaseAssessmentConfig = loadAppConfig({
   ALLOWED_ORIGIN: 'https://d111111abcdef8.cloudfront.net',
   APP_ENV: 'assessment',
   AUTO_SEED_CATALOG: 'false',
+  CANDIDATE_SHA: 'a'.repeat(40),
   DATA_ADAPTER: 'dynamodb',
   PAYMENT_ADAPTER: 'sandbox',
   PAYMENTS_ENABLED: 'true',
   PRERELEASE_ACCESS_MODE: 'cloudfront_signed_cookie',
   PUBLIC_ASSET_ORIGIN: 'https://d111111abcdef8.cloudfront.net',
+  RELEASE_ID: 'rel-20260819-1200-aaaaaaa',
   RUNTIME_SECRET_ARN: secretArn,
   RUNTIME_SECRET_VERSION_ID: secretVersionId,
   SANDBOX_AUTHORIZED_UNTIL_UTC: '2099-01-01T00:00:00.000Z',
   TOKENIZATION_MODE: 'direct_jwe',
 });
 
-const secretDocument = (): string =>
+const acceptanceJwt = (payload: Readonly<Record<string, unknown>>): string =>
+  [
+    Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
+    Buffer.from(JSON.stringify(payload)).toString('base64url'),
+    Buffer.from('synthetic-signature').toString('base64url'),
+  ].join('.');
+
+const secretDocument = (overrides: Readonly<Record<string, unknown>> = {}): string =>
   JSON.stringify({
     runtimeSecurityRootKey: Buffer.alloc(32, 7).toString('base64url'),
     publicKey: ['pub', 'test', 'synthetic-not-a-real'].join('_'),
@@ -58,12 +70,13 @@ const secretDocument = (): string =>
     termsAcceptanceToken: 'terms-provider-synthetic',
     termsPermalink: 'https://comercios.wompi.co/terminos/synthetic',
     personalDataAcceptanceToken: 'personal-provider-synthetic',
-    personalDataPermalink: 'https://comercios.wompi.co/datos/synthetic',
+    personalDataPermalink: 'https://wompi.com/datos/synthetic',
+    ...overrides,
   });
 
-const prereleaseSecretDocument = (): string =>
+const prereleaseSecretDocument = (overrides: Readonly<Record<string, unknown>> = {}): string =>
   JSON.stringify({
-    ...JSON.parse(secretDocument()),
+    ...JSON.parse(secretDocument(overrides)),
     prereleaseOriginToken: Buffer.alloc(32, 13).toString('base64url'),
   });
 
@@ -82,7 +95,7 @@ describe('runtime secrets boundary', () => {
         termsAcceptanceToken: 'terms-provider-synthetic',
         termsPermalink: 'https://comercios.wompi.co/terminos/synthetic',
         personalDataAcceptanceToken: 'personal-provider-synthetic',
-        personalDataPermalink: 'https://comercios.wompi.co/datos/synthetic',
+        personalDataPermalink: 'https://wompi.com/datos/synthetic',
       },
     });
     expect(reader.send).toHaveBeenCalledTimes(1);
@@ -136,6 +149,76 @@ describe('runtime secrets boundary', () => {
         reader(JSON.stringify({ ...JSON.parse(secretDocument()), unexpected: true })),
       ),
     ).rejects.toThrow('RUNTIME_SECRET_INVALID');
+  });
+
+  it('keeps structurally valid expired and short-lived tokens as non-authoritative snapshots', async () => {
+    const currentTime = new Date('2026-08-19T12:00:00.000Z');
+    const currentEpochSeconds = currentTime.getTime() / 1_000;
+    const reader = (SecretString: string): SecretReader => ({
+      send: jest.fn().mockResolvedValue({ SecretString }),
+    });
+    for (const termsAcceptanceToken of [
+      acceptanceJwt({ exp: currentEpochSeconds - 1 }),
+      acceptanceJwt({ exp: currentEpochSeconds + assessmentConfig.quoteTtlSeconds }),
+    ]) {
+      await expect(
+        loadRuntimeSecrets(
+          assessmentConfig,
+          reader(prereleaseSecretDocument({ termsAcceptanceToken })),
+        ),
+      ).resolves.toMatchObject({ sandbox: { termsAcceptanceToken } });
+    }
+  });
+
+  it('fails closed for a structurally malformed acceptance token snapshot', async () => {
+    const reader: SecretReader = {
+      send: jest.fn().mockResolvedValue({
+        SecretString: prereleaseSecretDocument({
+          termsAcceptanceToken: 'synthetic.invalid-token.signature',
+        }),
+      }),
+    };
+    await expect(loadRuntimeSecrets(assessmentConfig, reader)).rejects.toThrow(
+      'RUNTIME_SECRET_INVALID',
+    );
+  });
+
+  it('accepts JWT tokens that cover the quote lifetime and JWT tokens without exp', async () => {
+    const currentTime = new Date('2026-08-19T12:00:00.000Z');
+    const currentEpochSeconds = currentTime.getTime() / 1_000;
+    const reader = (SecretString: string): SecretReader => ({
+      send: jest.fn().mockResolvedValue({ SecretString }),
+    });
+    await expect(
+      loadRuntimeSecrets(
+        assessmentConfig,
+        reader(
+          prereleaseSecretDocument({
+            termsAcceptanceToken: acceptanceJwt({
+              exp: currentEpochSeconds + assessmentConfig.quoteTtlSeconds + 1,
+            }),
+            personalDataAcceptanceToken: acceptanceJwt({ contract_id: 2 }),
+          }),
+        ),
+      ),
+    ).resolves.toMatchObject({
+      sandbox: { personalDataPermalink: 'https://wompi.com/datos/synthetic' },
+    });
+  });
+
+  it('rejects non-official and lookalike permalink hosts', async () => {
+    const reader = (SecretString: string): SecretReader => ({
+      send: jest.fn().mockResolvedValue({ SecretString }),
+    });
+    for (const termsPermalink of [
+      'http://wompi.com/terms',
+      'https://wompi.com.example.test/terms',
+      'https://evilwompi.co/terms',
+    ]) {
+      await expect(
+        loadRuntimeSecrets(assessmentConfig, reader(prereleaseSecretDocument({ termsPermalink }))),
+      ).rejects.toThrow('RUNTIME_SECRET_INVALID');
+    }
   });
 
   it('accepts only a root-key document when the release keeps sandbox disabled', async () => {
