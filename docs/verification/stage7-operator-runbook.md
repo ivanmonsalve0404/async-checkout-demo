@@ -22,7 +22,8 @@ Antes de generar configuraciones se necesitan:
    - certificados web/CloudFront en `us-east-1`;
    - certificado API en la región de cada target.
 5. Un runtime JSON secret completo en Secrets Manager por región, con ARN y `VersionId` fijos durante la ventana.
-6. Public key y key group de CloudFront para cada target; la private key permanece fuera de GitHub.
+6. Public key y key group de CloudFront para cada target; el public key ID tiene forma `K...`, el
+   key group ID es un UUID canónico en minúsculas y la private key permanece fuera de GitHub.
 7. Correo para Budget/SNS y confirmación humana de la suscripción.
 8. Acceso y datos de prueba de Sandbox del proveedor de pagos.
 9. Un segundo usuario de GitHub, si se activa revisión obligatoria sin autoaprobación.
@@ -56,7 +57,45 @@ Cada runtime secret tiene exactamente estas claves, pero sus valores nunca se es
 - `personalDataAcceptanceToken`;
 - `personalDataPermalink`.
 
-Los dos primeros son base64url canónicos; las credenciales y aceptaciones restantes son exclusivamente Sandbox. Un JSON parcial hace que la API falle antes de arrancar. El repositorio no crea secretos ni solicita certificados porque ambas operaciones requieren control humano sobre el dominio y el material sensible.
+Los dos primeros son base64url canónicos; las credenciales y aceptaciones restantes son exclusivamente Sandbox. Un JSON parcial hace que la API falle antes de arrancar. Los stacks IaC no crean secretos ni solicitan certificados porque ambas operaciones requieren control humano sobre el dominio y el material sensible.
+
+Para esta entrega, el binding previo a los stacks es fijo y está separado por región:
+
+| Target        | Región      | Nombre exacto en Secrets Manager         |
+| ------------- | ----------- | ---------------------------------------- |
+| FULL/baseline | `us-east-1` | `checkout/assessment-release/runtime`    |
+| PRERELEASE    | `us-east-2` | `checkout/assessment-prerelease/runtime` |
+
+La utilidad local versionada crea o valida esos dos recursos sólo después de una orden explícita del operador. Nunca imprime el JSON, no pasa valores sensibles como argumentos del proceso y no reemplaza un secreto existente. Si el valor remoto difiere, falla para impedir una rotación accidental y la invalidación silenciosa de los `VersionId` ya autorizados.
+
+Inicializar el archivo privado sin llamar AWS:
+
+```powershell
+New-Item -ItemType Directory -Force .stage7\private | Out-Null
+pnpm stage7:runtime-secrets -- init --input .stage7\private\stage7-runtime-secrets.json --account-id '<account-id>'
+```
+
+El comando genera criptográficamente y guarda localmente una raíz y un token de origen distintos para cada target. También endurece permisos: `0700/0600` en POSIX y, en Windows, reemplaza la DACL por una lista exacta, sin herencia, que permite control total sólo al operador, al proceso actual, a `SYSTEM` y a administradores; el comando relee y verifica esa lista antes de continuar. Deja en `null` los siete campos Sandbox. Con un editor local, completar **únicamente** `publicKey`, `privateKey` e `integritySecret`; mantener en `null` los cuatro campos de aceptaciones. El formato está descrito por [runtime-secrets-input.schema.json](../../scripts/stage7/runtime-secrets-input.schema.json). No pegar esos valores en terminal, chat, tickets ni documentación; el archivo completo permanece bajo `.stage7/private/`, ignorado por Git.
+
+Hidratar las dos aceptaciones desde el endpoint Sandbox oficial. Este paso lee la public key del archivo, acepta únicamente una respuesta HTTPS directa de `sandbox.wompi.co`, limita tamaño/tiempo y exige que cada aceptación tenga exactamente `acceptance_token`, `permalink` y `type`: `END_USER_POLICY` para términos y `PERSONAL_DATA_AUTH` para datos personales. Después escribe localmente sólo los cuatro campos requeridos por la API; no imprime la URL, los tokens ni la respuesta:
+
+```powershell
+pnpm stage7:runtime-secrets -- hydrate --input .stage7\private\stage7-runtime-secrets.json
+```
+
+Si los tokens devueltos son JWT con `exp`, deben conservar más de 900 segundos de vigencia; la API vuelve a comprobar esa condición al arrancar y al usar el proveedor. `hydrate` es idempotente mientras las aceptaciones válidas ya estén presentes. Para refrescarlas deliberadamente, volver a dejar los cuatro campos de aceptación en `null` y ejecutar el comando de nuevo; cualquier secreto AWS existente seguirá requiriendo una rotación separada. Validar localmente sin llamar AWS:
+
+```powershell
+pnpm stage7:runtime-secrets -- validate --input .stage7\private\stage7-runtime-secrets.json
+```
+
+Materializar con el perfil temporal autorizado:
+
+```powershell
+pnpm stage7:runtime-secrets -- materialize --input .stage7\private\stage7-runtime-secrets.json --profile assessment-bootstrap
+```
+
+Antes de crear recursos, la utilidad valida con STS que el perfil pertenece al `accountId` declarado. Si el secreto no existe, lo crea con tags de alcance y luego relee `AWSCURRENT`; si existe, exige nombre, región, tags, rotación desactivada y contenido idéntico. La salida sanitizada contiene sólo estado, ARN, `VersionId` y SHA-256. Conservar esos ARN/`VersionId` para el autor de configuraciones. Una renovación de tokens o cualquier cambio del JSON requiere una rotación separada, deliberada y una nueva generación de configuraciones; `materialize` nunca la realiza implícitamente.
 
 ## 3. Sintetizar y provisionar los dos `CDKToolkit`
 
@@ -188,6 +227,26 @@ Secrets por Environment:
 - `assessment-release`: alerta, smoke inputs y los ocho valores Sandbox.
 
 Las listas exactas de nombres están en `.env.example`. Los valores temporales de autorización se cargan sólo en el Environment y la ventana que corresponden.
+
+Las cuatro variables de cookies firmadas (`STAGE7_CLOUDFRONT_*SIGNED_COOKIE_B64` y
+`STAGE7_BASELINE_*SIGNED_COOKIE_B64`) comparten un solo formato. Su valor es exactamente una
+codificación base64 estándar del JSON compacto siguiente, sin salto de línea ni segunda
+codificación:
+
+```json
+{
+  "CloudFront-Key-Pair-Id": "K...",
+  "CloudFront-Policy": "<cloudfront-safe-base64-policy>",
+  "CloudFront-Signature": "<cloudfront-safe-base64-rsa-sha256-signature>",
+  "CloudFront-Hash-Algorithm": "SHA256"
+}
+```
+
+La firma es RSA-SHA256 sobre el JSON compacto de la policy aún sin codificar. La policy y la firma
+usan la sustitución segura de CloudFront (`+` a `-`, `=` a `_`, `/` a `~`). El `Resource` debe ser
+exactamente el origen autorizado seguido por `/*`; la cookie válida no puede exceder el fin de la
+ventana y la cookie vencida debe tener un `AWS:EpochTime` ya pasado. El lector falla cerrado ante
+SHA-1, ausencia de la cuarta cookie, IDs intercambiados o payload con doble base64.
 
 ## 7. Ejecutar la cadena causal
 

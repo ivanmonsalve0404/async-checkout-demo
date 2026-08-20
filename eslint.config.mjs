@@ -10,6 +10,8 @@ export default tseslint.config(
       '**/cdk.out/**',
       'output/**',
       'packages/contracts/src/generated/**',
+      '.stage7/private/',
+      '.stage7/private/**',
     ],
   },
   eslint.configs.recommended,

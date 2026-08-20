@@ -27,6 +27,16 @@ export const redactLogRecord = (record: SafeLogRecord): SafeLogRecord =>
   }, {});
 
 const allowedFields: Readonly<Record<string, (value: SafeLogValue) => boolean>> = {
+  schemaVersion: (value) => value === 1,
+  candidateSha: (value) => typeof value === 'string' && /^[0-9a-f]{40}$/u.test(value),
+  releaseId: (value) => typeof value === 'string' && /^rel-\d{8}-\d{4}-[0-9a-f]{7}$/u.test(value),
+  providerHostSha256: (value) => typeof value === 'string' && /^[0-9a-f]{64}$/u.test(value),
+  operation: (value) =>
+    value === 'MERCHANT_CONFIGURATION' ||
+    value === 'TRANSACTION_CREATE' ||
+    value === 'TRANSACTION_STATUS',
+  correlationSha256: (value) => typeof value === 'string' && /^[0-9a-f]{64}$/u.test(value),
+  containsSensitiveData: (value) => value === false,
   requestId: (value) => typeof value === 'string',
   correlationId: (value) => typeof value === 'string',
   route: (value) => typeof value === 'string' && value.startsWith('/api/'),

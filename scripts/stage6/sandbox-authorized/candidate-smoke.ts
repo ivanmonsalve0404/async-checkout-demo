@@ -16,6 +16,10 @@ import type {
 } from '../../../apps/api/src/domain/checkout/checkout';
 import { SandboxPaymentProvider } from '../../../apps/api/src/infrastructure/payment/sandbox-payment-provider';
 import { redactSandboxDiagnostic } from '../../../apps/api/src/infrastructure/payment/sandbox-payment-provider';
+import {
+  isProviderAcceptanceJwtUsable,
+  isWompiProviderPermalink,
+} from '../../../apps/api/src/infrastructure/configuration/runtime-secrets';
 import { InMemoryCatalogRepository } from '../../../apps/api/src/infrastructure/persistence/in-memory-catalog.repository';
 import { InMemoryCheckoutRepository } from '../../../apps/api/src/infrastructure/persistence/in-memory-checkout.repository';
 import { createProductSeed } from '../../../apps/api/src/infrastructure/persistence/product-seed';
@@ -41,6 +45,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(HERE, '..', '..', '..');
 const AUTHORIZATION_SCHEMA_PATH = path.join(HERE, 'authorization.schema.json');
 const EXPECTED_REQUESTS = EXPECTED_EXTERNAL_REQUESTS;
+const QUOTE_TTL_SECONDS = 900;
 const ALLOWED_RESULT_STATES = new Set(['APPROVED', 'DECLINED', 'ERROR', 'PENDING']);
 const CHECKS = [
   ['AUTH02-E6-01', 'acceptance-configuration-observed'],
@@ -96,7 +101,12 @@ const canonicalHttpsUrl = (value: unknown, failureCode: string): string => {
   } catch {
     return fail(failureCode);
   }
-  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') {
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    !isWompiProviderPermalink(candidate)
+  ) {
     fail(failureCode);
   }
   return parsed.toString();
@@ -338,11 +348,20 @@ class GuardedSandboxNetwork {
     if (category === 'configurationReads') {
       const merchantResource = `/v1/merchants/${encodeURIComponent(this.publicKey)}`;
       const keyResource = '/v1/tokens/keys/tokenization';
-      const merchantRequest = method === 'GET' && resource === merchantResource;
+      const merchantRequest =
+        method === 'GET' &&
+        resource === merchantResource &&
+        body === undefined &&
+        authorization === undefined &&
+        Object.keys(headers).length === 1 &&
+        headers.Accept === 'application/json';
       const keyRequest =
         method === 'GET' &&
         resource === keyResource &&
-        authorization === `Bearer ${this.publicKey}`;
+        body === undefined &&
+        authorization === `Bearer ${this.publicKey}` &&
+        Object.keys(headers).length === 2 &&
+        headers.Accept === 'application/json';
       if (!merchantRequest && !keyRequest) fail('CONFIGURATION_REQUEST_INVALID');
     } else if (category === 'paymentMethodCreations') {
       const payload = record(body, 'TOKENIZATION_BODY_INVALID');
@@ -450,19 +469,35 @@ interface AcceptanceConfiguration {
   readonly personalDataPermalink: string;
 }
 
-const acceptanceConfiguration = (body: unknown): AcceptanceConfiguration => {
+const acceptanceConfiguration = (body: unknown, now: Date): AcceptanceConfiguration => {
   const envelope = record(body, 'MERCHANT_CONFIGURATION_INVALID');
   const data = record(envelope.data, 'MERCHANT_CONFIGURATION_INVALID');
   const terms = record(data.presigned_acceptance, 'MERCHANT_CONFIGURATION_INVALID');
   const personalData = record(data.presigned_personal_data_auth, 'MERCHANT_CONFIGURATION_INVALID');
+  if (
+    !exactKeys(terms, ['acceptance_token', 'permalink', 'type']) ||
+    terms.type !== 'END_USER_POLICY' ||
+    !exactKeys(personalData, ['acceptance_token', 'permalink', 'type']) ||
+    personalData.type !== 'PERSONAL_DATA_AUTH'
+  ) {
+    fail('MERCHANT_CONFIGURATION_INVALID');
+  }
+  const termsToken = safeString(terms.acceptance_token, 8_192, 'MERCHANT_CONFIGURATION_INVALID');
+  const personalDataToken = safeString(
+    personalData.acceptance_token,
+    8_192,
+    'MERCHANT_CONFIGURATION_INVALID',
+  );
+  if (
+    !isProviderAcceptanceJwtUsable(termsToken, now, QUOTE_TTL_SECONDS) ||
+    !isProviderAcceptanceJwtUsable(personalDataToken, now, QUOTE_TTL_SECONDS)
+  ) {
+    fail('MERCHANT_CONFIGURATION_INVALID');
+  }
   return {
-    termsToken: safeString(terms.acceptance_token, 8_192, 'MERCHANT_CONFIGURATION_INVALID'),
+    termsToken,
     termsPermalink: canonicalHttpsUrl(terms.permalink, 'MERCHANT_CONFIGURATION_INVALID'),
-    personalDataToken: safeString(
-      personalData.acceptance_token,
-      8_192,
-      'MERCHANT_CONFIGURATION_INVALID',
-    ),
+    personalDataToken,
     personalDataPermalink: canonicalHttpsUrl(
       personalData.permalink,
       'MERCHANT_CONFIGURATION_INVALID',
@@ -551,6 +586,56 @@ const selfTestChild = async (): Promise<void> => {
   const publicKey = ['pub', 'test', 'candidate-canary'].join('_');
   const privateKey = ['prv', 'test', 'candidate-canary'].join('_');
   const activeAt = new Date('2026-08-16T12:00:00.123Z');
+  const merchantConfiguration = (termsToken: string, personalDataToken: string) => ({
+    data: {
+      presigned_acceptance: {
+        acceptance_token: termsToken,
+        permalink: 'https://sandbox.wompi.co/terms/test',
+        type: 'END_USER_POLICY',
+      },
+      presigned_personal_data_auth: {
+        acceptance_token: personalDataToken,
+        permalink: 'https://sandbox.wompi.co/personal-data/test',
+        type: 'PERSONAL_DATA_AUTH',
+      },
+    },
+  });
+  const jwt = [
+    Buffer.from('{"alg":"RS256","typ":"JWT"}', 'utf8').toString('base64url'),
+    Buffer.from(
+      JSON.stringify({ exp: Math.floor(activeAt.getTime() / 1_000) + QUOTE_TTL_SECONDS + 60 }),
+      'utf8',
+    ).toString('base64url'),
+    Buffer.from('synthetic-signature', 'utf8').toString('base64url'),
+  ].join('.');
+  const jwtFromSources = (header: string, payload: string): string =>
+    [
+      Buffer.from(header, 'utf8').toString('base64url'),
+      Buffer.from(payload, 'utf8').toString('base64url'),
+      Buffer.from('synthetic-signature', 'utf8').toString('base64url'),
+    ].join('.');
+  const futurePayload = JSON.stringify({
+    exp: Math.floor(activeAt.getTime() / 1_000) + QUOTE_TTL_SECONDS + 60,
+  });
+  assert.equal(acceptanceConfiguration(merchantConfiguration(jwt, jwt), activeAt).termsToken, jwt);
+  let postContinuations = 0;
+  const parseBeforePost = (termsToken: string): void => {
+    acceptanceConfiguration(merchantConfiguration(termsToken, jwt), activeAt);
+    postContinuations += 1;
+  };
+  for (const malformed of [
+    'opaque-acceptance-token',
+    'header.payload',
+    'a.b.c.d',
+    jwtFromSources('not-json', futurePayload),
+    jwtFromSources('[]', futurePayload),
+    jwtFromSources('{"alg":"none","typ":"JWT"}', futurePayload),
+    jwtFromSources('{"alg":"RS256","typ":"JWT"}', 'not-json'),
+    jwtFromSources('{"alg":"RS256","typ":"JWT"}', '[]'),
+  ]) {
+    assert.throws(() => parseBeforePost(malformed), /MERCHANT_CONFIGURATION_INVALID/u);
+  }
+  assert.equal(postContinuations, 0);
   let expired = false;
   let syntheticCalls = 0;
   const syntheticFetch: typeof fetch = (input) => {
@@ -755,7 +840,7 @@ const run = async (): Promise<void> => {
   if (merchantResponse.status < 200 || merchantResponse.status >= 300) {
     fail('MERCHANT_CONFIGURATION_UNAVAILABLE');
   }
-  const acceptances = acceptanceConfiguration(merchantResponse.body);
+  const acceptances = acceptanceConfiguration(merchantResponse.body, authorizationGate());
   const encryptionKeyResponse = await network.json(
     'configurationReads',
     'GET',
@@ -805,15 +890,59 @@ const run = async (): Promise<void> => {
     if (!(error instanceof TokenizationError) || error.code !== 'SANDBOX_DISABLED') throw error;
   }
 
+  const providerContracts = [
+    {
+      type: 'TERMS',
+      permalink: acceptances.termsPermalink,
+      version: `provider-${sha256(acceptances.termsPermalink).slice(0, 16)}`,
+    },
+    {
+      type: 'PERSONAL_DATA',
+      permalink: acceptances.personalDataPermalink,
+      version: `provider-${sha256(acceptances.personalDataPermalink).slice(0, 16)}`,
+    },
+  ] as const;
   const provider = new SandboxPaymentProvider({
     enabled: true,
     publicKey,
     privateKey,
     integritySecret,
-    providerAcceptances: {
-      terms: acceptances.termsToken,
-      personalData: acceptances.personalDataToken,
+    acceptanceReader: async () => {
+      const response = await network.json(
+        'configurationReads',
+        'GET',
+        `/v1/merchants/${encodeURIComponent(publicKey)}`,
+        { Accept: 'application/json' },
+        undefined,
+        8_000,
+      );
+      if (response.status < 200 || response.status >= 300) {
+        fail('MERCHANT_CONFIGURATION_UNAVAILABLE');
+      }
+      const currentAcceptances = acceptanceConfiguration(response.body, authorizationGate());
+      return {
+        contracts: [
+          {
+            type: 'TERMS',
+            permalink: currentAcceptances.termsPermalink,
+            version: `provider-${sha256(currentAcceptances.termsPermalink).slice(0, 16)}`,
+          },
+          {
+            type: 'PERSONAL_DATA',
+            permalink: currentAcceptances.personalDataPermalink,
+            version: `provider-${sha256(currentAcceptances.personalDataPermalink).slice(0, 16)}`,
+          },
+        ],
+        providerAcceptances: {
+          terms: currentAcceptances.termsToken,
+          personalData: currentAcceptances.personalDataToken,
+        },
+      };
     },
+    expectedContracts: providerContracts,
+    quoteTtlSeconds: QUOTE_TTL_SECONDS,
+    authorizedUntilUtc: authorizationContext.authorization.authorization.expiresAtUtc,
+    now: authorizationGate,
     timeoutMs: 8_000,
     transport: async (request) => {
       const category: RequestCategory =
@@ -933,7 +1062,7 @@ const run = async (): Promise<void> => {
 
   currentReadCategory = 'statusReads';
   const firstObservation = valueOf(
-    await provider.getById(created.providerId),
+    await provider.getById(created.providerId, reference),
     'PROVIDER_STATUS_READ_FAILED',
   );
   monotonicProviderStatus(created, firstObservation);
@@ -948,7 +1077,11 @@ const run = async (): Promise<void> => {
   );
 
   currentReadCategory = 'errorMappingProbes';
-  const mappedError = await provider.getById(`e6-missing-${randomBytes(8).toString('hex')}`);
+  const missingSuffix = randomBytes(8).toString('hex');
+  const mappedError = await provider.getById(
+    `e6-missing-${missingSuffix}`,
+    `e6-missing-reference-${missingSuffix}`,
+  );
   if (mappedError.ok || mappedError.error.code !== 'PROVIDER_UNAVAILABLE') {
     fail('PROVIDER_ERROR_MAPPING_INVALID');
   }
@@ -973,7 +1106,7 @@ const run = async (): Promise<void> => {
 
   currentReadCategory = 'reconciliationReplays';
   const replayObservation = valueOf(
-    await provider.getById(created.providerId),
+    await provider.getById(created.providerId, reference),
     'PROVIDER_REPLAY_READ_FAILED',
   );
   monotonicProviderStatus(firstObservation, replayObservation);
@@ -1035,7 +1168,7 @@ const run = async (): Promise<void> => {
   const requestSummary = network.summary();
   if (
     requestSummary.total !== EXPECTED_REQUESTS ||
-    requestSummary.configurationReads !== 2 ||
+    requestSummary.configurationReads !== 3 ||
     requestSummary.paymentMethodCreations !== 1 ||
     requestSummary.transactionCreates !== 1 ||
     requestSummary.statusReads !== 1 ||

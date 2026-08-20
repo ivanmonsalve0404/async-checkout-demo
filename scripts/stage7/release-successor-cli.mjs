@@ -162,6 +162,7 @@ const SOURCE_FLAG_MAP = Object.freeze({
   publicationProofSource: 'publication-proof',
   apiDeploymentSource: 'api-deployment',
   pendingProducerSource: 'pending-producer',
+  pendingEgressCloseoutSource: 'pending-egress-closeout',
   postdeploySmokeSource: 'postdeploy-smoke',
   repromotionSmokeSource: 'repromotion-smoke',
   releaseFenceSource: 'fence',

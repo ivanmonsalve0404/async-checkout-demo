@@ -1,4 +1,9 @@
 import { createHash } from 'node:crypto';
+import {
+  isProviderAcceptanceJwtUsable,
+  isWompiProviderPermalink,
+} from '../configuration/runtime-secrets';
+import type { MerchantContractSet } from '../../application/ports/merchant-contract';
 import type {
   PaymentProvider,
   ProviderCreateOutcome,
@@ -16,6 +21,7 @@ export interface SandboxTransportRequest {
   readonly headers: Readonly<Record<string, string>>;
   readonly body?: unknown;
   readonly timeoutMs: number;
+  readonly correlationReference: string;
 }
 
 export interface SandboxTransportResponse {
@@ -28,16 +34,27 @@ export type SandboxTransport = (
   request: SandboxTransportRequest,
 ) => Promise<SandboxTransportResponse>;
 
+export interface SandboxProviderAcceptanceSnapshot {
+  readonly contracts: MerchantContractSet;
+  readonly providerAcceptances: Readonly<{
+    terms: string;
+    personalData: string;
+  }>;
+}
+
+export type SandboxAcceptanceReader = (
+  correlationReference: string,
+) => Promise<SandboxProviderAcceptanceSnapshot>;
+
 export interface SandboxPaymentProviderOptions {
   readonly enabled: boolean;
   readonly privateKey?: string;
   readonly publicKey?: string;
   readonly integritySecret?: string;
   readonly transport?: SandboxTransport;
-  readonly providerAcceptances?: Readonly<{
-    terms: string;
-    personalData: string;
-  }>;
+  readonly acceptanceReader?: SandboxAcceptanceReader;
+  readonly expectedContracts?: MerchantContractSet;
+  readonly quoteTtlSeconds?: number;
   readonly authorizedUntilUtc?: string;
   readonly now?: () => Date;
   readonly timeoutMs?: number;
@@ -48,11 +65,11 @@ interface ReadySandboxPaymentProviderOptions {
   readonly publicKey: string;
   readonly integritySecret: string;
   readonly transport: SandboxTransport;
-  readonly providerAcceptances: Readonly<{
-    terms: string;
-    personalData: string;
-  }>;
+  readonly acceptanceReader: SandboxAcceptanceReader;
+  readonly expectedContracts: MerchantContractSet;
+  readonly quoteTtlSeconds: number;
   readonly authorizedUntilUtc: string;
+  readonly now: () => Date;
 }
 
 const providerStatuses = new Set<ProviderStatus>([
@@ -73,6 +90,31 @@ const canonicalUtcMillis = (value: string | undefined): number | null => {
     ? milliseconds
     : null;
 };
+
+const validContract = (value: unknown, type: 'TERMS' | 'PERSONAL_DATA'): boolean => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const record = value as Readonly<Record<string, unknown>>;
+  return (
+    record.type === type &&
+    isWompiProviderPermalink(record.permalink) &&
+    typeof record.version === 'string' &&
+    record.version.length > 0
+  );
+};
+
+const validContractSet = (value: unknown): value is MerchantContractSet =>
+  Array.isArray(value) &&
+  value.length === 2 &&
+  validContract(value[0] as unknown, 'TERMS') &&
+  validContract(value[1] as unknown, 'PERSONAL_DATA');
+
+const sameContractSet = (left: MerchantContractSet, right: MerchantContractSet): boolean =>
+  left[0].type === right[0].type &&
+  left[0].permalink === right[0].permalink &&
+  left[0].version === right[0].version &&
+  left[1].type === right[1].type &&
+  left[1].permalink === right[1].permalink &&
+  left[1].version === right[1].version;
 
 export const signSandboxIntegrity = (
   reference: string,
@@ -129,6 +171,29 @@ export class SandboxPaymentProvider implements PaymentProvider {
   ): Promise<Result<ProviderCreateOutcome, ProviderError>> {
     const options = this.readyOptions();
     if (options === null) return err({ code: 'ENVIRONMENT_DISABLED' });
+    let snapshot: SandboxProviderAcceptanceSnapshot;
+    try {
+      snapshot = await options.acceptanceReader(command.reference);
+      const currentTime = options.now();
+      if (
+        !validContractSet(snapshot.contracts) ||
+        !sameContractSet(options.expectedContracts, snapshot.contracts) ||
+        !isProviderAcceptanceJwtUsable(
+          snapshot.providerAcceptances.terms,
+          currentTime,
+          options.quoteTtlSeconds,
+        ) ||
+        !isProviderAcceptanceJwtUsable(
+          snapshot.providerAcceptances.personalData,
+          currentTime,
+          options.quoteTtlSeconds,
+        )
+      ) {
+        return ok({ kind: 'PROVEN_NOT_SENT' });
+      }
+    } catch {
+      return ok({ kind: 'PROVEN_NOT_SENT' });
+    }
     const request: SandboxTransportRequest = {
       method: 'POST',
       resource: '/v1/transactions',
@@ -138,9 +203,10 @@ export class SandboxPaymentProvider implements PaymentProvider {
         'Content-Type': 'application/json',
       },
       timeoutMs: this.timeoutMs,
+      correlationReference: command.reference,
       body: {
-        acceptance_token: options.providerAcceptances.terms,
-        accept_personal_auth: options.providerAcceptances.personalData,
+        acceptance_token: snapshot.providerAcceptances.terms,
+        accept_personal_auth: snapshot.providerAcceptances.personalData,
         amount_in_cents: command.amountInCents,
         currency: command.currency,
         customer_email: command.customerEmail,
@@ -187,9 +253,15 @@ export class SandboxPaymentProvider implements PaymentProvider {
     return Promise.resolve(err({ code: 'REFERENCE_LOOKUP_UNSUPPORTED' }));
   }
 
-  public async getById(providerId: string): Promise<Result<ProviderObservation, ProviderError>> {
+  public async getById(
+    providerId: string,
+    expectedReference?: string,
+  ): Promise<Result<ProviderObservation, ProviderError>> {
     const options = this.readyOptions();
     if (options === null) return err({ code: 'ENVIRONMENT_DISABLED' });
+    if (typeof expectedReference !== 'string' || expectedReference.length === 0) {
+      return err({ code: 'PROVIDER_PROTOCOL_ERROR' });
+    }
     let response: SandboxTransportResponse;
     try {
       response = await options.transport({
@@ -200,6 +272,7 @@ export class SandboxPaymentProvider implements PaymentProvider {
           Authorization: `Bearer ${options.publicKey}`,
         },
         timeoutMs: this.timeoutMs,
+        correlationReference: expectedReference,
       });
     } catch (error: unknown) {
       return err({ code: isTimeoutError(error) ? 'PROVIDER_TIMEOUT' : 'PROVIDER_UNAVAILABLE' });
@@ -227,11 +300,14 @@ export class SandboxPaymentProvider implements PaymentProvider {
       publicKey,
       integritySecret,
       transport,
-      providerAcceptances,
+      acceptanceReader,
+      expectedContracts,
+      quoteTtlSeconds,
       authorizedUntilUtc,
     } = this.options;
     const authorizedUntil = canonicalUtcMillis(authorizedUntilUtc);
-    const now = (this.options.now ?? (() => new Date()))().getTime();
+    const currentTime = (this.options.now ?? (() => new Date()))();
+    const now = currentTime.getTime();
     if (
       this.options.enabled &&
       authorizedUntil !== null &&
@@ -243,18 +319,21 @@ export class SandboxPaymentProvider implements PaymentProvider {
       typeof integritySecret === 'string' &&
       integritySecret.length > 0 &&
       typeof transport === 'function' &&
-      typeof providerAcceptances?.terms === 'string' &&
-      providerAcceptances.terms.length > 0 &&
-      typeof providerAcceptances.personalData === 'string' &&
-      providerAcceptances.personalData.length > 0
+      typeof acceptanceReader === 'function' &&
+      validContractSet(expectedContracts) &&
+      Number.isSafeInteger(quoteTtlSeconds) &&
+      (quoteTtlSeconds as number) > 0
     ) {
       return {
         privateKey,
         publicKey,
         integritySecret,
         transport,
-        providerAcceptances,
+        acceptanceReader,
+        expectedContracts,
+        quoteTtlSeconds: quoteTtlSeconds as number,
         authorizedUntilUtc: authorizedUntilUtc as string,
+        now: this.options.now ?? (() => new Date()),
       };
     }
     return null;

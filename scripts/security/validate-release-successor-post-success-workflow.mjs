@@ -171,6 +171,7 @@ export const validateReleaseSuccessorPostSuccessWorkflow = (source) => {
     '--release-handoff .stage7/post-success/artifacts/stage7-release-authorities/handoff-payload.json',
     '--fence .stage7/post-success/artifacts/stage7-release-successor-fence/release-successor-completion-fence.json',
     '--pre-fence-gate .stage7/post-success/artifacts/stage7-release-reconciliation/stage7-release-pre-fence-gate.json',
+    '--pending-egress-closeout .stage7/post-success/artifacts/stage7-rollback/rollback-pending-egress-closeout.json',
     '--journal-role-effective-permissions .stage7/post-success/artifacts/stage7-aws-auth/stage7-release-journal-role-effective-permissions.json',
     '--live-effective-permissions .stage7/post-success/live-journal-role-effective-permissions.json',
     '--post-run-id "${GITHUB_RUN_ID}"',
@@ -204,6 +205,15 @@ export const validateReleaseSuccessorPostSuccessWorkflow = (source) => {
     !source.includes('RELEASE_SUCCESSOR_REQUIRED_ARTIFACTS.join(')
   ) {
     fail('raw artifact downloads must derive from the executable catalog');
+  }
+  if (
+    source.split(
+      '--pending-egress-closeout .stage7/post-success/artifacts/stage7-rollback/rollback-pending-egress-closeout.json',
+    ).length -
+      1 !==
+    2
+  ) {
+    fail('pending egress closeout must bind rollback recomputation and successor source exactly');
   }
   indexInOrder(source, [
     'Resolve and bind the exact normal or recovered release source',
@@ -418,6 +428,14 @@ export const selfTestReleaseSuccessorPostSuccessWorkflow = () => {
       source.replace(
         '--emergency-recovery-no-action-outcome .stage7/post-success/artifacts/stage7-recovery-probe/emergency-recovery-no-action-outcome.json',
         '--emergency-recovery-no-action-outcome .stage7/post-success/artifacts/stage7-rollback/emergency-recovery-no-action-outcome.json',
+      ),
+    ),
+  );
+  assert.throws(() =>
+    validateReleaseSuccessorPostSuccessWorkflow(
+      source.replace(
+        '--pending-egress-closeout .stage7/post-success/artifacts/stage7-rollback/rollback-pending-egress-closeout.json',
+        '--pending-egress-closeout .stage7/post-success/artifacts/stage7-rollback/rollback-pending-producer.json',
       ),
     ),
   );

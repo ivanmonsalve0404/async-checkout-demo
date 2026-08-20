@@ -30,6 +30,8 @@ import {
   readCloudFrontSignedCookieFile,
 } from './cloudfront-access.mjs';
 import {
+  CLOUDFRONT_KEY_GROUP_ID,
+  CLOUDFRONT_PUBLIC_KEY_ID,
   assessStage6Manifest,
   createStage7PreviousReleaseManifest,
   currentCandidate,
@@ -39,6 +41,7 @@ import {
   STAGE7_ARTIFACTS,
   STAGE7_AUDITS,
   STAGE7_EVIDENCE,
+  STAGE7_PROVIDER_EGRESS_CAPABILITY,
   validateFreezeManifest,
   validateStage7PreviousReleaseManifest,
   validateStage7PreviousReleaseHandoff,
@@ -424,8 +427,8 @@ export const validateBaselineConfig = (value, { now = new Date(), phase = 'ACTIV
       'rotationDuringWindow',
     ]) ||
     access.mode !== 'CLOUDFRONT_SIGNED_COOKIE' ||
-    !/^[A-Z0-9]{8,64}$/u.test(access.keyGroupId ?? '') ||
-    !/^[A-Z0-9]{8,64}$/u.test(access.publicKeyId ?? '') ||
+    !CLOUDFRONT_KEY_GROUP_ID.test(access.keyGroupId ?? '') ||
+    !CLOUDFRONT_PUBLIC_KEY_ID.test(access.publicKeyId ?? '') ||
     !SECRET_VERSION_ID.test(access.originTokenSecretVersionId ?? '') ||
     access.rotationDuringWindow !== 'FORBIDDEN' ||
     originSecret?.[1] !== aws.region ||
@@ -1594,6 +1597,7 @@ export const bindBaselineForTarget = ({
         capture.compatibility.pendingReconciliationEvidenceSha256,
       smokeEvidenceSha256: capture.compatibility.smokeEvidenceSha256,
       smokeVerifiedAtUtc: capture.compatibility.smokeVerifiedAtUtc,
+      providerEgressCapability: STAGE7_PROVIDER_EGRESS_CAPABILITY,
     },
     handoff: {
       sourceKind: 'BASELINE_BOOTSTRAP',
@@ -4512,7 +4516,7 @@ export const createBaselineConfigSelfTestFixture = () => ({
   },
   prereleaseAccess: {
     mode: 'CLOUDFRONT_SIGNED_COOKIE',
-    keyGroupId: 'K2STAGE7CHECKOUT',
+    keyGroupId: 'c2f83d9a-4f1e-4d7a-8b21-6c9d3e5f7a10',
     publicKeyId: 'K2STAGE7PUBLIC',
     originTokenSecretArn: baselineSecretReference(),
     originTokenSecretVersionId: baselineSecretVersionId(),
@@ -4899,6 +4903,21 @@ export const selfTestBaselineEstablishment = () => {
           { ...tampered, preflightSha256: objectSha256(tampered) },
           { config, freeze },
         ),
+      Stage7BaselineError,
+    );
+  }
+  for (const prereleaseAccess of [
+    {
+      ...config.prereleaseAccess,
+      keyGroupId: config.prereleaseAccess.publicKeyId,
+    },
+    {
+      ...config.prereleaseAccess,
+      publicKeyId: config.prereleaseAccess.keyGroupId,
+    },
+  ]) {
+    assert.throws(
+      () => validateBaselineConfig({ ...config, prereleaseAccess }, { now }),
       Stage7BaselineError,
     );
   }
@@ -5570,7 +5589,7 @@ export const selfTestBaselineEstablishment = () => {
     }
     selfTestResult = {
       status: 'PASS',
-      assertions: 38,
+      assertions: 40,
       focalTests: 119,
       externalRequests: 0,
       mutationsPerformed: 0,

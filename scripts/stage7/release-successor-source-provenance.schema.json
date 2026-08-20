@@ -82,20 +82,20 @@
     "finalDisableEvidenceSha256": { "$ref": "#/$defs/sha256" },
     "files": {
       "type": "array",
-      "minItems": 55,
-      "maxItems": 55,
+      "minItems": 56,
+      "maxItems": 56,
       "items": { "$ref": "#/$defs/rawFile" }
     },
     "canonicalSha256ByPath": {
       "type": "object",
-      "minProperties": 54,
-      "maxProperties": 54,
+      "minProperties": 55,
+      "maxProperties": 55,
       "additionalProperties": { "$ref": "#/$defs/sha256" }
     },
     "artifactOriginsByPath": {
       "type": "object",
-      "minProperties": 55,
-      "maxProperties": 55,
+      "minProperties": 56,
+      "maxProperties": 56,
       "additionalProperties": { "type": "string", "minLength": 1 }
     },
     "bundleSha256": { "$ref": "#/$defs/sha256" },

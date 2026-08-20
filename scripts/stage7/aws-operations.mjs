@@ -31,6 +31,7 @@ import {
 import { parseStrictJsonSource } from '../stage6/strict-json.mjs';
 import {
   Stage7Error,
+  STAGE7_PROVIDER_EGRESS_CAPABILITY,
   createStage7CandidateRollbackRecord,
   createStage7PreviousReleaseManifest,
   createStage7VersionedRollbackPlan,
@@ -530,6 +531,11 @@ const releaseSuccessorRollbackPremutationPreparationSources = ({ flags }) => {
         flags,
         'pending-producer',
         'E7_RELEASE_SUCCESSOR_GUARD_PENDING_SOURCE_INVALID',
+      ),
+      pendingEgressCloseoutSource: readReleaseSuccessorGuardSource(
+        flags,
+        'pending-egress-closeout',
+        'E7_RELEASE_SUCCESSOR_GUARD_PENDING_EGRESS_CLOSEOUT_SOURCE_INVALID',
       ),
       rollbackSmokeSource: readReleaseSuccessorGuardSource(
         flags,
@@ -3989,6 +3995,7 @@ const terminalPendingFacts = (context, tableName, tracked) => {
   let orphaned = 0;
   let duplicateEffects = 0;
   let lostFacts = 0;
+  const terminalStatusCounts = { APPROVED: 0, DECLINED: 0, VOIDED: 0, ERROR: 0 };
   const correlation = [];
   for (const { PK, SK } of tracked) {
     const payment = getDynamoItem(context, tableName, PK, SK);
@@ -4024,6 +4031,7 @@ const terminalPendingFacts = (context, tableName, tracked) => {
     );
     const terminal = ['APPROVED', 'DECLINED', 'VOIDED', 'ERROR'].includes(status);
     const approved = status === 'APPROVED';
+    if (terminal) terminalStatusCounts[status] += 1;
     if (
       !terminal ||
       integrityStatus !== 'OK' ||
@@ -4067,6 +4075,7 @@ const terminalPendingFacts = (context, tableName, tracked) => {
     orphaned,
     duplicateEffects,
     lostFacts,
+    terminalStatusCounts,
     correlationEvidenceSha256: objectSha256(correlation),
   };
 };
@@ -4101,6 +4110,7 @@ const verifyPendingIntegrityAws = async (
     orphaned: terminal.orphaned,
     duplicateEffects: terminal.duplicateEffects,
     lostFacts: terminal.lostFacts,
+    terminalStatusCounts: terminal.terminalStatusCounts,
   };
   if (terminal.orphaned !== 0 || terminal.duplicateEffects !== 0 || terminal.lostFacts !== 0) {
     fail('E7_ROLLBACK_PENDING_INTEGRITY_FAILED');
@@ -8172,7 +8182,7 @@ const selfTestConfig = (now) => {
       },
       prereleaseAccess: {
         mode: 'CLOUDFRONT_SIGNED_COOKIE',
-        keyGroupId: 'K2STAGE7KEYGROUP',
+        keyGroupId: 'c2f83d9a-4f1e-4d7a-8b21-6c9d3e5f7a10',
         publicKeyId: 'K2STAGE7CHECKOUT',
         originTokenSecretArn: [
           'arn',
@@ -8320,6 +8330,7 @@ const selfTestVersionedRollbackAwsLayer = async () => {
       pendingReconciliationEvidenceSha256: 'a'.repeat(64),
       smokeEvidenceSha256: 'b'.repeat(64),
       smokeVerifiedAtUtc: '2026-08-17T10:15:00.000Z',
+      providerEgressCapability: STAGE7_PROVIDER_EGRESS_CAPABILITY,
     },
     handoff: {
       sourceKind: 'BASELINE_BOOTSTRAP',
@@ -9975,7 +9986,7 @@ export const selfTestAwsOperations = async () => {
           'AUTH-E6-02',
           'AUTHORIZED_PROVIDER_SANDBOX_SMOKE',
           sha256('sandbox.wompi.co'),
-          7,
+          8,
         ),
         passiveSecurity: authorization(
           'AUTH-E6-03',
@@ -10095,7 +10106,7 @@ export const selfTestAwsOperations = async () => {
           'AUTH-E7-EXT-02',
           'AUTHORIZED_PROVIDER_SANDBOX_SMOKE',
           sha256('sandbox.wompi.co'),
-          7,
+          64,
         ),
         passiveSecurity: authorization(
           'AUTH-E7-EXT-03',

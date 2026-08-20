@@ -202,6 +202,22 @@ export const validateBaselineWorkflow = (name, input) => {
   ) {
     fail('establish must be protected, seed while disabled, smoke restricted, and always disable');
   }
+  if (
+    ![
+      'STAGE7_BASELINE_SIGNED_COOKIE_B64',
+      'STAGE7_BASELINE_EXPIRED_SIGNED_COOKIE_B64',
+      'printf \'%s\' "${VALID_COOKIE_B64}" > .stage7/access/valid-cookie.b64',
+      'printf \'%s\' "${EXPIRED_COOKIE_B64}" > .stage7/access/expired-cookie.b64',
+      'chmod 600 .stage7/access/valid-cookie.b64 .stage7/access/expired-cookie.b64',
+      '--valid-cookie .stage7/access/valid-cookie.b64',
+      '--expired-cookie .stage7/access/expired-cookie.b64',
+      'rm -f .stage7/access/valid-cookie.b64 .stage7/access/expired-cookie.b64',
+    ].every((fragment) => establish.includes(fragment)) ||
+    /(?:VALID|EXPIRED)_COOKIE_B64[^\n]*\|\s*base64\s+--decode/iu.test(establish) ||
+    /(?:echo|tee|set\s+-x)[^\n]*(?:VALID|EXPIRED)_COOKIE_B64/iu.test(establish)
+  ) {
+    fail('establish signed-cookie secrets must use one opaque base64 layer without disclosure');
+  }
   if (!uploadIsProtected(establish, 'stage7-baseline-capture-chain')) {
     fail('hidden capture-chain upload requires an exact pre-upload scan and include-hidden-files');
   }
@@ -269,6 +285,11 @@ export const selfTestBaselineWorkflow = (source) => {
       'Stage 6 GitHub provenance',
     ],
     ['release:baseline -- seed', 'release:baseline -- ignored-seed', 'seed while disabled'],
+    [
+      'printf \'%s\' "${VALID_COOKIE_B64}" > .stage7/access/valid-cookie.b64',
+      'printf \'%s\' "${VALID_COOKIE_B64}" | base64 --decode > .stage7/access/valid-cookie.b64',
+      'one opaque base64 layer',
+    ],
     [
       'environment: assessment-release-recovery',
       'environment: assessment-release-baseline',

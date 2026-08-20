@@ -42,6 +42,7 @@ import { FakeReconciliationRunner } from './infrastructure/payment/fake-reconcil
 import { SandboxMerchantContractAdapter } from './infrastructure/payment/sandbox-merchant-contract.adapter';
 import { SandboxPaymentProvider } from './infrastructure/payment/sandbox-payment-provider';
 import {
+  createSandboxAcceptanceReader,
   createSandboxTransport,
   loadSandboxRuntimeConfiguration,
   SANDBOX_RUNTIME_CONFIGURATION,
@@ -77,13 +78,22 @@ const createPaymentProvider = (
   observability: ObservabilityPort,
   secrets: RuntimeSecrets,
   sandboxConfiguration: SandboxRuntimeConfiguration | undefined,
+  logger: SafeLogger,
 ): PaymentProvider => {
-  const sandboxTransport = createSandboxTransport(config, secrets);
+  const sandboxTransport = createSandboxTransport(
+    config,
+    secrets,
+    globalThis.fetch,
+    () => new Date(),
+    ({ eventName, ...fields }) => logger.info(eventName, fields),
+  );
+  const acceptanceReader = createSandboxAcceptanceReader(config, secrets, sandboxTransport);
   const provider =
     config.paymentAdapter === 'sandbox'
       ? config.paymentsEnabled &&
         secrets.sandbox !== undefined &&
         sandboxTransport !== undefined &&
+        acceptanceReader !== undefined &&
         sandboxConfiguration !== undefined
         ? (() => {
             const { publicKey, privateKey, integritySecret } = secrets.sandbox;
@@ -96,7 +106,9 @@ const createPaymentProvider = (
                 ? {}
                 : { authorizedUntilUtc: config.sandboxAuthorizedUntilUtc }),
               transport: sandboxTransport,
-              providerAcceptances: sandboxConfiguration.providerAcceptances,
+              acceptanceReader,
+              expectedContracts: sandboxConfiguration.contracts,
+              quoteTtlSeconds: config.quoteTtlSeconds,
             });
           })()
         : new SandboxPaymentProvider({ enabled: false })
@@ -194,7 +206,13 @@ export const selectReconciliationBackoffPolicy = (
     },
     {
       provide: PAYMENT_PROVIDER,
-      inject: [APP_CONFIG, OBSERVABILITY, RUNTIME_SECRETS, SANDBOX_RUNTIME_CONFIGURATION],
+      inject: [
+        APP_CONFIG,
+        OBSERVABILITY,
+        RUNTIME_SECRETS,
+        SANDBOX_RUNTIME_CONFIGURATION,
+        SafeLogger,
+      ],
       useFactory: createPaymentProvider,
     },
     {

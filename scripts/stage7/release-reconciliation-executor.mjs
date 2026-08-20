@@ -704,6 +704,7 @@ const observedStateProjection = (transition, source) => {
       'orphaned',
       'duplicateEffects',
       'lostFacts',
+      'terminalStatusCounts',
     ]) &&
     pending.status === 'PASS' &&
     [
@@ -717,7 +718,13 @@ const observedStateProjection = (transition, source) => {
     pending.trackedBefore === pending.stillPending + pending.reconciled &&
     pending.orphaned === 0 &&
     pending.duplicateEffects === 0 &&
-    pending.lostFacts === 0;
+    pending.lostFacts === 0 &&
+    exactKeys(pending.terminalStatusCounts, ['APPROVED', 'DECLINED', 'VOIDED', 'ERROR']) &&
+    Object.values(pending.terminalStatusCounts).every(
+      (value) => Number.isSafeInteger(value) && value >= 0,
+    ) &&
+    Object.values(pending.terminalStatusCounts).reduce((total, value) => total + value, 0) ===
+      pending.reconciled;
   if (
     !exactKeys(transition, [
       'schemaVersion',

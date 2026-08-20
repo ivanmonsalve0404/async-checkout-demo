@@ -369,7 +369,7 @@ const requestDocument = (context, now) => {
       rerunExplicitlyRequested: context.runAttempt > 1,
       rerunOfAttempt: context.runAttempt > 1 ? context.runAttempt - 1 : 0,
     },
-    limits: { externalRequests: 7, tokenizations: 1, transactions: 1 },
+    limits: { externalRequests: 8, tokenizations: 1, transactions: 1 },
     requestedAtUtc,
     expiresAtUtc: new Date(now.getTime() + MAX_REQUEST_WINDOW_MS).toISOString(),
     requestId: '0'.repeat(64),
@@ -424,7 +424,7 @@ export const validateSandboxExecutionRequest = ({
     request.execution.releaseId !== context.releaseId ||
     request.execution.releaseTag !== context.releaseTag ||
     request.execution.configSha256 !== context.configSha256 ||
-    request.limits.externalRequests !== 7 ||
+    request.limits.externalRequests !== 8 ||
     request.limits.tokenizations !== 1 ||
     request.limits.transactions !== 1 ||
     request.containsSensitiveData !== false ||
@@ -611,7 +611,7 @@ export const approveSandboxExecutionRequest = async ({
       stage7BundleSourceSha256: sha256(sources.stage7Source),
       providerHostSha256: sha256(PROVIDER_HOST),
     },
-    limits: { externalRequests: 7, tokenizations: 1, transactions: 1 },
+    limits: { externalRequests: 8, tokenizations: 1, transactions: 1 },
     approvedAtUtc: current.toISOString(),
     expiresAtUtc: new Date(expiresAt).toISOString(),
     ownerAlias: stage7Authorization?.ownerAlias,
@@ -808,10 +808,10 @@ export const validateSandboxExecutionClaim = ({
     claim.approvalEvidence?.externalRequests !== 1 ||
     claim.executionApprovalSha256 === expectedApprovalSha256 ||
     !Number.isSafeInteger(stage6Authorization?.maxRequests) ||
-    stage6Authorization.maxRequests < 7 ||
+    stage6Authorization.maxRequests < 8 ||
     !Number.isSafeInteger(stage7Authorization?.maxRequests) ||
-    stage7Authorization.maxRequests < 7 ||
-    claim.limits.externalRequests !== 7 ||
+    stage7Authorization.maxRequests < 8 ||
+    claim.limits.externalRequests !== 8 ||
     claim.limits.tokenizations !== 1 ||
     claim.limits.transactions !== 1 ||
     claim.containsSensitiveData !== false
@@ -1045,7 +1045,7 @@ export const sanitizedSandboxExecutionBinding = (validated) => ({
   approvalResponseSha256: validated.claim.approvalEvidence.responseSha256,
   approvedByAlias: validated.claim.approvedByAlias,
   referenceSha256: validated.referenceSha256,
-  maximumExternalRequests: 7,
+  maximumExternalRequests: 8,
   maximumTokenizations: 1,
   maximumTransactions: 1,
   localAtomicConsumption: true,
@@ -1078,7 +1078,7 @@ export const validateSandboxExecutionEvidence = (value, expected) => {
     !SHA256.test(value.approvalResponseSha256 ?? '') ||
     !REVIEWER_ALIAS.test(value.approvedByAlias ?? '') ||
     value.referenceSha256 !== expected.referenceSha256 ||
-    value.maximumExternalRequests !== 7 ||
+    value.maximumExternalRequests !== 8 ||
     value.maximumTokenizations !== 1 ||
     value.maximumTransactions !== 1 ||
     value.localAtomicConsumption !== true ||
@@ -1102,7 +1102,7 @@ const fixtureAuthorizationSources = (scope, overrides = {}) => {
     approvalSha256,
     approvedTargetSha256: providerHostSha256,
     ownerAlias,
-    maxRequests: overrides.maxRequests ?? 7,
+    maxRequests: overrides.maxRequests ?? 8,
     approvedAtUtc: '2026-08-18T11:00:00.000Z',
     expiresAtUtc: overrides.expiresAtUtc ?? '2026-08-18T12:30:00.000Z',
   };
@@ -1206,7 +1206,7 @@ const fixtureClaim = ({ environment, sources, scope = 'full', attempt = 1 }) => 
       stage7BundleSourceSha256: sha256(sources.stage7),
       providerHostSha256: sha256(PROVIDER_HOST),
     },
-    limits: { externalRequests: 7, tokenizations: 1, transactions: 1 },
+    limits: { externalRequests: 8, tokenizations: 1, transactions: 1 },
     approvedAtUtc: '2026-08-18T11:50:00.000Z',
     expiresAtUtc: '2026-08-18T12:20:00.000Z',
     ownerAlias: sources.ownerAlias,
@@ -1462,7 +1462,7 @@ export const selfTestSandboxExecutionClaim = async () => {
     const limitedDirectory = mkdtempSync(path.join(tmpdir(), 'stage7-sandbox-limited-'));
     const limited = fixtureEnvironment({
       directory: limitedDirectory,
-      authorizationOverrides: { maxRequests: 6 },
+      authorizationOverrides: { maxRequests: 7 },
     });
     expectPreCredentialRejection({
       fixtureValue: limited,

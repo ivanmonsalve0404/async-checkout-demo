@@ -11,12 +11,18 @@ import {
   readCloudFrontSignedCookieFile,
   selfTestCloudFrontAccess,
 } from './cloudfront-access.mjs';
+import {
+  providerEgressCorrelationSetSha256,
+  providerEgressCorrelationSha256,
+} from './provider-egress-evidence.mjs';
 
 const SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const OPAQUE_ID = /^[A-Za-z0-9_-]{8,128}$/u;
 const PRODUCT_ID = 'product-demo-001';
 const SANDBOX_ORIGIN = 'https://sandbox.wompi.co';
+const CANONICAL_BROWSER_PROVIDER_REQUESTS = 8;
+const ROLLBACK_PENDING_BROWSER_PROVIDER_REQUESTS = 2;
 const CAPABILITY_COOKIE_NAME = '__Secure-checkout_cap';
 const CAPABILITY_COOKIE_PATH = '/api/v1';
 const CAPABILITY_COOKIE_MAX_AGE_SECONDS = 86_400;
@@ -51,6 +57,15 @@ export class Stage7SmokeError extends Error {
 
 const fail = (code) => {
   throw new Stage7SmokeError(code);
+};
+const allowedBrowserProviderRequest = (request) => {
+  const url = new URL(request.url());
+  return (
+    (request.method() === 'GET' &&
+      url.pathname === '/v1/tokens/keys/tokenization' &&
+      url.search === '') ||
+    (request.method() === 'POST' && url.pathname === '/v1/tokens/cards' && url.search === '')
+  );
 };
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -548,6 +563,7 @@ export const prepareVersionedRollbackPendingCanary = async ({
   expectedPublicKeyId,
   maxCookieExpiresAtUtc,
 }) => {
+  const providerObservationStartedAtUtc = new Date().toISOString();
   const origin = safeOrigin(requestedOrigin);
   if (
     !SHA.test(candidateSha ?? '') ||
@@ -597,6 +613,11 @@ export const prepareVersionedRollbackPendingCanary = async ({
         requests.ownedOrigin += 1;
         if (!['GET', 'HEAD', 'OPTIONS'].includes(route.request().method())) requests.mutations += 1;
       } else if (requestOrigin === SANDBOX_ORIGIN) {
+        if (!allowedBrowserProviderRequest(route.request())) {
+          requests.outsideAllowlist += 1;
+          await route.abort('blockedbyclient');
+          return;
+        }
         requests.sandbox += 1;
       } else {
         requests.outsideAllowlist += 1;
@@ -625,6 +646,7 @@ export const prepareVersionedRollbackPendingCanary = async ({
       observed.status !== 200 ||
       observed.body?.paymentStatus !== 'PENDING' ||
       requests.outsideAllowlist !== 0 ||
+      requests.sandbox !== ROLLBACK_PENDING_BROWSER_PROVIDER_REQUESTS ||
       requests.ownedOrigin > authorization.ownedTarget.maxRequests ||
       requests.sandbox > authorization.sandboxSmoke.maxRequests
     ) {
@@ -641,6 +663,13 @@ export const prepareVersionedRollbackPendingCanary = async ({
       targetOriginSha256: sha256(origin),
       transactionCorrelationSha256: sha256(accepted.transactionId),
       checkoutCorrelationSha256: sha256(progress.checkoutId),
+      providerEgress: {
+        observationStartedAtUtc: providerObservationStartedAtUtc,
+        correlationSha256: providerEgressCorrelationSha256(`reference_${accepted.transactionId}`),
+        correlationSetSha256: providerEgressCorrelationSetSha256([
+          providerEgressCorrelationSha256(`reference_${accepted.transactionId}`),
+        ]),
+      },
       observedAtUtc: new Date().toISOString(),
       requests,
       syntheticOnly: true,
@@ -669,6 +698,7 @@ export const runCanonicalStage7Smoke = async ({
   maxCookieExpiresAtUtc,
   beforeRequest,
 }) => {
+  const providerObservationStartedAtUtc = new Date().toISOString();
   const origin = safeOrigin(requestedOrigin);
   if (
     !SHA.test(candidateSha ?? '') ||
@@ -706,6 +736,7 @@ export const runCanonicalStage7Smoke = async ({
   const requests = { ownedOrigin: 0, sandbox: 0, outsideAllowlist: 0, mutations: 0 };
   const critical = { console: 0, page: 0, network: 0 };
   let requestBudgetError;
+  const providerEgressCorrelations = [];
   try {
     context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
@@ -736,6 +767,11 @@ export const runCanonicalStage7Smoke = async ({
           requests.mutations += 1;
         }
       } else if (requestOrigin === SANDBOX_ORIGIN) {
+        if (!allowedBrowserProviderRequest(route.request())) {
+          requests.outsideAllowlist += 1;
+          await route.abort('blockedbyclient');
+          return;
+        }
         try {
           beforeRequest?.('sandboxSmoke');
         } catch (error) {
@@ -929,6 +965,10 @@ export const runCanonicalStage7Smoke = async ({
       accepted.transactionId,
       (transaction) => transaction?.paymentStatus === 'APPROVED',
     );
+    providerEgressCorrelations.push({
+      correlationSha256: providerEgressCorrelationSha256(`reference_${accepted.transactionId}`),
+      requiresStatusRead: false,
+    });
     await page.getByTestId('transaction-approved').waitFor({ state: 'visible', timeout: 15_000 });
     mark(
       'SMK-E7-10',
@@ -976,6 +1016,12 @@ export const runCanonicalStage7Smoke = async ({
       failedProgress.transactionId,
       (transaction) => transaction?.paymentStatus === inputs.cards.failed.expectedStatus,
     );
+    providerEgressCorrelations.push({
+      correlationSha256: providerEgressCorrelationSha256(
+        `reference_${failedProgress.transactionId}`,
+      ),
+      requiresStatusRead: false,
+    });
     const stockAfterFailure = await pageJson(page, `/api/v1/stock/${PRODUCT_ID}`);
     mark(
       'SMK-E7-12',
@@ -1051,6 +1097,12 @@ export const runCanonicalStage7Smoke = async ({
       pendingAccepted.transactionId,
       (transaction) => transaction?.paymentStatus === inputs.cards.pending.expectedStatus,
     );
+    providerEgressCorrelations.push({
+      correlationSha256: providerEgressCorrelationSha256(
+        `reference_${pendingAccepted.transactionId}`,
+      ),
+      requiresStatusRead: true,
+    });
     const stockAfterPending = await pageJson(page, `/api/v1/stock/${PRODUCT_ID}`);
     if (
       pendingFinal.reservationStatus !== 'RELEASED' ||
@@ -1102,6 +1154,7 @@ export const runCanonicalStage7Smoke = async ({
       critical.console !== 0 ||
       critical.page !== 0 ||
       critical.network !== 0 ||
+      requests.sandbox !== CANONICAL_BROWSER_PROVIDER_REQUESTS ||
       requests.ownedOrigin > authorization.ownedTarget.maxRequests ||
       requests.sandbox > authorization.sandboxSmoke.maxRequests
     ) {
@@ -1122,6 +1175,14 @@ export const runCanonicalStage7Smoke = async ({
         },
         capabilityCookie,
         browser: { name: 'chromium', viewport: '1280x800' },
+        providerEgressExpectation: {
+          observationStartedAtUtc: providerObservationStartedAtUtc,
+          observationEndedAtUtc: new Date().toISOString(),
+          correlations: providerEgressCorrelations,
+          correlationSetSha256: providerEgressCorrelationSetSha256(
+            providerEgressCorrelations.map(({ correlationSha256 }) => correlationSha256),
+          ),
+        },
       },
       signedCookies,
     );

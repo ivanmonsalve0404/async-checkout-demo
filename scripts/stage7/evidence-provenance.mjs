@@ -101,6 +101,7 @@ export const STAGE7_SOURCE_PRODUCERS = Object.freeze({
     ),
     'rollback-smoke-input-preflight.json': producer('stage7-rollback', 'rollback-check'),
     'rollback-pending-producer.json': producer('stage7-rollback', 'rollback-check'),
+    'rollback-pending-egress-closeout.json': producer('stage7-rollback', 'rollback-check'),
     'versioned-rollback-aws-transition.json': producer('stage7-rollback', 'rollback-check'),
     'versioned-rollback-smoke.json': producer('stage7-rollback', 'rollback-check'),
     'versioned-rollback-checkpoint.json': producer('stage7-rollback', 'rollback-check'),
@@ -322,6 +323,7 @@ export const STAGE7_EVIDENCE_SOURCE_REQUIREMENTS = Object.freeze({
       'emergency-recovery-no-action-outcome.json',
       'versioned-rollback-aws-transition.json',
       'versioned-rollback-checkpoint.json',
+      'rollback-pending-egress-closeout.json',
       'previous-release-readiness.json',
       'previous-release-manifest.json',
       'previous-api-contract-evidence.json',
@@ -347,6 +349,7 @@ export const STAGE7_EVIDENCE_SOURCE_REQUIREMENTS = Object.freeze({
       'emergency-recovery-no-action-outcome.json',
       'rollback-smoke-input-preflight.json',
       'rollback-pending-producer.json',
+      'rollback-pending-egress-closeout.json',
       'versioned-rollback-aws-transition.json',
       'versioned-rollback-smoke.json',
       'versioned-rollback-checkpoint.json',
@@ -376,6 +379,7 @@ export const STAGE7_EVIDENCE_SOURCE_REQUIREMENTS = Object.freeze({
       'versioned-repromotion-aws-transition.json',
       'versioned-repromotion-smoke.json',
       'versioned-repromotion-checkpoint.json',
+      'rollback-pending-egress-closeout.json',
       'drift.json',
       'previous-release-readiness.json',
       'previous-release-manifest.json',
@@ -785,6 +789,7 @@ export const STAGE7_LEDGER_SOURCE_BINDING_SPECS = Object.freeze(
     ],
     ['activation', 'activation.json'],
     ['drift', 'drift.json'],
+    ['rollbackPendingEgressCloseout', 'rollback-pending-egress-closeout.json'],
     ['rollbackResilienceSourceBinding', 'stage7-rollback-resilience-source-binding.json'],
     ['rollbackResilienceProtectedRun', 'stage7-rollback-resilience-protected-run.json'],
     ['rollbackResilienceCompletion', 'stage7-rollback-resilience-complete.json'],
@@ -3446,7 +3451,7 @@ export const validateStage7FinalManifest = (
 export const selfTestStage7Provenance = () => {
   assert.equal(STAGE7_FULL_SOURCE_ARTIFACT_NAMES.length, 29);
   assert.equal(STAGE7_PRERELEASE_SOURCE_ARTIFACT_NAMES.length, 14);
-  assert.equal(STAGE7_LEDGER_SOURCE_BINDING_SPECS.length, 26);
+  assert.equal(STAGE7_LEDGER_SOURCE_BINDING_SPECS.length, 27);
   assert.deepEqual(STAGE7_FULL_SOURCE_ARTIFACT_NAMES, [
     'stage7-activation',
     'stage7-api',

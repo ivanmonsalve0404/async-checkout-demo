@@ -8,7 +8,7 @@ import { parseStrictJsonSource, validateJsonSchemaSubset } from '../strict-json.
 
 export const SANDBOX_ORIGIN = 'https://sandbox.wompi.co';
 export const SANDBOX_HOST = 'sandbox.wompi.co';
-export const EXPECTED_EXTERNAL_REQUESTS = 7;
+export const EXPECTED_EXTERNAL_REQUESTS = 8;
 
 const RUN_ID = /^e6-[0-9]{8}t[0-9]{6}z-[0-9a-f]{8}$/u;
 const COMMIT_SHA = /^[0-9a-f]{40}$/u;
@@ -211,7 +211,7 @@ export const selfTestAuthorizationPolicy = (schemaPath) => {
       approvedAtUtc: '2026-08-16T11:00:00.123Z',
       expiresAtUtc: '2026-08-16T13:00:00.123Z',
       ownerAlias: 'appsec-owner',
-      maxRequests: 7,
+      maxRequests: 8,
     },
     target: {
       classification: 'AUTHORIZED_PROVIDER_SANDBOX',

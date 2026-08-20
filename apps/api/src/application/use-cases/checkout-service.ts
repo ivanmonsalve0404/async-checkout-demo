@@ -501,7 +501,10 @@ export class CheckoutService {
 
       providerReads += 1;
       const providerReadStartedAt = this.runtime.now().getTime();
-      const observation = await this.paymentProvider.getById(transaction.providerId);
+      const observation = await this.paymentProvider.getById(
+        transaction.providerId,
+        transaction.providerReference,
+      );
       this.observeDuration('provider_query_latency_ms', providerReadStartedAt);
       if (!observation.ok) {
         const checkedAt = this.runtime.now();

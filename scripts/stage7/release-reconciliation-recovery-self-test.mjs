@@ -773,6 +773,7 @@ const transition = () => {
       orphaned: 0,
       duplicateEffects: 0,
       lostFacts: 0,
+      terminalStatusCounts: { APPROVED: 0, DECLINED: 0, VOIDED: 0, ERROR: 0 },
     },
     dataFactsSha256: 'b'.repeat(64),
     dataFactsChanged: false,

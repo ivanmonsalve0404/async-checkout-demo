@@ -3,6 +3,8 @@ import {
   redactSandboxDiagnostic,
   SandboxPaymentProvider,
   signSandboxIntegrity,
+  type SandboxAcceptanceReader,
+  type SandboxProviderAcceptanceSnapshot,
   type SandboxTransport,
   type SandboxTransportResponse,
 } from './sandbox-payment-provider';
@@ -30,16 +32,59 @@ const observation = {
   },
 };
 
-const enabled = (transport: SandboxTransport): SandboxPaymentProvider =>
+const acceptanceJwt = (payload: Readonly<Record<string, unknown>>): string =>
+  [
+    Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
+    Buffer.from(JSON.stringify(payload)).toString('base64url'),
+    Buffer.from('synthetic-signature').toString('base64url'),
+  ].join('.');
+
+const acceptanceJwtFromSources = (header: string, payload: string): string =>
+  [
+    Buffer.from(header).toString('base64url'),
+    Buffer.from(payload).toString('base64url'),
+    Buffer.from('synthetic-signature').toString('base64url'),
+  ].join('.');
+
+const termsProviderAcceptance = acceptanceJwt({ contract_id: 'terms' });
+const personalProviderAcceptance = acceptanceJwt({ contract_id: 'personal-data' });
+
+const expectedContracts = [
+  {
+    type: 'TERMS',
+    permalink: 'https://comercios.wompi.co/terminos/synthetic',
+    version: 'provider-terms-v1',
+  },
+  {
+    type: 'PERSONAL_DATA',
+    permalink: 'https://wompi.com/datos/synthetic',
+    version: 'provider-personal-v1',
+  },
+] as const;
+
+const acceptanceSnapshot = (
+  overrides: Partial<SandboxProviderAcceptanceSnapshot> = {},
+): SandboxProviderAcceptanceSnapshot => ({
+  contracts: expectedContracts,
+  providerAcceptances: {
+    terms: termsProviderAcceptance,
+    personalData: personalProviderAcceptance,
+  },
+  ...overrides,
+});
+
+const enabled = (
+  transport: SandboxTransport,
+  acceptanceReader: SandboxAcceptanceReader = () => Promise.resolve(acceptanceSnapshot()),
+): SandboxPaymentProvider =>
   new SandboxPaymentProvider({
     enabled: true,
     publicKey: 'pub_test_not-a-real',
     privateKey: 'prv_test_not-a-real',
     integritySecret: 'integrity-secret',
-    providerAcceptances: {
-      terms: 'provider-terms-synthetic',
-      personalData: 'provider-personal-synthetic',
-    },
+    acceptanceReader,
+    expectedContracts,
+    quoteTtlSeconds: 900,
     authorizedUntilUtc: '2099-01-01T00:00:00.000Z',
     transport,
     timeoutMs: 1234,
@@ -82,10 +127,9 @@ describe('SandboxPaymentProvider pure adapter', () => {
       publicKey: 'pub_test_not-a-real',
       privateKey: 'prv_test_not-a-real',
       integritySecret: 'integrity-secret',
-      providerAcceptances: {
-        terms: 'provider-terms-synthetic',
-        personalData: 'provider-personal-synthetic',
-      },
+      acceptanceReader: () => Promise.resolve(acceptanceSnapshot()),
+      expectedContracts,
+      quoteTtlSeconds: 900,
       authorizedUntilUtc: '2026-08-17T12:00:00.000Z',
       now: () => new Date('2026-08-17T12:00:00.000Z'),
       transport,
@@ -102,10 +146,9 @@ describe('SandboxPaymentProvider pure adapter', () => {
       publicKey: 'pub_test_not-a-real',
       privateKey: 'prv_test_not-a-real',
       integritySecret: 'integrity-secret',
-      providerAcceptances: {
-        terms: 'provider-terms-synthetic',
-        personalData: 'provider-personal-synthetic',
-      },
+      acceptanceReader: () => Promise.resolve(acceptanceSnapshot()),
+      expectedContracts,
+      quoteTtlSeconds: 900,
       authorizedUntilUtc: '2099-02-31T00:00:00.000Z',
       transport,
     });
@@ -114,6 +157,96 @@ describe('SandboxPaymentProvider pure adapter', () => {
     });
     expect(transport).not.toHaveBeenCalled();
   });
+
+  it('returns PROVEN_NOT_SENT and never POSTs an expired dynamic acceptance token', async () => {
+    const transport = transportMock();
+    let currentTime = new Date('2026-08-19T12:00:00.000Z');
+    const expiration = currentTime.getTime() / 1_000 + 60;
+    const provider = new SandboxPaymentProvider({
+      enabled: true,
+      publicKey: 'pub_test_not-a-real',
+      privateKey: 'prv_test_not-a-real',
+      integritySecret: 'integrity-secret',
+      acceptanceReader: () =>
+        Promise.resolve(
+          acceptanceSnapshot({
+            providerAcceptances: {
+              terms: acceptanceJwt({ exp: expiration }),
+              personalData: acceptanceJwt({ contract_id: 2 }),
+            },
+          }),
+        ),
+      expectedContracts,
+      quoteTtlSeconds: 30,
+      authorizedUntilUtc: '2099-01-01T00:00:00.000Z',
+      now: () => currentTime,
+      transport,
+    });
+    expect(provider.getPublicConfiguration()).toMatchObject({ value: { mode: 'sandbox' } });
+
+    currentTime = new Date(expiration * 1_000);
+    await expect(provider.createOnce(command)).resolves.toMatchObject({
+      value: { kind: 'PROVEN_NOT_SENT' },
+    });
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('returns PROVEN_NOT_SENT when the dynamic read fails or contracts changed', async () => {
+    const failedTransport = transportMock();
+    const failedRead = jest
+      .fn<ReturnType<SandboxAcceptanceReader>, []>()
+      .mockRejectedValue(new Error('synthetic provider configuration failure'));
+    await expect(enabled(failedTransport, failedRead).createOnce(command)).resolves.toMatchObject({
+      value: { kind: 'PROVEN_NOT_SENT' },
+    });
+    expect(failedRead).toHaveBeenCalledTimes(1);
+    expect(failedTransport).not.toHaveBeenCalled();
+
+    const changedTransport = transportMock();
+    const changedRead = jest.fn<ReturnType<SandboxAcceptanceReader>, []>().mockResolvedValue(
+      acceptanceSnapshot({
+        contracts: [
+          {
+            ...expectedContracts[0],
+            permalink: 'https://wompi.co/terminos/changed',
+            version: 'provider-terms-v2',
+          },
+          expectedContracts[1],
+        ],
+      }),
+    );
+    await expect(enabled(changedTransport, changedRead).createOnce(command)).resolves.toMatchObject(
+      { value: { kind: 'PROVEN_NOT_SENT' } },
+    );
+    expect(changedTransport).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'opaque-provider-token',
+    'one.two',
+    'one.two.three.four',
+    acceptanceJwtFromSources('not-json', '{"contract_id":1}'),
+    acceptanceJwtFromSources('[]', '{"contract_id":1}'),
+    acceptanceJwtFromSources('{"alg":"none","typ":"JWT"}', '{"contract_id":1}'),
+    acceptanceJwtFromSources('{"alg":"HS256","typ":"JWT"}', 'not-json'),
+    acceptanceJwtFromSources('{"alg":"HS256","typ":"JWT"}', '[]'),
+  ])(
+    'returns PROVEN_NOT_SENT and zero POST for a non-canonical dynamic token: %s',
+    async (token) => {
+      const transport = transportMock();
+      const provider = enabled(transport, () =>
+        Promise.resolve(
+          acceptanceSnapshot({
+            providerAcceptances: { terms: token, personalData: personalProviderAcceptance },
+          }),
+        ),
+      );
+      await expect(provider.createOnce(command)).resolves.toMatchObject({
+        value: { kind: 'PROVEN_NOT_SENT' },
+      });
+      expect(transport).not.toHaveBeenCalled();
+    },
+  );
 
   it('uses the canonical SHA-256 vector without separators or HMAC', () => {
     expect(signSandboxIntegrity('ref-001', 3_200_000, 'COP', 'integrity-secret')).toBe(
@@ -146,8 +279,8 @@ describe('SandboxPaymentProvider pure adapter', () => {
       },
       timeoutMs: 1234,
       body: {
-        acceptance_token: 'provider-terms-synthetic',
-        accept_personal_auth: 'provider-personal-synthetic',
+        acceptance_token: termsProviderAcceptance,
+        accept_personal_auth: personalProviderAcceptance,
         amount_in_cents: 3_200_000,
         currency: 'COP',
         customer_email: 'buyer@example.invalid',
@@ -155,13 +288,15 @@ describe('SandboxPaymentProvider pure adapter', () => {
         reference: 'ref-001',
         signature: '5cca8e9f4c84835d78932a70bab91f024cdc990eb5f9556f4d207a765752dd7e',
       },
+      correlationReference: command.reference,
     });
-    await expect(provider.getById('provider/001')).resolves.toMatchObject({
+    await expect(provider.getById('provider/001', command.reference)).resolves.toMatchObject({
       value: { providerId: 'provider-001', status: 'PENDING' },
     });
     expect(transport.mock.calls[1]?.[0]).toMatchObject({
       method: 'GET',
       resource: '/v1/transactions/provider%2F001',
+      correlationReference: command.reference,
       headers: { Authorization: 'Bearer pub_test_not-a-real' },
     });
   });
@@ -225,7 +360,7 @@ describe('SandboxPaymentProvider pure adapter', () => {
       { status: 200, contentType: 'application/json', body: {} },
     ] satisfies SandboxTransportResponse[]) {
       await expect(
-        enabled(transportMock().mockResolvedValue(response)).getById('id'),
+        enabled(transportMock().mockResolvedValue(response)).getById('id', command.reference),
       ).resolves.toMatchObject({
         error: {
           code: response.status === 429 ? 'PROVIDER_RATE_LIMITED' : expect.any(String),
@@ -233,12 +368,15 @@ describe('SandboxPaymentProvider pure adapter', () => {
       });
     }
     await expect(
-      enabled(transportMock().mockRejectedValue(new Error('timeout'))).getById('id'),
+      enabled(transportMock().mockRejectedValue(new Error('timeout'))).getById(
+        'id',
+        command.reference,
+      ),
     ).resolves.toMatchObject({ error: { code: 'PROVIDER_UNAVAILABLE' } });
     const aborted = new Error('request aborted');
     aborted.name = 'AbortError';
     await expect(
-      enabled(transportMock().mockRejectedValue(aborted)).getById('id'),
+      enabled(transportMock().mockRejectedValue(aborted)).getById('id', command.reference),
     ).resolves.toMatchObject({ error: { code: 'PROVIDER_TIMEOUT' } });
   });
 

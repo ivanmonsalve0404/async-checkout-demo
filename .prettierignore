@@ -7,3 +7,4 @@ test-results
 pnpm-lock.yaml
 output
 packages/contracts/src/generated
+.stage7/

@@ -4,6 +4,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import Ajv2020 from '@redocly/ajv/dist/2020.js';
+
 import { PREVIOUS_RELEASE_PROJECTION_FILENAMES } from './previous-release-projection.mjs';
 import { RELEASE_SUCCESSOR_SOURCE_LAYOUT } from './release-successor-contract.mjs';
 import { RELEASE_SUCCESSOR_JOURNAL_ROLE_EFFECTIVE_PERMISSIONS_KIND } from './release-successor-iam-authority.mjs';
@@ -30,7 +32,57 @@ export const selfTestReleaseSuccessorSchemas = () => {
   assert.equal(provenance.properties.files.minItems, payloadCount);
   assert.equal(provenance.properties.files.maxItems, payloadCount);
   assert.equal(provenance.properties.canonicalSha256ByPath.minProperties, payloadCount - 1);
+  assert.equal(provenance.properties.canonicalSha256ByPath.maxProperties, payloadCount - 1);
   assert.equal(provenance.properties.artifactOriginsByPath.minProperties, payloadCount);
+  assert.equal(provenance.properties.artifactOriginsByPath.maxProperties, payloadCount);
+  const ajv = new Ajv2020({ allErrors: true, strict: true });
+  const canonicalSha256ByPathValidator = ajv.compile({
+    ...provenance.properties.canonicalSha256ByPath,
+    $defs: provenance.$defs,
+  });
+  const artifactOriginsByPathValidator = ajv.compile({
+    ...provenance.properties.artifactOriginsByPath,
+    $defs: provenance.$defs,
+  });
+  const canonicalSha256ByPathEntries = Array.from({ length: payloadCount - 1 }, (_, index) => [
+    `canonical-${index}.json`,
+    'a'.repeat(64),
+  ]);
+  const artifactOriginsByPathEntries = Array.from({ length: payloadCount }, (_, index) => [
+    `artifact-${index}.json`,
+    `release-successor-source-${index}`,
+  ]);
+  assert.equal(
+    canonicalSha256ByPathValidator(Object.fromEntries(canonicalSha256ByPathEntries)),
+    true,
+  );
+  assert.equal(
+    canonicalSha256ByPathValidator(Object.fromEntries(canonicalSha256ByPathEntries.slice(1))),
+    false,
+  );
+  assert.equal(
+    canonicalSha256ByPathValidator(
+      Object.fromEntries([...canonicalSha256ByPathEntries, ['unexpected.json', 'b'.repeat(64)]]),
+    ),
+    false,
+  );
+  assert.equal(
+    artifactOriginsByPathValidator(Object.fromEntries(artifactOriginsByPathEntries)),
+    true,
+  );
+  assert.equal(
+    artifactOriginsByPathValidator(Object.fromEntries(artifactOriginsByPathEntries.slice(1))),
+    false,
+  );
+  assert.equal(
+    artifactOriginsByPathValidator(
+      Object.fromEntries([
+        ...artifactOriginsByPathEntries,
+        ['unexpected.json', 'release-successor-source-extra'],
+      ]),
+    ),
+    false,
+  );
   assert.equal(
     iam.properties.kind.const,
     RELEASE_SUCCESSOR_JOURNAL_ROLE_EFFECTIVE_PERMISSIONS_KIND,
@@ -91,7 +143,7 @@ export const selfTestReleaseSuccessorSchemas = () => {
     rollbackJournal.$defs.owner.required.includes('premutationAuthorityRawSha256'),
     true,
   );
-  return { status: 'PASS', canaries: 38, externalRequests: 0 };
+  return { status: 'PASS', canaries: 46, externalRequests: 0 };
 };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

@@ -2455,6 +2455,7 @@ const validateReleaseReconciliationContract = (name, jobs) => {
       ['sandbox', '.stage7/sandbox/sandbox-smoke.json'],
       ['rollback-smoke-input', '.stage7/rollback/rollback-smoke-input-preflight.json'],
       ['pending-producer', '.stage7/rollback/rollback-pending-producer.json'],
+      ['pending-egress-closeout', '.stage7/rollback/rollback-pending-egress-closeout.json'],
       ['rollback-smoke', '.stage7/rollback/versioned-rollback-smoke.json'],
       ['repromotion-smoke', '.stage7/rollback/versioned-repromotion-smoke.json'],
       ['journal-cleanup-role', '"${STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN}"'],
@@ -3185,6 +3186,7 @@ export function validateReleaseWorkflow(name, input) {
     '--post-versioned-rollback',
     '--direction REPROMOTE_CANDIDATE',
     '--post-versioned-repromotion',
+    '--close-versioned-rollback-pending-egress',
     'finalize-versioned-rollback',
     'release:verify:drift -- --scope full --versioned-update --app .stage7/candidate/iac --manifest .stage7/candidate-manifest/candidate-manifest.json',
     'versionedRollbackRehearsal',
@@ -3202,6 +3204,22 @@ export function validateReleaseWorkflow(name, input) {
     count(rollback, 'finalize-versioned-rollback') !== 2
   ) {
     fail('rollback rehearsal must execute exactly N to N-1 to N without disable/unpublish');
+  }
+  const pendingEgressCloseoutStep = stepBlocks(rollback).find((step) =>
+    step.includes('name: Close the pending provider egress ledger with N-1 status evidence'),
+  );
+  const pendingEgressCloseoutCommand =
+    'pnpm release:smoke -- --scope full --close-versioned-rollback-pending-egress --manifest .stage7/candidate-manifest/candidate-manifest.json --previous-manifest .stage7/previous/previous-release-manifest.json --candidate-record .stage7/recovery-probe/versioned-rollback-candidate.json --rollback-evidence "${STAGE7_EVIDENCE_ROOT}/rollback.json" --rollback-checkpoint "${STAGE7_EVIDENCE_ROOT}/versioned-rollback-checkpoint.json" --repromotion-checkpoint "${STAGE7_EVIDENCE_ROOT}/versioned-repromotion-checkpoint.json" --pending-producer "${STAGE7_EVIDENCE_ROOT}/rollback-pending-producer.json" --approved-environment --evidence "${STAGE7_EVIDENCE_ROOT}/rollback-pending-egress-closeout.json"';
+  if (
+    pendingEgressCloseoutStep === undefined ||
+    !pendingEgressCloseoutStep.includes(
+      "if: ${{ steps.rollback-mode.outputs.mode == 'HAPPY_REHEARSAL' }}",
+    ) ||
+    !pendingEgressCloseoutStep.includes('STAGE7_PROTECTED_ENVIRONMENT: assessment-release') ||
+    stepShellCommands(pendingEgressCloseoutStep)[0] !== pendingEgressCloseoutCommand ||
+    count(rollback, '--close-versioned-rollback-pending-egress') !== 1
+  ) {
+    fail('rollback pending egress closeout authority and inputs must be exact');
   }
   const candidateActivationUpload = postdeploySmoke.indexOf('name: stage7-activation');
   const candidateActivationScan = postdeploySmoke.indexOf(
@@ -3221,6 +3239,7 @@ export function validateReleaseWorkflow(name, input) {
     '--post-versioned-rollback',
     '--direction REPROMOTE_CANDIDATE',
     '--post-versioned-repromotion',
+    '--close-versioned-rollback-pending-egress',
     'release:verify:drift -- --scope full',
     'name: Preserve sanitized rollback evidence',
   ];
@@ -3236,6 +3255,7 @@ export function validateReleaseWorkflow(name, input) {
   const rollbackPublicPaths = [
     'output/evidence/runtime/stage-7/rollback-smoke-input-preflight.json',
     'output/evidence/runtime/stage-7/rollback-pending-producer.json',
+    'output/evidence/runtime/stage-7/rollback-pending-egress-closeout.json',
     'output/evidence/runtime/stage-7/versioned-rollback-aws-transition.json',
     'output/evidence/runtime/stage-7/versioned-rollback-smoke.json',
     'output/evidence/runtime/stage-7/versioned-rollback-checkpoint.json',
@@ -3263,7 +3283,7 @@ export function validateReleaseWorkflow(name, input) {
     stepShellCommands(rollbackScan ?? '')[0] !==
       `pnpm release:scan -- --pre-upload ${rollbackScanInputs}`
   ) {
-    fail('stage7-rollback must scan and upload exactly its ten public root basenames');
+    fail('stage7-rollback must scan and upload exactly its eleven public root basenames');
   }
   const publication = jobs.get('publish-release') ?? '';
   const quality = jobs.get('quality') ?? '';
@@ -4970,7 +4990,17 @@ const selfTestRelease = (source) =>
         ),
     },
     {
-      expected: 'stage7-rollback must scan and upload exactly its ten public root basenames',
+      expected: 'rollback pending egress closeout authority and inputs must be exact',
+      mutate: (value) =>
+        replaceJob(value, 'rollback-check', (block) =>
+          block.replace(
+            '--repromotion-checkpoint "${STAGE7_EVIDENCE_ROOT}/versioned-repromotion-checkpoint.json"',
+            '--repromotion-checkpoint "${STAGE7_EVIDENCE_ROOT}/versioned-rollback-checkpoint.json"',
+          ),
+        ),
+    },
+    {
+      expected: 'stage7-rollback must scan and upload exactly its eleven public root basenames',
       mutate: (value) =>
         replaceJob(value, 'rollback-check', (block) =>
           block.replace(
@@ -4980,7 +5010,7 @@ const selfTestRelease = (source) =>
         ),
     },
     {
-      expected: 'stage7-rollback must scan and upload exactly its ten public root basenames',
+      expected: 'stage7-rollback must scan and upload exactly its eleven public root basenames',
       mutate: (value) =>
         replaceJob(value, 'rollback-check', (block) =>
           block.replace(
