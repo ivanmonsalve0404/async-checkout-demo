@@ -4504,7 +4504,7 @@ export const createBaselineConfigSelfTestFixture = () => ({
   },
   domain: {
     mode: 'CUSTOM_AUTHORIZED',
-    hostname: 'checkout.example.test',
+    hostname: 'app.example.test',
     apiHostname: 'api.example.test',
     hostedZoneId: 'Z123456',
     hostedZoneName: 'example.test',
@@ -4640,7 +4640,7 @@ const targetConfigFixture = () => ({
   },
   domain: {
     mode: 'CUSTOM_AUTHORIZED',
-    hostname: 'checkout.example.test',
+    hostname: 'app.example.test',
     apiHostname: 'api.example.test',
     hostedZoneId: 'Z123456',
     webCertificateArn:

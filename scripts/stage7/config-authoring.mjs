@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { parseStrictJsonSource, validateJsonSchemaSubset } from '../stage6/strict-json.mjs';
 import { validateBaselineConfig } from './baseline-establishment.mjs';
+import { normalizePnpmScriptArguments } from './cli-arguments.mjs';
 import {
   canonicalJson,
   expectedStage7Stacks,
@@ -603,7 +604,8 @@ const flags = (arguments_) => {
 };
 
 const main = () => {
-  const parsed = flags(process.argv.slice(2));
+  const invocation = normalizePnpmScriptArguments(process.argv.slice(2), { separatorIndex: 1 });
+  const parsed = flags(invocation);
   const summary = authorStage7ConfigFiles({
     inputFilename: parsed['--input'],
     outputDirectory: parsed['--output-directory'],

@@ -17,6 +17,7 @@ import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
 import { parseStrictJsonSource } from '../stage6/strict-json.mjs';
+import { normalizePnpmScriptArguments } from './cli-arguments.mjs';
 import { canonicalJson, workspaceRoot } from './core.mjs';
 
 const INPUT_KIND = 'STAGE7_RUNTIME_SECRETS_INPUT';
@@ -969,8 +970,7 @@ export const materializeStage7RuntimeSecrets = ({
 };
 
 const parseFlags = (arguments_) => {
-  const normalizedArguments = arguments_[0] === '--' ? arguments_.slice(1) : arguments_;
-  const command = normalizedArguments[0];
+  const command = arguments_[0];
   const allowedByCommand = {
     hydrate: ['--input'],
     init: ['--account-id', '--input'],
@@ -978,13 +978,13 @@ const parseFlags = (arguments_) => {
     validate: ['--input'],
   };
   const allowed = allowedByCommand[command];
-  if (allowed === undefined || normalizedArguments.length !== 1 + allowed.length * 2) {
+  if (allowed === undefined || arguments_.length !== 1 + allowed.length * 2) {
     fail('E7_RUNTIME_SECRETS_COMMAND_INVALID');
   }
   const flags = {};
-  for (let index = 1; index < normalizedArguments.length; index += 2) {
-    const key = normalizedArguments[index];
-    const value = normalizedArguments[index + 1];
+  for (let index = 1; index < arguments_.length; index += 2) {
+    const key = arguments_[index];
+    const value = arguments_[index + 1];
     if (!allowed.includes(key) || value === undefined || Object.hasOwn(flags, key)) {
       fail('E7_RUNTIME_SECRETS_ARGUMENTS_INVALID');
     }
@@ -997,7 +997,8 @@ const parseFlags = (arguments_) => {
 };
 
 const main = async () => {
-  const { command, flags } = parseFlags(process.argv.slice(2));
+  const arguments_ = normalizePnpmScriptArguments(process.argv.slice(2), { separatorIndex: 0 });
+  const { command, flags } = parseFlags(arguments_);
   const common = { inputFilename: flags['--input'] };
   let result;
   if (command === 'init') {

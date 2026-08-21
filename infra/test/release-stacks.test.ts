@@ -1,5 +1,8 @@
 import { strict as assert } from 'node:assert';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { describe, test } from 'node:test';
 
@@ -537,6 +540,13 @@ void describe('assessment release assembly', () => {
     const outputs = assembly.web.toJSON().Outputs as Record<string, { readonly Value: unknown }>;
     const apiOutputs = assembly.api.toJSON().Outputs as Record<string, { readonly Value: unknown }>;
     assert.equal(apiOutputs.ApiCustomDomainName?.Value, 'NONE_MANAGED_PRERELEASE');
+    const apiLogicalId = Object.keys(resourcesOf(assembly.api, 'AWS::ApiGatewayV2::Api'))[0];
+    assert.deepEqual(apiOutputs.ApiOriginUrl?.Value, {
+      'Fn::Join': [
+        '',
+        ['https://', { Ref: apiLogicalId }, '.execute-api.us-east-1.', { Ref: 'AWS::URLSuffix' }],
+      ],
+    });
     assert.equal(outputs.ReleaseScope?.Value, 'SANDBOX_NON_PUBLIC_PRERELEASE_ONLY');
     assert.equal(
       outputs.PrereleaseAccessBindingSha256?.Value,
@@ -556,6 +566,221 @@ void describe('assessment release assembly', () => {
       outputs.TlsBaselineStatus?.Value,
       'BLOCKED_CUSTOM_DOMAIN_REQUIRED_PRERELEASE_ONLY',
     );
+  });
+
+  void test('materializes the authored custom-domain prerelease behind signed cookies', () => {
+    const assembly = releaseAssembly('sandbox', true, 'assessment-prerelease-custom-authorized');
+    const apiJson = assembly.api.toJSON();
+    const api = Object.values(resourcesOf(assembly.api, 'AWS::ApiGatewayV2::Api'))[0];
+    assert.deepEqual(api?.Properties?.DisableExecuteApiEndpoint, {
+      'Fn::If': ['PublicationEnabled', true, true],
+    });
+    const domains = resourcesOf(assembly.api, 'AWS::ApiGatewayV2::DomainName');
+    assert.equal(Object.keys(domains).length, 1);
+    assert.equal(Object.values(domains)[0]?.Properties?.DomainName, 'api.checkout.example.com');
+    const mappings = resourcesOf(assembly.api, 'AWS::ApiGatewayV2::ApiMapping');
+    assert.equal(Object.keys(mappings).length, 1);
+    assert.equal(Object.values(mappings)[0]?.Condition, 'PublicationEnabled');
+    const apiDnsRecords = Object.values(resourcesOf(assembly.api, 'AWS::Route53::RecordSet'));
+    assert.deepEqual(apiDnsRecords.map(({ Properties }) => Properties?.Type).sort(), ['A', 'AAAA']);
+    assert.ok(
+      apiDnsRecords.every(({ Properties }) =>
+        ['api.checkout.example.com', 'api.checkout.example.com.'].includes(
+          String(Properties?.Name),
+        ),
+      ),
+    );
+    const apiOutputs = apiJson.Outputs as Record<string, { readonly Value: unknown }>;
+    assert.equal(apiOutputs.ApiCustomDomainName?.Value, 'api.checkout.example.com');
+    assert.equal(apiOutputs.ApiOriginUrl?.Value, 'https://api.checkout.example.com');
+
+    const distribution = Object.values(
+      resourcesOf(assembly.web, 'AWS::CloudFront::Distribution'),
+    )[0];
+    const distributionConfig = distribution?.Properties?.DistributionConfig as {
+      readonly CacheBehaviors: Array<Record<string, unknown>>;
+      readonly DefaultCacheBehavior: Record<string, unknown>;
+      readonly Origins: Array<Record<string, unknown>>;
+    };
+    for (const behavior of [
+      distributionConfig.DefaultCacheBehavior,
+      ...distributionConfig.CacheBehaviors,
+    ]) {
+      assert.deepEqual(behavior.TrustedKeyGroups, [KEY_GROUP_ID]);
+    }
+    assert.ok(
+      distributionConfig.Origins.some(
+        ({ DomainName }) => DomainName === 'api.checkout.example.com',
+      ),
+    );
+    for (const fn of Object.values(resourcesOf(assembly.api, 'AWS::Lambda::Function'))) {
+      const variables = (
+        fn.Properties?.Environment as { readonly Variables: Record<string, unknown> }
+      ).Variables;
+      assert.equal(variables.CANDIDATE_SHA, RELEASE_SHA);
+      assert.equal(variables.RELEASE_ID, 'rel-20991231-2359-0123456');
+      assert.equal(variables.RUNTIME_SECRET_ARN, runtimeReference());
+      assert.equal(variables.RUNTIME_SECRET_VERSION_ID, 'a'.repeat(32));
+      assert.equal(variables.PRERELEASE_ACCESS_MODE, 'cloudfront_signed_cookie');
+    }
+  });
+
+  void test('synthesizes the authored custom prerelease through the real CDK entrypoint', () => {
+    const environment = 'assessment-prerelease-cli-custom';
+    const prefix = `checkout-${environment}`;
+    const output = mkdtempSync(path.join(tmpdir(), 'checkout-stage7-custom-prerelease-cdk-'));
+    const context: Record<string, string> = {
+      projectName: 'checkout',
+      environment,
+      region: 'us-east-1',
+      releaseId: 'rel-20991231-2359-0123456',
+      candidateSha: RELEASE_SHA,
+      owner: 'assessment-team',
+      expiresOn: '2099-12-31',
+      cleanupExpiresAtUtc: '2099-12-31T23:00:00.000Z',
+      paymentAdapter: 'sandbox',
+      paymentsEnabled: 'true',
+      tokenizationMode: 'direct_jwe',
+      schedulerEnabled: 'true',
+      publicationMode: 'EPHEMERAL_NON_PUBLIC',
+      sandboxAuthorizedUntilUtc: '2099-01-01T00:00:00.000Z',
+      pointInTimeRecoveryEnabled: 'true',
+      budgetMaxUsd: '10.00',
+      budgetWarningUsd: '5.00,8.00',
+      apiArtifactPath: path.join(__dirname, 'fixtures', 'release-api'),
+      workerArtifactPath: path.join(__dirname, 'fixtures', 'release-worker'),
+      webArtifactPath: path.join(__dirname, 'fixtures', 'release-web'),
+      runtimeSecretArn: runtimeReference(),
+      runtimeSecretVersionId: 'a'.repeat(32),
+      prereleaseKeyGroupId: KEY_GROUP_ID,
+      prereleasePublicKeyId: PUBLIC_KEY_ID,
+      hostedZoneId: 'Z123456789ABCDE',
+      hostedZoneName: 'example.com',
+      webDomainName: 'checkout.example.com',
+      webCertificateArn: certificateArn(
+        ['22222222', '2222', '4222', '8222', '222222222222'].join('-'),
+      ),
+      apiDomainName: 'api.checkout.example.com',
+      apiCertificateArn: certificateArn(
+        ['11111111', '1111', '4111', '8111', '111111111111'].join('-'),
+      ),
+    };
+    try {
+      const cdk = path.join(__dirname, '..', 'node_modules', 'aws-cdk', 'bin', 'cdk');
+      const infraRoot = path.join(__dirname, '..');
+      const tsx = path.relative(
+        infraRoot,
+        path.join(__dirname, '..', '..', 'node_modules', 'tsx', 'dist', 'cli.mjs'),
+      );
+      const app = path.relative(infraRoot, path.join(__dirname, '..', 'bin', 'app.ts'));
+      const cdkApp = [process.execPath, tsx, app]
+        .map((value) => (/[\s"]/u.test(value) ? `"${value.replaceAll('"', '\\"')}"` : value))
+        .join(' ');
+      const result = spawnSync(
+        process.execPath,
+        [
+          cdk,
+          'synth',
+          `${prefix}-data`,
+          `${prefix}-api`,
+          `${prefix}-observability`,
+          `${prefix}-web`,
+          '--output',
+          output,
+          '--quiet',
+          '--lookups',
+          'false',
+          '--app',
+          cdkApp,
+          ...Object.entries(context).flatMap(([key, value]) => ['--context', `${key}=${value}`]),
+        ],
+        {
+          cwd: infraRoot,
+          encoding: 'utf8',
+          env: { ...process.env, CDK_DEFAULT_REGION: 'us-east-1' },
+          timeout: 120_000,
+        },
+      );
+      assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+      const apiTemplate = JSON.parse(
+        readFileSync(path.join(output, `${prefix}-api.template.json`), 'utf8'),
+      ) as Record<string, Record<string, unknown>>;
+      const webTemplate = JSON.parse(
+        readFileSync(path.join(output, `${prefix}-web.template.json`), 'utf8'),
+      ) as Record<string, Record<string, unknown>>;
+      const resources = apiTemplate.Resources as Record<string, SynthesizedResource>;
+      const cliApiOutputs = apiTemplate.Outputs as Record<string, { readonly Value: unknown }>;
+      const apiEntries = Object.entries(resources).filter(
+        ([, { Type }]) => Type === 'AWS::ApiGatewayV2::Api',
+      );
+      const stageEntries = Object.entries(resources).filter(
+        ([, { Type }]) => Type === 'AWS::ApiGatewayV2::Stage',
+      );
+      const domainEntries = Object.entries(resources).filter(
+        ([, { Type }]) => Type === 'AWS::ApiGatewayV2::DomainName',
+      );
+      const mappingEntries = Object.entries(resources).filter(
+        ([, { Type }]) => Type === 'AWS::ApiGatewayV2::ApiMapping',
+      );
+      assert.equal(apiEntries.length, 1);
+      assert.equal(stageEntries.length, 1);
+      assert.equal(domainEntries.length, 1);
+      assert.equal(mappingEntries.length, 1);
+      const [apiLogicalId] = apiEntries[0] ?? [];
+      const [, stage] = stageEntries[0] ?? [];
+      const [domainLogicalId, domain] = domainEntries[0] ?? [];
+      const mapping = mappingEntries[0]?.[1];
+      assert.equal(domain?.Properties?.DomainName, 'api.checkout.example.com');
+      assert.equal(stage?.Properties?.StageName, '$default');
+      assert.deepEqual(stage?.Properties?.ApiId, { Ref: apiLogicalId });
+      assert.equal(mapping?.Condition, 'PublicationEnabled');
+      assert.deepEqual(mapping?.Properties?.ApiId, { Ref: apiLogicalId });
+      assert.deepEqual(mapping?.Properties?.DomainName, { Ref: domainLogicalId });
+      assert.equal(mapping?.Properties?.Stage, '$default');
+      const dnsRecords = Object.values(resources).filter(
+        ({ Type }) => Type === 'AWS::Route53::RecordSet',
+      );
+      assert.deepEqual(dnsRecords.map(({ Properties }) => Properties?.Type).sort(), ['A', 'AAAA']);
+      assert.ok(
+        dnsRecords.every(
+          ({ Properties }) =>
+            Properties?.HostedZoneId === 'Z123456789ABCDE' &&
+            ['api.checkout.example.com', 'api.checkout.example.com.'].includes(
+              String(Properties?.Name),
+            ),
+        ),
+      );
+      assert.equal(cliApiOutputs.ApiOriginUrl?.Value, 'https://api.checkout.example.com');
+      const webResources = webTemplate.Resources as Record<string, SynthesizedResource>;
+      const distribution = Object.values(webResources).find(
+        ({ Type }) => Type === 'AWS::CloudFront::Distribution',
+      );
+      const distributionConfig = distribution?.Properties?.DistributionConfig as {
+        readonly CacheBehaviors: Array<Record<string, unknown>>;
+        readonly Origins: Array<Record<string, unknown>>;
+      };
+      const apiOrigin = distributionConfig.Origins.find(
+        ({ DomainName }) => DomainName === 'api.checkout.example.com',
+      );
+      assert.ok(apiOrigin);
+      assert.deepEqual(
+        (apiOrigin.CustomOriginConfig as { readonly OriginSSLProtocols: unknown })
+          .OriginSSLProtocols,
+        ['TLSv1.2'],
+      );
+      assert.equal(
+        (apiOrigin.CustomOriginConfig as { readonly OriginProtocolPolicy: unknown })
+          .OriginProtocolPolicy,
+        'https-only',
+      );
+      assert.equal(
+        distributionConfig.CacheBehaviors.find(({ PathPattern }) => PathPattern === 'api/*')
+          ?.TargetOriginId,
+        apiOrigin.Id,
+      );
+    } finally {
+      rmSync(output, { recursive: true, force: true });
+    }
   });
 
   void test('enforces exact sandbox CSP, secret reference and full TLS 1.2 gate', () => {

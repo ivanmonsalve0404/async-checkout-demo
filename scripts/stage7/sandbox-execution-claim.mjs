@@ -20,6 +20,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { parseStrictJsonSource, validateJsonSchemaSubset } from '../stage6/strict-json.mjs';
+import { normalizePnpmScriptArguments } from './cli-arguments.mjs';
 
 const REPOSITORY = 'ivanmonsalve0404/async-checkout-demo';
 const GITHUB_API_ROOT = 'https://api.github.com';
@@ -1563,7 +1564,7 @@ const writeExclusivePrivate = (filename, source, code) => {
 };
 
 const main = async () => {
-  const arguments_ = process.argv.slice(2);
+  const arguments_ = normalizePnpmScriptArguments(process.argv.slice(2), { separatorIndex: 0 });
   if (arguments_.length === 1 && arguments_[0] === '--self-test') {
     await selfTestSandboxExecutionClaim();
     return;

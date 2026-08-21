@@ -20,6 +20,7 @@ import {
   assertSanitizedArtifactText,
   serializeSanitizedEvidence,
 } from '../stage6/lib/artifact-sanitizer.mjs';
+import { normalizePnpmScriptArguments } from './cli-arguments.mjs';
 import { objectSha256 } from './core.mjs';
 
 const REPOSITORY = 'ivanmonsalve0404/async-checkout-demo';
@@ -1042,12 +1043,13 @@ export const selfTestGithubPublication = async () => {
 };
 
 const main = async () => {
-  if (process.argv[2] === '--self-test') {
-    if (process.argv.length !== 3) fail('E7_GITHUB_PUBLICATION_ARGUMENT_SET_INVALID');
+  const arguments_ = normalizePnpmScriptArguments(process.argv.slice(2), { separatorIndex: 0 });
+  if (arguments_[0] === '--self-test') {
+    if (arguments_.length !== 1) fail('E7_GITHUB_PUBLICATION_ARGUMENT_SET_INVALID');
     await selfTestGithubPublication();
     return;
   }
-  const flags = parseFlags(process.argv.slice(2));
+  const flags = parseFlags(arguments_);
   const planFilename = checkedFile(flags.plan);
   const directory = path.dirname(planFilename);
   const plan = validatePlan(JSON.parse(readFileSync(planFilename, 'utf8')));

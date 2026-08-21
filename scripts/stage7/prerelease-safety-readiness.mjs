@@ -29,6 +29,7 @@ import {
   workspaceRoot,
   writeStage7Json,
 } from './core.mjs';
+import { normalizePnpmScriptArguments } from './cli-arguments.mjs';
 import {
   IamEffectivePermissionsError,
   validateIamEffectivePermissionsEvidence,
@@ -2184,13 +2185,15 @@ const selfTestFixtureConfig = (now) => {
       alertDestinationSha256: 'd'.repeat(64),
     },
     domain: {
-      mode: 'AWS_MANAGED',
-      hostname: null,
-      apiHostname: null,
-      hostedZoneId: null,
-      webCertificateArn: null,
-      apiCertificateArn: null,
-      dnsIncluded: false,
+      mode: 'CUSTOM_AUTHORIZED',
+      hostname: 'preview.example.test',
+      apiHostname: 'api-preview.example.test',
+      hostedZoneId: 'Z1234567890ABC',
+      webCertificateArn:
+        'arn:aws:acm:us-east-1:123456789012:certificate/11111111-1111-1111-1111-111111111111',
+      apiCertificateArn:
+        'arn:aws:acm:us-east-1:123456789012:certificate/22222222-2222-2222-2222-222222222222',
+      dnsIncluded: true,
     },
     prereleaseAccess: {
       mode: 'CLOUDFRONT_SIGNED_COOKIE',
@@ -3342,9 +3345,11 @@ const parseFlags = (arguments_) => {
 };
 
 const main = async () => {
-  const command = process.argv[2];
+  const [command, ...arguments_] = normalizePnpmScriptArguments(process.argv.slice(2), {
+    separatorIndex: 0,
+  });
   if (command === 'self-test') {
-    if (process.argv.length !== 3) fail('E7_PRERELEASE_SAFETY_CLI_ARGUMENT_SET_INVALID');
+    if (arguments_.length !== 0) fail('E7_PRERELEASE_SAFETY_CLI_ARGUMENT_SET_INVALID');
     const result = await selfTestPrereleaseSafetyReadiness();
     process.stdout.write(
       `prerelease safety readiness self-test: PASS (${result.assertions} assertions; 0 external calls; 0 mutations)\n`,
@@ -3354,7 +3359,7 @@ const main = async () => {
   if (!['capture', 'capture-live', 'verify-watchdog'].includes(command)) {
     fail('E7_PRERELEASE_SAFETY_CLI_COMMAND_INVALID');
   }
-  const flags = parseFlags(process.argv.slice(3));
+  const flags = parseFlags(arguments_);
   const expected = [
     'config',
     'manifest',

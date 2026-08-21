@@ -35,6 +35,7 @@ const configuration = parseFoundationConfig({
   workerArtifactPath: app.node.tryGetContext('workerArtifactPath'),
   webArtifactPath: app.node.tryGetContext('webArtifactPath'),
   runtimeSecretArn: app.node.tryGetContext('runtimeSecretArn'),
+  runtimeSecretVersionId: app.node.tryGetContext('runtimeSecretVersionId'),
   hostedZoneId: app.node.tryGetContext('hostedZoneId'),
   hostedZoneName: app.node.tryGetContext('hostedZoneName'),
   webDomainName: app.node.tryGetContext('webDomainName'),
