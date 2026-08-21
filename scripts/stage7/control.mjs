@@ -107,6 +107,7 @@ import {
   validateBootstrapAssetInventory,
   validateIamEffectivePermissionsEvidence,
 } from './iam-effective-permissions.mjs';
+import { githubOidcEnvironmentSubject } from './github-oidc-subject-contract.mjs';
 import {
   RELEASE_SUCCESSOR_JOURNAL_ROLE_EFFECTIVE_PERMISSIONS_BASENAME,
   Stage7ReleaseSuccessorIamAuthorityError,
@@ -14513,7 +14514,7 @@ export const selfTestStage7Control = async () => {
   else process.env.STAGE7_EXTERNAL_AUTHORIZATIONS = previousExternalPath;
 
   const provider = 'arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com';
-  const sub = 'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release';
+  const sub = githubOidcEnvironmentSubject('assessment-release');
   const trustStatement = (subject = sub, principal = provider) => ({
     Effect: 'Allow',
     Principal: { Federated: principal },
@@ -14530,19 +14531,15 @@ export const selfTestStage7Control = async () => {
     accountId: '123456789012',
     expectedSubs: [sub],
   });
-  const externalSub =
-    'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease-external';
-  const baseSub = 'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease';
-  const prereleaseReadSub =
-    'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease-read';
-  const releaseReadSub =
-    'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-read';
-  const recoverySub =
-    'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-recovery';
-  const reconciliationRecoverySub =
-    'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-reconciliation-recovery';
-  const releaseSandboxSub =
-    'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-sandbox';
+  const externalSub = githubOidcEnvironmentSubject('assessment-prerelease-external');
+  const baseSub = githubOidcEnvironmentSubject('assessment-prerelease');
+  const prereleaseReadSub = githubOidcEnvironmentSubject('assessment-prerelease-read');
+  const releaseReadSub = githubOidcEnvironmentSubject('assessment-release-read');
+  const recoverySub = githubOidcEnvironmentSubject('assessment-release-recovery');
+  const reconciliationRecoverySub = githubOidcEnvironmentSubject(
+    'assessment-release-reconciliation-recovery',
+  );
+  const releaseSandboxSub = githubOidcEnvironmentSubject('assessment-release-sandbox');
   assert.deepEqual(SANDBOX_PROTECTED_ENVIRONMENT_BY_SCOPE, {
     full: 'assessment-release-sandbox',
     prerelease: 'assessment-prerelease-external',
@@ -14623,6 +14620,11 @@ export const selfTestStage7Control = async () => {
   for (const policy of [
     { Statement: [trustStatement(), { ...trustStatement(), Principal: { AWS: '*' } }] },
     { Statement: [trustStatement(`${sub}:*`)] },
+    {
+      Statement: [
+        trustStatement('repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release'),
+      ],
+    },
     {
       Statement: [
         trustStatement(

@@ -64,7 +64,7 @@
         "profileSha256"
       ],
       "properties": {
-        "contractVersion": { "const": "stage7-iam-effective-permissions/2" },
+        "contractVersion": { "const": "stage7-iam-effective-permissions/3" },
         "profileKey": { "const": "journalCleanupRoleArn" },
         "capability": { "const": "RELEASE_SUCCESSOR_FINALIZATION_AND_JOURNAL_CLEANUP_ONLY" },
         "allowedActions": {

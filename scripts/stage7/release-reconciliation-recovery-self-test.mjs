@@ -21,6 +21,7 @@ import {
   createReleaseReconciliationRecoveryPreservationIndex,
   createReleaseReconciliationRecoveryRequest,
   createReleaseReconciliationRecoverySessionPolicy,
+  createReleaseReconciliationRecoveryTrustPolicy,
   RELEASE_RECONCILIATION_RECOVERY_ROLE_EFFECTIVE_PERMISSIONS_KIND,
   validateReleaseReconciliationRecoveryApproval,
   validateReleaseReconciliationRecoveryActor,
@@ -440,25 +441,7 @@ const recoverySessionPolicy = createReleaseReconciliationRecoverySessionPolicy({
   candidateRecordSource: candidateAuthorityBytes,
   previousManifestSource: previousAuthorityBytes,
 });
-const recoveryTrustPolicy = {
-  Version: '2012-10-17',
-  Statement: [
-    {
-      Effect: 'Allow',
-      Principal: {
-        Federated: `arn:aws:iam::${accountId}:oidc-provider/token.actions.githubusercontent.com`,
-      },
-      Action: 'sts:AssumeRoleWithWebIdentity',
-      Condition: {
-        StringEquals: {
-          'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-          'token.actions.githubusercontent.com:sub':
-            'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-reconciliation-recovery',
-        },
-      },
-    },
-  ],
-};
+const recoveryTrustPolicy = createReleaseReconciliationRecoveryTrustPolicy(accountId);
 const recoveryAuthorityBody = {
   schemaVersion: 1,
   stage: 7,

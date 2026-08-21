@@ -10,6 +10,8 @@ import type { Construct } from 'constructs';
 // policy normalization. Synthesis fails when the generated policies drift from it.
 // @ts-expect-error The product contract is an ESM JavaScript module without declarations.
 import * as iamContractModule from '../../scripts/stage7/iam-effective-permissions.mjs';
+// @ts-expect-error The canonical OIDC subject contract is an ESM JavaScript module.
+import * as oidcSubjectContractModule from '../../scripts/stage7/github-oidc-subject-contract.mjs';
 
 import {
   STAGE7_ACCOUNT_BOOTSTRAP_CDK_ROLE_KEYS,
@@ -60,6 +62,11 @@ interface IamContractApi {
     readonly authorizedPolicyArns: readonly string[];
     readonly permissionContext: Readonly<{ candidateSha: string; releaseId: string }>;
   }) => Readonly<{ allowActions: readonly string[] }>;
+}
+
+interface OidcSubjectContractApi {
+  readonly GITHUB_OIDC_REPOSITORY: string;
+  readonly githubOidcRefSubject: (ref: string) => string;
 }
 
 const iamContract = iamContractModule as unknown as IamContractApi;
@@ -404,7 +411,11 @@ interface PolicyAuthority {
   readonly auditedRoleArns: Readonly<Record<PolicyRoleKey, string>>;
 }
 
-const masterSubject = `repo:${STAGE7_ACCOUNT_BOOTSTRAP_REPOSITORY}:ref:refs/heads/master`;
+const oidcSubjectContract = oidcSubjectContractModule as unknown as OidcSubjectContractApi;
+if (oidcSubjectContract.GITHUB_OIDC_REPOSITORY !== STAGE7_ACCOUNT_BOOTSTRAP_REPOSITORY) {
+  fail('E7_ACCOUNT_BOOTSTRAP_OIDC_REPOSITORY_CONTRACT_MISMATCH');
+}
+const masterSubject = oidcSubjectContract.githubOidcRefSubject('refs/heads/master');
 
 const oidcTrust = (
   config: Stage7AccountBootstrapConfig,

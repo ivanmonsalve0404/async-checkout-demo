@@ -78,6 +78,15 @@ void describe('Stage 7 release auxiliary IAM authority stack', () => {
         >
       )[0]?.Condition as Record<string, Record<string, unknown>>
     ).StringEquals?.['token.actions.githubusercontent.com:sub'];
+    assert.deepEqual(STAGE7_JOURNAL_OIDC_SUBJECTS, [
+      'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-release',
+      'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-release-reconciliation-recovery',
+      'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-release-successor-post-success',
+    ]);
+    assert.equal(
+      STAGE7_RECOVERY_OIDC_SUBJECT,
+      'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-release-reconciliation-recovery',
+    );
     assert.deepEqual(journalSubjects, STAGE7_JOURNAL_OIDC_SUBJECTS);
     assert.equal(recoverySubject, STAGE7_RECOVERY_OIDC_SUBJECT);
     assert.equal(Object.hasOwn(journal, 'ManagedPolicyArns'), false);

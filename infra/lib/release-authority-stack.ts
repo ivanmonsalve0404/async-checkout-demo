@@ -9,11 +9,12 @@ import type { Construct } from 'constructs';
 import * as recoveryContractModule from '../../scripts/stage7/release-reconciliation-recovery.mjs';
 // @ts-expect-error The product contract is an ESM JavaScript module without TypeScript declarations.
 import * as journalContractModule from '../../scripts/stage7/release-successor-iam-authority.mjs';
+// @ts-expect-error The canonical OIDC subject contract is an ESM JavaScript module.
+import * as oidcSubjectContractModule from '../../scripts/stage7/github-oidc-subject-contract.mjs';
 
 import {
   STAGE7_AUTHORITY_ROLE_PATH,
   STAGE7_GITHUB_OIDC_HOST,
-  STAGE7_GITHUB_REPOSITORY,
   STAGE7_JOURNAL_BOUNDARY_NAME,
   STAGE7_JOURNAL_ROLE_NAME,
   STAGE7_RECOVERY_BOUNDARY_NAME,
@@ -77,8 +78,13 @@ interface RecoveryContractApi {
   }) => IamPolicyDocument;
 }
 
+interface OidcSubjectContractApi {
+  readonly githubOidcEnvironmentSubject: (environment: string) => string;
+}
+
 const journalContract = journalContractModule as unknown as JournalContractApi;
 const recoveryContract = recoveryContractModule as unknown as RecoveryContractApi;
+const oidcSubjectContract = oidcSubjectContractModule as unknown as OidcSubjectContractApi;
 
 const jsonBytes = (value: unknown): Buffer => Buffer.from(`${JSON.stringify(value)}\n`, 'utf8');
 const exactKeys = (value: unknown, keys: readonly string[]): boolean =>
@@ -102,11 +108,13 @@ const fail = (code: string): never => {
 };
 
 export const STAGE7_JOURNAL_OIDC_SUBJECTS = Object.freeze([
-  `repo:${STAGE7_GITHUB_REPOSITORY}:environment:assessment-release`,
-  `repo:${STAGE7_GITHUB_REPOSITORY}:environment:assessment-release-reconciliation-recovery`,
-  `repo:${STAGE7_GITHUB_REPOSITORY}:environment:assessment-release-successor-post-success`,
+  oidcSubjectContract.githubOidcEnvironmentSubject('assessment-release'),
+  oidcSubjectContract.githubOidcEnvironmentSubject('assessment-release-reconciliation-recovery'),
+  oidcSubjectContract.githubOidcEnvironmentSubject('assessment-release-successor-post-success'),
 ]);
-export const STAGE7_RECOVERY_OIDC_SUBJECT = `repo:${STAGE7_GITHUB_REPOSITORY}:environment:assessment-release-reconciliation-recovery`;
+export const STAGE7_RECOVERY_OIDC_SUBJECT = oidcSubjectContract.githubOidcEnvironmentSubject(
+  'assessment-release-reconciliation-recovery',
+);
 
 const journalTrustCandidate = (config: ReleaseAuthorityConfig): IamTrustPolicyDocument => ({
   Version: '2012-10-17',

@@ -96,7 +96,7 @@ Este repositorio no crea ni modifica la autoridad real. Antes de ejecutar el wor
 2. Variable protegida
    `STAGE7_RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_PERMISSIONS_BOUNDARY_ARN`.
 3. Trust OIDC con un único `sub`:
-   `repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-successor-publication-recovery`
+   `repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-release-successor-publication-recovery`
    y `aud=sts.amazonaws.com`.
 4. Una única inline identity policy BASE, con nombre exacto
    `stage7-release-successor-publication-recovery-base`, y una permissions boundary cuyo default

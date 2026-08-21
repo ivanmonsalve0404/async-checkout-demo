@@ -87,7 +87,7 @@ void describe('Stage 7 release-successor publication recovery IAM stack', () => 
     const condition = statement?.Condition as Record<string, Record<string, unknown>>;
     assert.equal(
       condition.StringEquals?.['token.actions.githubusercontent.com:sub'],
-      'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-successor-publication-recovery',
+      'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-release-successor-publication-recovery',
     );
     assert.equal(
       condition.StringEquals?.['token.actions.githubusercontent.com:aud'],

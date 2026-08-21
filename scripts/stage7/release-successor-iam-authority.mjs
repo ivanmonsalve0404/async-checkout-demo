@@ -7,9 +7,21 @@ import { fileURLToPath } from 'node:url';
 
 import { parseStrictJsonSource } from '../stage6/strict-json.mjs';
 import { canonicalJson, objectSha256 } from './core.mjs';
+import {
+  GITHUB_OIDC_REPOSITORY,
+  GITHUB_OIDC_IMMUTABLE_REPOSITORY,
+  githubOidcEnvironmentSubject,
+} from './github-oidc-subject-contract.mjs';
 import { IAM_EFFECTIVE_PERMISSIONS_CONTRACT_VERSION } from './iam-effective-permissions.mjs';
 
-const REPOSITORY = 'ivanmonsalve0404/async-checkout-demo';
+const REPOSITORY = GITHUB_OIDC_REPOSITORY;
+const JOURNAL_OIDC_SUBJECTS = Object.freeze(
+  [
+    githubOidcEnvironmentSubject('assessment-release'),
+    githubOidcEnvironmentSubject('assessment-release-reconciliation-recovery'),
+    githubOidcEnvironmentSubject('assessment-release-successor-post-success'),
+  ].toSorted(),
+);
 const SHA256 = /^[0-9a-f]{64}$/u;
 const SHA = /^[0-9a-f]{40}$/u;
 const RELEASE_ID = /^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$/u;
@@ -347,11 +359,7 @@ const validateTrust = (role, accountId) => {
   const trust = role.trustPolicy;
   const statement = trust?.Statement?.[0];
   const host = 'token.actions.githubusercontent.com';
-  const subjects = [
-    'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release',
-    'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-reconciliation-recovery',
-    'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-successor-post-success',
-  ].toSorted();
+  const subjects = JOURNAL_OIDC_SUBJECTS;
   if (
     !exactKeys(trust, ['Version', 'Statement']) ||
     trust.Version !== '2012-10-17' ||
@@ -1108,11 +1116,7 @@ const createIamCaptureFixture = () => {
         Condition: {
           StringEquals: {
             'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-            'token.actions.githubusercontent.com:sub': [
-              'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-reconciliation-recovery',
-              'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-successor-post-success',
-              'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release',
-            ],
+            'token.actions.githubusercontent.com:sub': [...JOURNAL_OIDC_SUBJECTS],
           },
         },
       },
@@ -1206,7 +1210,13 @@ export const selfTestReleaseSuccessorIamAuthority = () => {
       ...value.role.trustPolicy.Statement[0].Condition.StringEquals[
         'token.actions.githubusercontent.com:sub'
       ],
-      'repo:ivanmonsalve0404/async-checkout-demo:environment:*',
+      `repo:${GITHUB_OIDC_IMMUTABLE_REPOSITORY}:environment:*`,
+    ],
+    [
+      ...value.role.trustPolicy.Statement[0].Condition.StringEquals[
+        'token.actions.githubusercontent.com:sub'
+      ].slice(1),
+      'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release',
     ],
   ]) {
     const invalidTrust = structuredClone(value);
