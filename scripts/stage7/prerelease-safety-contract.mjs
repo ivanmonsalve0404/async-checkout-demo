@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 
+import { GITHUB_OIDC_REPOSITORY, githubOidcRefSubject } from './github-oidc-subject-contract.mjs';
+
 export const WATCHDOG_WORKFLOW_RELATIVE = '.github/workflows/prerelease-cleanup.yml';
 export const WATCHDOG_CRON = '23 * * * *';
-export const WATCHDOG_OIDC_SUBJECT =
-  'repo:ivanmonsalve0404/async-checkout-demo:ref:refs/heads/master';
-export const EXPECTED_REPOSITORY = 'ivanmonsalve0404/async-checkout-demo';
+export const WATCHDOG_OIDC_SUBJECT = githubOidcRefSubject('refs/heads/master');
+export const EXPECTED_REPOSITORY = GITHUB_OIDC_REPOSITORY;
 export const EXPECTED_DEFAULT_BRANCH = 'master';
 
 const SHA256 = /^[0-9a-f]{64}$/u;

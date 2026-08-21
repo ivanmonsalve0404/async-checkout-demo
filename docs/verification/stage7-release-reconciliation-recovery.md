@@ -32,7 +32,7 @@ does not depend on future Lambda versions, S3 versions, or a CloudFront distribu
 The role has exactly one inline policy named `stage7-release-reconciliation-recovery`, no attached
 policies, and an identical permissions boundary. Its trust policy permits only GitHub OIDC with
 audience `sts.amazonaws.com` and subject
-`repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-reconciliation-recovery`.
+`repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-release-reconciliation-recovery`.
 The role is distinct from read, deploy, rollback, cleanup, baseline, and journal-cleanup roles.
 
 The base envelope permits only the maximum account/region/release resource prefixes required for

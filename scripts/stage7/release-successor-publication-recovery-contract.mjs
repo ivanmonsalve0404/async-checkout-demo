@@ -5,15 +5,20 @@ import path from 'node:path';
 import { sha256 } from '../stage6/lib/evidence.mjs';
 import { parseStrictJsonSource } from '../stage6/strict-json.mjs';
 import { canonicalJson, objectSha256 } from './core.mjs';
+import {
+  GITHUB_OIDC_REPOSITORY,
+  githubOidcEnvironmentSubject,
+} from './github-oidc-subject-contract.mjs';
 import { validateReleaseSuccessorCompletionFence } from './release-successor-fence-contract.mjs';
 import { readReleaseSuccessorZipEntries } from './release-successor-zip.mjs';
 
-export const RECOVERY_REPOSITORY = 'ivanmonsalve0404/async-checkout-demo';
+export const RECOVERY_REPOSITORY = GITHUB_OIDC_REPOSITORY;
 export const RECOVERY_SOURCE_WORKFLOW = '.github/workflows/release.yml';
 export const RECOVERY_SOURCE_WORKFLOW_NAME = 'Stage 7 Release';
 export const RECOVERY_WORKFLOW =
   '.github/workflows/stage7-release-successor-publication-recovery.yml';
 export const RECOVERY_ENVIRONMENT = 'assessment-release-successor-publication-recovery';
+export const RECOVERY_OIDC_SUBJECT = githubOidcEnvironmentSubject(RECOVERY_ENVIRONMENT);
 export const RECOVERY_BLOCKER = 'BLK-E7-RELEASE-SUCCESSOR-PUBLICATION-ATOMICITY';
 export const RECOVERY_CLOSEOUT_BLOCKER = 'BLK-E7-RELEASE-SUCCESSOR-RECOVERY-CLOSEOUT-AUTHORITY';
 export const RECOVERY_AUTHORITY_KIND = 'RELEASE_SUCCESSOR_PUBLICATION_RECOVERY_AUTHORITY';
@@ -221,7 +226,7 @@ export const expectedRecoveryTrustPolicy = ({ awsAccountId }) => ({
       Condition: {
         StringEquals: {
           'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-          'token.actions.githubusercontent.com:sub': `repo:${RECOVERY_REPOSITORY}:environment:${RECOVERY_ENVIRONMENT}`,
+          'token.actions.githubusercontent.com:sub': RECOVERY_OIDC_SUBJECT,
         },
       },
     },

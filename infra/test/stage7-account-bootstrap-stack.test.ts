@@ -171,11 +171,11 @@ void describe('Stage 7 regional account bootstrap stacks', () => {
     const readSubjects = (readStatement?.Condition as Record<string, Record<string, unknown>>)
       .StringEquals?.['token.actions.githubusercontent.com:sub'];
     assert.deepEqual(Array.isArray(readSubjects) ? readSubjects : [readSubjects], [
-      'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release',
-      'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-read',
-      'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-recovery',
-      'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-reconciliation-recovery',
-      'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-sandbox',
+      'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-release',
+      'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-release-read',
+      'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-release-recovery',
+      'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-release-reconciliation-recovery',
+      'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-release-sandbox',
     ]);
 
     const prereleaseRead = roleByName(prerelease, 'stage7-prerelease-read');
@@ -185,10 +185,32 @@ void describe('Stage 7 regional account bootstrap stacks', () => {
       prereleaseStatement?.Condition as Record<string, Record<string, unknown>>
     ).StringEquals?.['token.actions.githubusercontent.com:sub'];
     assert.deepEqual(prereleaseSubjects, [
-      'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease',
-      'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease-external',
-      'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease-read',
+      'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-prerelease',
+      'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-prerelease-external',
+      'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-prerelease-read',
     ]);
+
+    const watchdog = roleByName(prerelease, 'stage7-prerelease-cleanup-watchdog');
+    const watchdogTrust = watchdog.AssumeRolePolicyDocument as Record<string, unknown>;
+    const watchdogStatement = (watchdogTrust.Statement as Array<Record<string, unknown>>)[0];
+    const watchdogSubject = (
+      watchdogStatement?.Condition as Record<string, Record<string, unknown>>
+    ).StringEquals?.['token.actions.githubusercontent.com:sub'];
+    assert.equal(
+      watchdogSubject,
+      'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:ref:refs/heads/master',
+    );
+
+    const baseline = roleByName(full, 'stage7-release-baseline');
+    const baselineTrust = baseline.AssumeRolePolicyDocument as Record<string, unknown>;
+    const baselineStatement = (baselineTrust.Statement as Array<Record<string, unknown>>)[0];
+    const baselineSubject = (
+      baselineStatement?.Condition as Record<string, Record<string, unknown>>
+    ).StringEquals?.['token.actions.githubusercontent.com:sub'];
+    assert.equal(
+      baselineSubject,
+      'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:environment:assessment-release-baseline',
+    );
 
     const imageRole = roleByName(full, `cdk-hnb659fds-image-publishing-role-${ACCOUNT}-us-east-1`);
     assert.deepEqual(imageRole.AssumeRolePolicyDocument, {
@@ -265,6 +287,17 @@ void describe('Stage 7 regional account bootstrap stacks', () => {
 
   void test('rejects privilege, trust, boundary and asset tampering without mutating source', () => {
     const source = synthesized('FULL_RELEASE');
+    const trustSubjectMutation =
+      (subject: string) =>
+      (template: Record<string, unknown>): void => {
+        const role = roleByName(template, 'stage7-release-read');
+        const trust = role.AssumeRolePolicyDocument as Record<string, unknown>;
+        const statement = (trust.Statement as Array<Record<string, unknown>>)[0];
+        const condition = statement?.Condition as Record<string, Record<string, unknown>>;
+        if (condition.StringEquals !== undefined) {
+          condition.StringEquals['token.actions.githubusercontent.com:sub'] = subject;
+        }
+      };
     const mutations: Array<(template: Record<string, unknown>) => void> = [
       (template) => {
         const role = roleByName(template, 'stage7-release-deploy');
@@ -276,15 +309,22 @@ void describe('Stage 7 regional account bootstrap stacks', () => {
           },
         };
       },
-      (template) => {
-        const role = roleByName(template, 'stage7-release-read');
-        const trust = role.AssumeRolePolicyDocument as Record<string, unknown>;
-        const statement = (trust.Statement as Array<Record<string, unknown>>)[0];
-        const condition = statement?.Condition as Record<string, Record<string, unknown>>;
-        if (condition.StringEquals !== undefined) {
-          condition.StringEquals['token.actions.githubusercontent.com:sub'] = 'repo:*';
-        }
-      },
+      trustSubjectMutation('repo:*'),
+      trustSubjectMutation(
+        'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release',
+      ),
+      trustSubjectMutation(
+        'repo:ivanmonsalve0404@1335131225/async-checkout-demo@192544565:environment:assessment-release',
+      ),
+      trustSubjectMutation(
+        'repo:ivanmonsalve0404@192544566/async-checkout-demo@1335131226:environment:assessment-release',
+      ),
+      trustSubjectMutation(
+        'repo:ivanmonsalve0404/async-checkout-demo@1335131225:environment:assessment-release',
+      ),
+      trustSubjectMutation(
+        'repo:ivanmonsalve0404@192544565/async-checkout-demo:environment:assessment-release',
+      ),
       (template) => {
         const role = roleByName(template, 'stage7-release-read');
         role.PermissionsBoundary = { Ref: 'UnexpectedBoundary' };

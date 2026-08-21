@@ -7,6 +7,11 @@ import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
 import { hasUniqueIamRoleNames, parseIamRoleArn } from './core.mjs';
+import {
+  githubOidcEnvironmentSubject,
+  githubOidcRefSubject,
+  selfTestGithubOidcSubjectContract,
+} from './github-oidc-subject-contract.mjs';
 
 const SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -28,15 +33,13 @@ const BOOTSTRAP_ROLE_KEYS = Object.freeze([
   'bootstrapLookupRoleArn',
   'bootstrapCloudFormationExecutionRoleArn',
 ]);
-const REPOSITORY = 'ivanmonsalve0404/async-checkout-demo';
-const environmentSubject = (environment) => `repo:${REPOSITORY}:environment:${environment}`;
-const MASTER_REF_SUBJECT = `repo:${REPOSITORY}:ref:refs/heads/master`;
-const BASELINE_SUBJECT = environmentSubject('assessment-release-baseline');
+const MASTER_REF_SUBJECT = githubOidcRefSubject('refs/heads/master');
+const BASELINE_SUBJECT = githubOidcEnvironmentSubject('assessment-release-baseline');
 const CDK_BOOTSTRAP_QUALIFIER = 'hnb659fds';
 const SELF_TEST_BOOTSTRAP_ASSET_INVENTORIES = new WeakMap();
 const SELF_TEST_AUXILIARY_ROLE_AUTHORITIES = new WeakMap();
 
-export const IAM_EFFECTIVE_PERMISSIONS_CONTRACT_VERSION = 'stage7-iam-effective-permissions/2';
+export const IAM_EFFECTIVE_PERMISSIONS_CONTRACT_VERSION = 'stage7-iam-effective-permissions/3';
 
 const normalizeActions = (actions) =>
   Object.freeze([...new Set(actions.map((action) => action.toLowerCase()))].toSorted());
@@ -467,25 +470,25 @@ export const IAM_ROLE_PERMISSION_PROFILES = Object.freeze({
     requiredActions: REQUIRED_ACTIONS.readRoleArn,
     oidcSubjects: Object.freeze({
       full: Object.freeze([
-        environmentSubject('assessment-release'),
-        environmentSubject('assessment-release-read'),
-        environmentSubject('assessment-release-recovery'),
-        environmentSubject('assessment-release-reconciliation-recovery'),
-        environmentSubject('assessment-release-sandbox'),
+        githubOidcEnvironmentSubject('assessment-release'),
+        githubOidcEnvironmentSubject('assessment-release-read'),
+        githubOidcEnvironmentSubject('assessment-release-recovery'),
+        githubOidcEnvironmentSubject('assessment-release-reconciliation-recovery'),
+        githubOidcEnvironmentSubject('assessment-release-sandbox'),
       ]),
       prerelease: Object.freeze([
-        environmentSubject('assessment-prerelease'),
-        environmentSubject('assessment-prerelease-external'),
-        environmentSubject('assessment-prerelease-read'),
+        githubOidcEnvironmentSubject('assessment-prerelease'),
+        githubOidcEnvironmentSubject('assessment-prerelease-external'),
+        githubOidcEnvironmentSubject('assessment-prerelease-read'),
       ]),
       // FULL_RELEASE and baseline attest the same physical read role. The sandbox subject is
       // selected only by the full workflow, but must remain in this exact shared trust policy.
       baseline: Object.freeze([
-        environmentSubject('assessment-release'),
-        environmentSubject('assessment-release-read'),
-        environmentSubject('assessment-release-recovery'),
-        environmentSubject('assessment-release-reconciliation-recovery'),
-        environmentSubject('assessment-release-sandbox'),
+        githubOidcEnvironmentSubject('assessment-release'),
+        githubOidcEnvironmentSubject('assessment-release-read'),
+        githubOidcEnvironmentSubject('assessment-release-recovery'),
+        githubOidcEnvironmentSubject('assessment-release-reconciliation-recovery'),
+        githubOidcEnvironmentSubject('assessment-release-sandbox'),
       ]),
     }),
   }),
@@ -494,12 +497,12 @@ export const IAM_ROLE_PERMISSION_PROFILES = Object.freeze({
     actions: DEPLOY_ACTIONS,
     requiredActions: REQUIRED_ACTIONS.deployRoleArn,
     oidcSubjects: Object.freeze({
-      full: Object.freeze([environmentSubject('assessment-release')]),
+      full: Object.freeze([githubOidcEnvironmentSubject('assessment-release')]),
       prerelease: Object.freeze([
-        environmentSubject('assessment-prerelease'),
-        environmentSubject('assessment-prerelease-external'),
+        githubOidcEnvironmentSubject('assessment-prerelease'),
+        githubOidcEnvironmentSubject('assessment-prerelease-external'),
       ]),
-      baseline: Object.freeze([environmentSubject('assessment-release')]),
+      baseline: Object.freeze([githubOidcEnvironmentSubject('assessment-release')]),
     }),
   }),
   rollbackRoleArn: Object.freeze({
@@ -508,13 +511,13 @@ export const IAM_ROLE_PERMISSION_PROFILES = Object.freeze({
     requiredActions: REQUIRED_ACTIONS.rollbackRoleArn,
     oidcSubjects: Object.freeze({
       full: Object.freeze([
-        environmentSubject('assessment-release'),
-        environmentSubject('assessment-release-recovery'),
+        githubOidcEnvironmentSubject('assessment-release'),
+        githubOidcEnvironmentSubject('assessment-release-recovery'),
       ]),
-      prerelease: Object.freeze([environmentSubject('assessment-prerelease')]),
+      prerelease: Object.freeze([githubOidcEnvironmentSubject('assessment-prerelease')]),
       baseline: Object.freeze([
-        environmentSubject('assessment-release'),
-        environmentSubject('assessment-release-recovery'),
+        githubOidcEnvironmentSubject('assessment-release'),
+        githubOidcEnvironmentSubject('assessment-release-recovery'),
       ]),
     }),
   }),
@@ -523,9 +526,9 @@ export const IAM_ROLE_PERMISSION_PROFILES = Object.freeze({
     actions: CLEANUP_ACTIONS,
     requiredActions: REQUIRED_ACTIONS.cleanupRoleArn,
     oidcSubjects: Object.freeze({
-      full: Object.freeze([environmentSubject('assessment-release')]),
-      prerelease: Object.freeze([environmentSubject('assessment-prerelease')]),
-      baseline: Object.freeze([environmentSubject('assessment-release')]),
+      full: Object.freeze([githubOidcEnvironmentSubject('assessment-release')]),
+      prerelease: Object.freeze([githubOidcEnvironmentSubject('assessment-prerelease')]),
+      baseline: Object.freeze([githubOidcEnvironmentSubject('assessment-release')]),
     }),
   }),
   cleanupWatchdogRoleArn: Object.freeze({
@@ -3354,6 +3357,7 @@ export const createIamEffectivePermissionsSelfTestFixture = ({
 };
 
 export const selfTestIamEffectivePermissions = () => {
+  selfTestGithubOidcSubjectContract();
   const fixture = fixtureEnvironment();
   const candidateSha = 'a'.repeat(40);
   const releaseId = 'rel-20260818-0100-aaaaaaa';
@@ -3400,27 +3404,27 @@ export const selfTestIamEffectivePermissions = () => {
     now: new Date('2026-08-18T01:00:00.000Z'),
   });
   assert.deepEqual(observedTrustSubjects.get('rollbackRoleArn'), [
-    environmentSubject('assessment-release'),
-    environmentSubject('assessment-release-recovery'),
+    githubOidcEnvironmentSubject('assessment-release'),
+    githubOidcEnvironmentSubject('assessment-release-recovery'),
   ]);
   assert.deepEqual(observedTrustSubjects.get('readRoleArn'), [
-    environmentSubject('assessment-release'),
-    environmentSubject('assessment-release-read'),
-    environmentSubject('assessment-release-recovery'),
-    environmentSubject('assessment-release-reconciliation-recovery'),
-    environmentSubject('assessment-release-sandbox'),
+    githubOidcEnvironmentSubject('assessment-release'),
+    githubOidcEnvironmentSubject('assessment-release-read'),
+    githubOidcEnvironmentSubject('assessment-release-recovery'),
+    githubOidcEnvironmentSubject('assessment-release-reconciliation-recovery'),
+    githubOidcEnvironmentSubject('assessment-release-sandbox'),
   ]);
   assert.deepEqual(IAM_ROLE_PERMISSION_PROFILES.readRoleArn.oidcSubjects.prerelease, [
-    environmentSubject('assessment-prerelease'),
-    environmentSubject('assessment-prerelease-external'),
-    environmentSubject('assessment-prerelease-read'),
+    githubOidcEnvironmentSubject('assessment-prerelease'),
+    githubOidcEnvironmentSubject('assessment-prerelease-external'),
+    githubOidcEnvironmentSubject('assessment-prerelease-read'),
   ]);
   assert.deepEqual(IAM_ROLE_PERMISSION_PROFILES.readRoleArn.oidcSubjects.baseline, [
-    environmentSubject('assessment-release'),
-    environmentSubject('assessment-release-read'),
-    environmentSubject('assessment-release-recovery'),
-    environmentSubject('assessment-release-reconciliation-recovery'),
-    environmentSubject('assessment-release-sandbox'),
+    githubOidcEnvironmentSubject('assessment-release'),
+    githubOidcEnvironmentSubject('assessment-release-read'),
+    githubOidcEnvironmentSubject('assessment-release-recovery'),
+    githubOidcEnvironmentSubject('assessment-release-reconciliation-recovery'),
+    githubOidcEnvironmentSubject('assessment-release-sandbox'),
   ]);
   assert.deepEqual(
     IAM_ROLE_PERMISSION_PROFILES.readRoleArn.oidcSubjects.baseline,

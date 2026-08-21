@@ -8,6 +8,12 @@ import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import {
+  GITHUB_OIDC_REPOSITORY,
+  githubOidcEnvironmentSubject,
+  githubOidcRefSubject,
+} from './github-oidc-subject-contract.mjs';
+
 const STACK_SUFFIXES = ['data', 'api', 'observability', 'web'];
 const DELETION_ORDER = [...STACK_SUFFIXES].reverse();
 const STABLE_STACK_STATUSES = new Set([
@@ -32,9 +38,9 @@ const MARKER_SET_KEY = 'Stage7CleanupSetSha256';
 const MAX_PAGES = 100;
 const MAX_GROUPS = 20;
 const EVIDENCE_ROOT = path.join('output', 'evidence', 'runtime', 'stage-7-prerelease-cleanup');
-const EXPECTED_REPOSITORY = 'ivanmonsalve0404/async-checkout-demo';
+const EXPECTED_REPOSITORY = GITHUB_OIDC_REPOSITORY;
 const EXPECTED_REF = 'refs/heads/master';
-const EXPECTED_OIDC_SUBJECT = `repo:${EXPECTED_REPOSITORY}:ref:${EXPECTED_REF}`;
+const EXPECTED_OIDC_SUBJECT = githubOidcRefSubject(EXPECTED_REF);
 
 export class PrereleaseCleanupError extends Error {
   constructor(code) {
@@ -1153,7 +1159,7 @@ export const selfTestPrereleaseCleanupRecovery = () => {
   );
 
   const wrongTrust = fakeAws({
-    trustSubject: 'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease',
+    trustSubject: githubOidcEnvironmentSubject('assessment-prerelease'),
   });
   assert.throws(
     () =>

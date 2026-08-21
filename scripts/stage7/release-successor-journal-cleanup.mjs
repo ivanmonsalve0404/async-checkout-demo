@@ -1356,6 +1356,7 @@ export const selfTestReleaseSuccessorJournalCleanup = async () => {
     ...lifecycleBody,
     lifecycleSha256: objectSha256(lifecycleBody),
   };
+  const effectivePermissions = createReleaseSuccessorIamAuthoritySelfTestFixture();
   const roleAuditSource = Buffer.from(
     `${JSON.stringify({
       Path: '/',
@@ -1368,29 +1369,7 @@ export const selfTestReleaseSuccessorJournalCleanup = async () => {
         PermissionsBoundaryType: 'Policy',
         PermissionsBoundaryArn: boundary,
       },
-      AssumeRolePolicyDocument: {
-        Version: '2012-10-17',
-        Statement: [
-          {
-            Effect: 'Allow',
-            Principal: {
-              Federated:
-                'arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com',
-            },
-            Action: 'sts:AssumeRoleWithWebIdentity',
-            Condition: {
-              StringEquals: {
-                'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-                'token.actions.githubusercontent.com:sub': [
-                  'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release',
-                  'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-reconciliation-recovery',
-                  'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-successor-post-success',
-                ],
-              },
-            },
-          },
-        ],
-      },
+      AssumeRolePolicyDocument: effectivePermissions.role.trustPolicy,
     })}\n`,
   );
   const callerIdentityForSession = (session) =>
@@ -1403,7 +1382,6 @@ export const selfTestReleaseSuccessorJournalCleanup = async () => {
     );
   const callerIdentitySource = callerIdentityForSession(sessionName);
   const awsVersionSource = Buffer.from('aws-cli/2.31.0 Python/3.13 Linux/6.8\n');
-  const effectivePermissions = createReleaseSuccessorIamAuthoritySelfTestFixture();
   const effectivePermissionsSource = Buffer.from(`${JSON.stringify(effectivePermissions)}\n`);
   const awsAuthSource = Buffer.from(
     `${JSON.stringify({

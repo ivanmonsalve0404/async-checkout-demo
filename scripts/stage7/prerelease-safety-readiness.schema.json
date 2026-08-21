@@ -228,7 +228,7 @@
         "candidateBlobSha256": { "$ref": "#/$defs/sha256" },
         "cron": { "const": "23 * * * *" },
         "oidcSubject": {
-          "const": "repo:ivanmonsalve0404/async-checkout-demo:ref:refs/heads/master"
+          "const": "repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:ref:refs/heads/master"
         },
         "roleArnSha256": { "$ref": "#/$defs/sha256" },
         "roleTrustPolicySha256": { "$ref": "#/$defs/sha256" },

@@ -101,6 +101,15 @@ Antes de crear recursos, la utilidad valida con STS que el perfil pertenece al `
 
 Antes de crear nada, comprobar si la cuenta ya contiene el proveedor OIDC de GitHub o un stack `CDKToolkit` en cualquiera de las dos regiones. Si existen, no sobrescribirlos ni adoptarlos a ciegas: exportar su plantilla/configuración y compararlos con el contrato exacto. Una migración o importación de recursos requiere un plan separado.
 
+Este repositorio fue creado después del corte de identidad inmutable de GitHub. Por eso todos los
+trusts deben usar el prefijo exacto
+`repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:`. El slug
+`ivanmonsalve0404/async-checkout-demo` sigue siendo el identificador para URLs y APIs, pero nunca
+es un `sub` OIDC válido. El readback de la configuración OIDC debe conservar `use_default=true` y
+devolver ese `sub_claim_prefix` inmutable; no se debe crear una plantilla personalizada ni intentar
+degradar el repositorio al subject legacy. Los jobs protegidos agregan
+`environment:<environment>` y el watchdog agrega `ref:refs/heads/master`.
+
 Configurar las variables de `.env.example` en una terminal temporal. Ejecutar FULL primero:
 
 ```powershell
@@ -120,6 +129,11 @@ pnpm infra:synth:account-bootstrap
 ```
 
 Provisionar esa plantilla como `CDKToolkit` en la segunda región. PRERELEASE importa el proveedor OIDC creado por FULL y no lo duplica.
+
+Una migración de trusts existentes se aplica y relee en los cuatro stacks propietarios: los dos
+`CDKToolkit`, `checkout-stage7-release-authority` y
+`checkout-stage7-release-successor-publication-recovery-authority`. No iniciar PRERELEASE mientras
+cualquiera de sus roles conserve el prefijo legacy o un wildcard.
 
 Registrar los outputs de ambos stacks. Los principales son los ARN de read/deploy/rollback/cleanup/baseline, el watchdog prerelease, los roles CDK, bucket/ECR de assets, parámetro de versión y `Stage7GithubOidcProviderArn`.
 

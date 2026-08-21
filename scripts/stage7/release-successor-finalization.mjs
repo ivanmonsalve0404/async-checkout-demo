@@ -5,6 +5,10 @@ import { createHash } from 'node:crypto';
 import { parseStrictJsonSource } from '../stage6/strict-json.mjs';
 import { objectSha256 } from './core.mjs';
 import {
+  GITHUB_OIDC_REPOSITORY,
+  githubOidcEnvironmentSubject,
+} from './github-oidc-subject-contract.mjs';
+import {
   STAGE7_RELEASE_RECONCILIATION_INTENT_LAYOUT,
   createReleaseReconciliationIntent,
   createReleaseRollbackJournalOwner,
@@ -44,7 +48,7 @@ import {
   validateReleaseSuccessorRollbackPremutationAuthority,
 } from './release-successor-rollback-authority.mjs';
 
-const REPOSITORY = 'ivanmonsalve0404/async-checkout-demo';
+const REPOSITORY = GITHUB_OIDC_REPOSITORY;
 const RELEASE_WORKFLOW_PATH = '.github/workflows/release.yml';
 const SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -66,12 +70,13 @@ const EVIDENCE_BINDING_KEYS = Object.freeze([
 ]);
 const STANDARD_PARAMETER_MAX_BYTES = 4096;
 const OIDC_HOST = 'token.actions.githubusercontent.com';
-const RELEASE_FENCE_SUBJECT =
-  'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release';
-const POST_SUCCESS_SUBJECT =
-  'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-successor-post-success';
-const RECONCILIATION_RECOVERY_SUBJECT =
-  'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-reconciliation-recovery';
+const RELEASE_FENCE_SUBJECT = githubOidcEnvironmentSubject('assessment-release');
+const POST_SUCCESS_SUBJECT = githubOidcEnvironmentSubject(
+  'assessment-release-successor-post-success',
+);
+const RECONCILIATION_RECOVERY_SUBJECT = githubOidcEnvironmentSubject(
+  'assessment-release-reconciliation-recovery',
+);
 const VALIDATED_CALLER_AUTHORITIES = new WeakSet();
 const SELF_TEST_INTENT_AUTHORITIES = new WeakSet();
 const SELF_TEST_ROLLBACK_AUTHORITIES = new WeakSet();
@@ -2159,9 +2164,9 @@ export const selfTestReleaseSuccessorFinalization = async () => {
             StringEquals: {
               'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
               'token.actions.githubusercontent.com:sub': [
-                'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release',
-                'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-reconciliation-recovery',
-                'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-release-successor-post-success',
+                RELEASE_FENCE_SUBJECT,
+                RECONCILIATION_RECOVERY_SUBJECT,
+                POST_SUCCESS_SUBJECT,
               ],
             },
           },

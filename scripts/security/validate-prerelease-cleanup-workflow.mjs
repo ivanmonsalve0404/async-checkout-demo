@@ -7,7 +7,9 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { githubOidcEnvironmentSubject } from '../stage7/github-oidc-subject-contract.mjs';
 import { selfTestPrereleaseCleanupRecovery } from '../stage7/prerelease-cleanup-recovery.mjs';
+import { WATCHDOG_OIDC_SUBJECT } from '../stage7/prerelease-safety-contract.mjs';
 
 export const PRERELEASE_CLEANUP_WORKFLOW = 'prerelease-cleanup.yml';
 
@@ -149,9 +151,7 @@ export function validatePrereleaseCleanupWorkflow(name, source) {
     !cleanup.includes('test "${GITHUB_REF}" = \'refs/heads/master\'') ||
     !cleanup.includes('[[ "${STAGE7_AWS_ACCOUNT_ID}" =~ ^[0-9]{12}$ ]]') ||
     !cleanup.includes('test -n "${STAGE7_PRERELEASE_CLEANUP_WATCHDOG_ROLE_ARN}"') ||
-    !normalized.includes(
-      'STAGE7_PRERELEASE_CLEANUP_OIDC_SUBJECT: repo:ivanmonsalve0404/async-checkout-demo:ref:refs/heads/master',
-    )
+    !normalized.includes(`STAGE7_PRERELEASE_CLEANUP_OIDC_SUBJECT: ${WATCHDOG_OIDC_SUBJECT}`)
   ) {
     errors.push('repository, branch, account, region and role guards are incomplete');
   }
@@ -241,8 +241,8 @@ const workflowCanaries = (source) => {
       label: 'OIDC environment subject',
       value: replaceOnce(
         source,
-        'repo:ivanmonsalve0404/async-checkout-demo:ref:refs/heads/master',
-        'repo:ivanmonsalve0404/async-checkout-demo:environment:assessment-prerelease',
+        WATCHDOG_OIDC_SUBJECT,
+        githubOidcEnvironmentSubject('assessment-prerelease'),
       ),
     },
     {

@@ -5,6 +5,10 @@ import { assertSanitizedArtifactText } from '../stage6/lib/artifact-sanitizer.mj
 import { parseStrictJsonSource } from '../stage6/strict-json.mjs';
 import { canonicalJson, objectSha256, validateStage7Config } from './core.mjs';
 import {
+  GITHUB_OIDC_REPOSITORY,
+  githubOidcEnvironmentSubject,
+} from './github-oidc-subject-contract.mjs';
+import {
   validateReleaseReconciliationIntent,
   validateReleaseReconciliationReceipt,
   validateReleaseReconciliationSource,
@@ -14,10 +18,11 @@ import {
   RELEASE_SUCCESSOR_FINALIZATION_PARAMETER_ROOT,
 } from './release-successor-parameter-roots.mjs';
 
-const REPOSITORY = 'ivanmonsalve0404/async-checkout-demo';
+const REPOSITORY = GITHUB_OIDC_REPOSITORY;
 const WORKFLOW_PATH = '.github/workflows/stage7-release-reconciliation-recovery.yml';
 const REF = 'refs/heads/master';
 const PROTECTED_ENVIRONMENT = 'assessment-release-reconciliation-recovery';
+const PROTECTED_OIDC_SUBJECT = githubOidcEnvironmentSubject(PROTECTED_ENVIRONMENT);
 const SHA256 = /^[0-9a-f]{64}$/u;
 const RUN_ID = /^[1-9][0-9]{0,19}$/u;
 const ATTEMPT = /^[1-9][0-9]{0,2}$/u;
@@ -150,7 +155,7 @@ const recoveryWorkflowContext = ({ environmentVariables, source, recoveryRoleArn
   const runAttempt = Number(runAttemptText);
   const workflowRef = `${REPOSITORY}/${WORKFLOW_PATH}@${REF}`;
   const roleSessionName = `e7-reconciliation-recovery-${runId}-${runAttemptText}`;
-  const oidcSubject = `repo:${REPOSITORY}:environment:${PROTECTED_ENVIRONMENT}`;
+  const oidcSubject = PROTECTED_OIDC_SUBJECT;
   if (
     role === null ||
     environmentVariables?.GITHUB_REPOSITORY !== REPOSITORY ||
@@ -240,7 +245,7 @@ export const createReleaseReconciliationRecoveryTrustPolicy = (accountId) => {
         Condition: {
           StringEquals: {
             'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-            'token.actions.githubusercontent.com:sub': `repo:${REPOSITORY}:environment:${PROTECTED_ENVIRONMENT}`,
+            'token.actions.githubusercontent.com:sub': PROTECTED_OIDC_SUBJECT,
           },
         },
       },
@@ -1689,7 +1694,7 @@ export const validateReleaseReconciliationRecoveryRequest = (value, intent = und
     role?.[1] !== value.authority.accountId ||
     value.authority.roleSessionName !==
       `e7-reconciliation-recovery-${value.recoveryRun.runId}-${value.recoveryRun.runAttempt}` ||
-    value.authority.oidcSubject !== `repo:${REPOSITORY}:environment:${PROTECTED_ENVIRONMENT}` ||
+    value.authority.oidcSubject !== PROTECTED_OIDC_SUBJECT ||
     !exactKeys(value.recoveryRoleAuthority, [
       'roleArn',
       'permissionsBoundaryArn',
@@ -2191,7 +2196,7 @@ export const validateReleaseReconciliationRecoveryActor = (value, intent = undef
     value.authority.roleSessionName !==
       `e7-reconciliation-recovery-${value.recoveryRun.runId}-${value.recoveryRun.runAttempt}` ||
     value.authority.roleSessionName.length > 64 ||
-    value.authority.oidcSubject !== `repo:${REPOSITORY}:environment:${PROTECTED_ENVIRONMENT}` ||
+    value.authority.oidcSubject !== PROTECTED_OIDC_SUBJECT ||
     !sameObject(value.request.authority, value.authority) ||
     !exactKeys(value.liveRecoveryRoleAuthority, [
       'value',
