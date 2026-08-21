@@ -88,7 +88,7 @@ const READ_ACTIONS = normalizeActions([
   'lambda:GetFunctionConfiguration',
   'lambda:ListVersionsByFunction',
   'logs:FilterLogEvents',
-  'resourcegroupstaggingapi:GetResources',
+  'tag:GetResources',
   'route53:GetHostedZone',
   'route53:ListResourceRecordSets',
   's3:GetAccountPublicAccessBlock',
@@ -188,7 +188,7 @@ const CLEANUP_ACTIONS = normalizeActions([
   'cloudformation:DescribeStacks',
   'cloudformation:UpdateStack',
   'iam:PassRole',
-  'resourcegroupstaggingapi:GetResources',
+  'tag:GetResources',
   'sts:GetCallerIdentity',
 ]);
 
@@ -453,7 +453,7 @@ const REQUIRED_ACTIONS = Object.freeze({
     'cloudformation:DescribeStacks',
     'cloudformation:UpdateStack',
     'iam:PassRole',
-    'resourcegroupstaggingapi:GetResources',
+    'tag:GetResources',
   ]),
   baselineRoleArn: BASELINE_ACTIONS,
   bootstrapDeployRoleArn: BOOTSTRAP_DEPLOY_ACTIONS,
@@ -539,7 +539,7 @@ export const IAM_ROLE_PERMISSION_PROFILES = Object.freeze({
       'cloudformation:UpdateStack',
       'iam:GetRole',
       'iam:PassRole',
-      'resourcegroupstaggingapi:GetResources',
+      'tag:GetResources',
       'sts:GetCallerIdentity',
     ]),
     requiredActions: normalizeActions([
@@ -548,7 +548,7 @@ export const IAM_ROLE_PERMISSION_PROFILES = Object.freeze({
       'cloudformation:UpdateStack',
       'iam:GetRole',
       'iam:PassRole',
-      'resourcegroupstaggingapi:GetResources',
+      'tag:GetResources',
     ]),
     oidcSubjects: Object.freeze({
       full: Object.freeze([]),
@@ -663,7 +663,7 @@ const ACTION_RESOURCE_CLASSES = Object.freeze({
     'dynamodb:ListTables',
     'ecr:GetAuthorizationToken',
     'lambda:GetAccountSettings',
-    'resourcegroupstaggingapi:GetResources',
+    'tag:GetResources',
     's3:GetAccountPublicAccessBlock',
     'servicequotas:GetServiceQuota',
     'servicequotas:ListServiceQuotas',
@@ -3362,6 +3362,25 @@ export const selfTestIamEffectivePermissions = () => {
   const candidateSha = 'a'.repeat(40);
   const releaseId = 'rel-20260818-0100-aaaaaaa';
   const manifestSha256 = 'b'.repeat(64);
+  const allProfileActions = Object.values(IAM_ROLE_PERMISSION_PROFILES).flatMap(
+    ({ actions }) => actions,
+  );
+  assert.equal(allProfileActions.includes('resourcegroupstaggingapi:getresources'), false);
+  for (const roleKey of ['readRoleArn', 'cleanupRoleArn', 'cleanupWatchdogRoleArn']) {
+    const profile = IAM_ROLE_PERMISSION_PROFILES[roleKey];
+    assert.equal(profile.actions.includes('tag:getresources'), true);
+  }
+  for (const roleKey of ['cleanupRoleArn', 'cleanupWatchdogRoleArn']) {
+    const profile = IAM_ROLE_PERMISSION_PROFILES[roleKey];
+    assert.equal(profile.requiredActions.includes('tag:getresources'), true);
+  }
+  assert.equal(ACTION_RESOURCE_CLASSES.GLOBAL_RESOURCE_REQUIRED.includes('tag:getresources'), true);
+  assert.equal(
+    ACTION_RESOURCE_CLASSES.GLOBAL_RESOURCE_REQUIRED.includes(
+      'resourcegroupstaggingapi:getresources',
+    ),
+    false,
+  );
   for (const invalidRoleArn of [
     `arn:aws:iam::${fixture.accountId}:role/checkout/`,
     `arn:aws:iam::${fixture.accountId}:role/checkout//read`,
@@ -4850,7 +4869,7 @@ export const selfTestIamEffectivePermissions = () => {
 
   return {
     status: 'PASS',
-    canaries: 135,
+    canaries: 143,
     simulatedAwsRequests: fixture.calls.length,
     externalRequests: 0,
     mutationsPerformed: 0,
