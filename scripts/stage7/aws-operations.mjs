@@ -11,6 +11,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmdirSync,
   rmSync,
@@ -46,6 +47,7 @@ import {
   validateFreezeManifest,
   validateStage7DriftCheckpoint,
   validateStage7InitialRollbackCheckpoint,
+  validateStage7InitialRollbackPublicationTransition,
   validateStage7PrereleaseCleanupCheckpoint,
   validateStage7PreviousReleaseForTarget,
   validateStage7PreviousReleaseHandoff,
@@ -89,6 +91,7 @@ import {
   validatePrereleaseSafetyReadinessFromFiles,
 } from './prerelease-safety-readiness.mjs';
 import { PrereleaseSafetyContractError } from './prerelease-safety-contract.mjs';
+import { validatePrereleaseApiOrigin } from './cloudfront-access.mjs';
 import {
   PREVIOUS_RELEASE_PROJECTION_FILENAMES,
   validatePreviousReleaseProjection,
@@ -113,6 +116,7 @@ const SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const AWS_CLI_VERSION_OUTPUT = /(?:^|\s)aws-cli\/([0-9]+\.[0-9]+\.[0-9]+)(?=\s|$)/u;
 const RELEASE_ID = /^rel-[0-9]{8}-[0-9]{4}-([0-9a-f]{7})$/u;
+const CLOUDFORMATION_CLIENT_REQUEST_TOKEN = /^[A-Za-z0-9][-A-Za-z0-9]{0,127}$/u;
 const STACK_NAME =
   /^checkout-(assessment-release|assessment-prerelease-[a-z0-9][a-z0-9-]{0,39})-(data|api|observability|web)$/u;
 const AWS_REGION =
@@ -131,6 +135,8 @@ const DYNAMODB_TABLE_NAME = /^[A-Za-z0-9_.-]{3,255}$/u;
 const VERSION_ID = /^[A-Za-z0-9._~+/=-]{1,1024}$/u;
 const SAFE_OBJECT_KEY =
   /^(?:index\.html|public-config\.json|product-placeholder\.svg|legal\/[A-Za-z0-9._/-]{1,512})$/u;
+const SAFE_DEPLOYED_WEB_KEY =
+  /^(?=.{1,1024}$)(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9][A-Za-z0-9._/-]*$/u;
 const STACK_SUFFIXES = ['data', 'api', 'observability', 'web'];
 const MUTABLE_WEB_KEYS = new Set(['index.html', 'public-config.json', 'product-placeholder.svg']);
 const VERSIONED_ROLLBACK_WEB_KEYS = ['index.html', 'public-config.json'];
@@ -141,6 +147,20 @@ const DEFAULT_OUTPUT_ROOT = 'output/evidence/runtime';
 const DEFAULT_INTERNAL_ROOT = 'output/evidence/runtime/.private-stage7';
 const COMMAND_TIMEOUT_MS = 20 * 60 * 1000;
 const MAX_COMMAND_OUTPUT_BYTES = 32 * 1024 * 1024;
+const WORKSPACE_TOOL_CONTRACTS = Object.freeze({
+  cdk: {
+    relativePath: 'infra/node_modules/aws-cdk/bin/cdk',
+    packageName: 'aws-cdk',
+    packageVersion: '2.1136.0',
+    sha256: '99c234c2094e6e0c1087cdf54aa5c8879b67bf309cdab7433478c3daf5998f79',
+  },
+  tsx: {
+    relativePath: 'node_modules/tsx/dist/cli.mjs',
+    packageName: 'tsx',
+    packageVersion: '4.23.12',
+    sha256: 'fd00586b96028510c228365a4eeb1f163dac5245f1d0e40649969cf9560d376b',
+  },
+});
 const RELEASE_RECONCILIATION_RECOVERY_WORKFLOW =
   'ivanmonsalve0404/async-checkout-demo/.github/workflows/stage7-release-reconciliation-recovery.yml@refs/heads/master';
 const RELEASE_RECONCILIATION_RECOVERY_ENVIRONMENT = 'assessment-release-reconciliation-recovery';
@@ -268,6 +288,7 @@ const jsonSourceBinding = (label, filename) => {
 const emergencyNoActionSourceBindings = (flags) =>
   EMERGENCY_NO_ACTION_SOURCE_FLAGS.map((label) => jsonSourceBinding(label, flags[label]));
 const utc = (now) => now.toISOString();
+const INITIAL_ROLLBACK_EVENT_CLOCK_SKEW_MS = 60_000;
 const canonicalUtc = (value) => {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)) {
     return false;
@@ -677,6 +698,43 @@ const defaultExecutor = ({ command, args, cwd = workspaceRoot, env = process.env
   return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
 };
 
+const workspaceToolEntrypoint = (name) => {
+  const contract = WORKSPACE_TOOL_CONTRACTS[name];
+  if (contract === undefined) fail('E7_WORKSPACE_TOOL_INVALID');
+  try {
+    const declaredPath = path.resolve(workspaceRoot, contract.relativePath);
+    const resolvedPath = realpathSync.native(declaredPath);
+    const relative = path.relative(workspaceRoot, resolvedPath);
+    const packageRoot = path.dirname(path.dirname(resolvedPath));
+    const packageJsonPath = path.join(packageRoot, 'package.json');
+    const executableStat = lstatSync(resolvedPath);
+    const packageStat = lstatSync(packageJsonPath);
+    const packageJson = strictJson(
+      readFileSync(packageJsonPath, 'utf8'),
+      'E7_WORKSPACE_TOOL_INVALID',
+    );
+    if (
+      relative === '..' ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative) ||
+      !relative.split(path.sep).includes('node_modules') ||
+      !executableStat.isFile() ||
+      executableStat.isSymbolicLink() ||
+      !packageStat.isFile() ||
+      packageStat.isSymbolicLink() ||
+      packageJson?.name !== contract.packageName ||
+      packageJson?.version !== contract.packageVersion ||
+      sha256(readFileSync(resolvedPath)) !== contract.sha256
+    ) {
+      fail('E7_WORKSPACE_TOOL_INVALID');
+    }
+    return resolvedPath;
+  } catch (error) {
+    if (error instanceof Stage7AwsError) throw error;
+    fail('E7_WORKSPACE_TOOL_INVALID');
+  }
+};
+
 const run = (executor, command, args, { cwd = workspaceRoot, env = process.env, code }) => {
   if (!Array.isArray(args) || args.some((argument) => typeof argument !== 'string')) {
     fail('E7_EXECUTOR_ARGUMENT_INVALID');
@@ -692,12 +750,17 @@ const run = (executor, command, args, { cwd = workspaceRoot, env = process.env, 
 };
 
 const aws = (context, args, code, options = {}) =>
-  run(
-    context.executor,
-    context.awsCommand,
-    [...args, '--region', options.region ?? context.config.aws.region, '--no-cli-pager'],
-    { code, env: options.env ?? context.environmentVariables },
-  );
+  (() => {
+    if (typeof context.awsCommand !== 'string' || context.awsCommand === '') {
+      fail('E7_OFFLINE_AWS_EXECUTION_FORBIDDEN');
+    }
+    return run(
+      context.executor,
+      context.awsCommand,
+      [...args, '--region', options.region ?? context.config.aws.region, '--no-cli-pager'],
+      { code, env: options.env ?? context.childEnvironment },
+    );
+  })();
 
 const awsJson = (context, args, code, options = {}) =>
   strictJson(aws(context, [...args, '--output', 'json'], code, options), code);
@@ -707,7 +770,7 @@ const frozenAwsCliVersion = (context, expectedVersion) => {
     command: context.awsCommand,
     args: ['--version'],
     cwd: workspaceRoot,
-    env: context.environmentVariables,
+    env: context.childEnvironment,
   });
   if (
     !object(result) ||
@@ -728,10 +791,10 @@ const cdkResult = (context, args, code) => {
     fail('E7_HOTSWAP_FORBIDDEN');
   }
   const result = context.executor({
-    command: context.pnpmCommand,
-    args: ['--filter', '@checkout/infra', 'exec', 'cdk', ...args],
+    command: process.execPath,
+    args: [workspaceToolEntrypoint('cdk'), ...args],
     cwd: workspaceRoot,
-    env: context.environmentVariables,
+    env: context.childEnvironment,
   });
   if (
     !object(result) ||
@@ -746,7 +809,145 @@ const cdkResult = (context, args, code) => {
 
 const cdk = (context, args, code) => cdkResult(context, args, code).stdout.trim();
 
-const commandName = (base) => (process.platform === 'win32' ? `${base}.cmd` : base);
+const commandName = (base, platform = process.platform) =>
+  platform === 'win32' ? (base === 'aws' ? 'aws.exe' : `${base}.cmd`) : base;
+
+const isOutsideWorkspace = (candidate) => {
+  const relative = path.relative(workspaceRoot, candidate);
+  return relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+};
+
+const protectedToolCommand = (environmentVariables, key, base, platform = process.platform) => {
+  const fallback = commandName(base, platform);
+  const override = environmentVariables[key];
+  if (override === undefined) return fallback;
+  if (typeof override !== 'string' || override === '') {
+    fail('E7_PROTECTED_TOOL_COMMAND_INVALID');
+  }
+  if (environmentVariables.GITHUB_ACTIONS === 'true') {
+    fail('E7_PROTECTED_TOOL_COMMAND_INVALID');
+  }
+  try {
+    const resolved = realpathSync.native(override);
+    const stat = lstatSync(resolved);
+    if (
+      !path.isAbsolute(override) ||
+      path.basename(resolved).toLowerCase() !== fallback.toLowerCase() ||
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      !isOutsideWorkspace(resolved)
+    ) {
+      fail('E7_PROTECTED_TOOL_COMMAND_INVALID');
+    }
+    return resolved;
+  } catch (error) {
+    if (error instanceof Stage7AwsError) throw error;
+    fail('E7_PROTECTED_TOOL_COMMAND_INVALID');
+  }
+};
+
+const awsExecutableCommand = (
+  environmentVariables,
+  executor,
+  { platform = process.platform, inspectFile = lstatSync, realpathFile = realpathSync.native } = {},
+) => {
+  const command = protectedToolCommand(environmentVariables, 'STAGE7_AWS_COMMAND', 'aws', platform);
+  if (executor !== defaultExecutor || path.isAbsolute(command)) return command;
+  const pathValue = Object.entries(environmentVariables).find(
+    ([key]) => key.toUpperCase() === 'PATH',
+  )?.[1];
+  if (typeof pathValue !== 'string' || pathValue === '') {
+    fail('E7_AWS_EXECUTABLE_INVALID');
+  }
+  for (const directory of pathValue.split(path.delimiter)) {
+    if (directory === '') continue;
+    const candidate = path.join(directory, command);
+    try {
+      const resolved = realpathFile(candidate);
+      const stat = inspectFile(resolved);
+      if (
+        stat.isFile() &&
+        !stat.isSymbolicLink() &&
+        path.basename(resolved).toLowerCase() === command.toLowerCase() &&
+        isOutsideWorkspace(resolved) &&
+        (platform === 'win32' || (stat.uid === 0 && (stat.mode & 0o022) === 0))
+      ) {
+        return resolved;
+      }
+    } catch {
+      // Continue searching the inherited, case-deduplicated PATH.
+    }
+  }
+  fail('E7_AWS_EXECUTABLE_INVALID');
+};
+
+const childProcessEnvironment = (environmentVariables, { includeAwsCredentials, region }) => {
+  const entries = Object.entries(environmentVariables);
+  const normalizedKeys = entries.map(([key]) => key.toUpperCase());
+  if (new Set(normalizedKeys).size !== normalizedKeys.length) {
+    fail('E7_CHILD_PROCESS_ENVIRONMENT_INVALID');
+  }
+  const byUppercaseKey = new Map(entries.map(([key, value]) => [key.toUpperCase(), value]));
+  const forbiddenExact = new Set([
+    'ALL_PROXY',
+    'AWS_CA_BUNDLE',
+    'AWS_CONFIG_FILE',
+    'AWS_DEFAULT_PROFILE',
+    'AWS_EC2_METADATA_SERVICE_ENDPOINT',
+    'AWS_PROFILE',
+    'AWS_ROLE_ARN',
+    'AWS_ROLE_SESSION_NAME',
+    'AWS_SHARED_CREDENTIALS_FILE',
+    'AWS_WEB_IDENTITY_TOKEN_FILE',
+    'BOTO_CONFIG',
+    'DYLD_INSERT_LIBRARIES',
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'LD_PRELOAD',
+    'NODE_EXTRA_CA_CERTS',
+    'NODE_OPTIONS',
+    'NODE_PATH',
+    'NO_PROXY',
+    'SSL_CERT_DIR',
+    'SSL_CERT_FILE',
+  ]);
+  if (
+    entries.some(([key]) => {
+      const upper = key.toUpperCase();
+      return (
+        forbiddenExact.has(upper) ||
+        upper.startsWith('AWS_ENDPOINT_URL') ||
+        upper.startsWith('AWS_CONTAINER_CREDENTIALS_') ||
+        upper.startsWith('DYLD_')
+      );
+    })
+  ) {
+    fail('E7_CHILD_PROCESS_ENVIRONMENT_INVALID');
+  }
+  if (byUppercaseKey.has('CI') && String(byUppercaseKey.get('CI')).toLowerCase() !== 'true') {
+    fail('E7_CHILD_PROCESS_ENVIRONMENT_INVALID');
+  }
+  const allowedKeys = ['PATH', 'SYSTEMROOT', 'TEMP', 'TMP', 'TMPDIR', 'WINDIR'];
+  const result = Object.fromEntries(
+    allowedKeys
+      .map((key) => [key, byUppercaseKey.get(key)])
+      .filter(([, value]) => typeof value === 'string' && value !== ''),
+  );
+  result.AWS_EC2_METADATA_DISABLED = 'true';
+  result.CI = 'true';
+  if (includeAwsCredentials) {
+    for (const key of ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN']) {
+      const value = byUppercaseKey.get(key);
+      if (typeof value !== 'string' || value === '') {
+        fail('E7_TEMPORARY_SESSION_REQUIRED');
+      }
+      result[key] = value;
+    }
+    result.AWS_REGION = region;
+    result.AWS_DEFAULT_REGION = region;
+  }
+  return result;
+};
 
 const roleArnFor = (config, capability) => {
   const awsConfig = config.aws;
@@ -803,7 +1004,7 @@ const validateOperationScope = (config, scope, { allowPlan = false } = {}) => {
   if (scope === 'prerelease') {
     if (
       !config.environment.startsWith('assessment-prerelease-') ||
-      config.domain.mode !== 'AWS_MANAGED'
+      config.domain?.mode !== 'CUSTOM_AUTHORIZED'
     ) {
       fail('E7_PRERELEASE_BOUNDARY_INVALID');
     }
@@ -954,6 +1155,9 @@ const loadOperationContext = ({
       fail('E7_TEMPORARY_SESSION_REQUIRED');
     }
   }
+  if (environmentVariables.STAGE7_PNPM_COMMAND !== undefined) {
+    fail('E7_PROTECTED_TOOL_COMMAND_INVALID');
+  }
   if (flags['aws-auth'] !== undefined) {
     if (normalizedScope !== 'prerelease') {
       const journalRoleArn = environmentVariables.STAGE7_RELEASE_JOURNAL_CLEANUP_ROLE_ARN;
@@ -1069,8 +1273,12 @@ const loadOperationContext = ({
     }
   }
   return {
-    awsCommand: environmentVariables.STAGE7_AWS_COMMAND ?? commandName('aws'),
+    awsCommand: requireAws ? awsExecutableCommand(environmentVariables, executor) : null,
     capability,
+    childEnvironment: childProcessEnvironment(environmentVariables, {
+      includeAwsCredentials: requireAws,
+      region: config.aws.region,
+    }),
     config,
     environmentVariables,
     executor,
@@ -1078,7 +1286,6 @@ const loadOperationContext = ({
     flags,
     identity,
     now,
-    pnpmCommand: environmentVariables.STAGE7_PNPM_COMMAND ?? commandName('pnpm'),
     scope: normalizedScope,
     stacks,
   };
@@ -1225,6 +1432,9 @@ const loadReleaseReconciliationRecoveryOperationContext = ({
   now,
   gitSpawn = spawnSync,
 }) => {
+  if (environmentVariables.STAGE7_PNPM_COMMAND !== undefined) {
+    fail('E7_PROTECTED_TOOL_COMMAND_INVALID');
+  }
   validateRecoveryRuntimeEnvironment({
     actor: recoveryActor,
     environmentVariables,
@@ -1303,8 +1513,12 @@ const loadReleaseReconciliationRecoveryOperationContext = ({
       : roleArnFor(config, 'read');
   roleResource(expectedRoleArn, 'E7_RELEASE_RECONCILIATION_RECOVERY_ROLE_INVALID');
   return {
-    awsCommand: environmentVariables.STAGE7_AWS_COMMAND ?? commandName('aws'),
+    awsCommand: awsExecutableCommand(environmentVariables, executor),
     capability: capability === 'mutation' ? 'recovery' : 'read',
+    childEnvironment: childProcessEnvironment(environmentVariables, {
+      includeAwsCredentials: true,
+      region: config.aws.region,
+    }),
     config,
     environmentVariables,
     executor,
@@ -1315,7 +1529,6 @@ const loadReleaseReconciliationRecoveryOperationContext = ({
       releaseId: recoveryIntent.source.releaseId,
     },
     now,
-    pnpmCommand: environmentVariables.STAGE7_PNPM_COMMAND ?? commandName('pnpm'),
     recoveryActor,
     recoveryIntent,
     scope: undefined,
@@ -1641,16 +1854,810 @@ const cloudAssemblyStacks = (assemblyPath) => {
   return { app, manifest, stacks };
 };
 
+const validateWebApiOriginContract = (context, distributionConfig) => {
+  const origins = Array.isArray(distributionConfig?.Origins) ? distributionConfig.Origins : [];
+  const customOrigins = origins.filter(
+    ({ CustomOriginConfig }) => CustomOriginConfig !== undefined,
+  );
+  const apiBehaviors = Array.isArray(distributionConfig?.CacheBehaviors)
+    ? distributionConfig.CacheBehaviors.filter(({ PathPattern }) => PathPattern === 'api/*')
+    : [];
+  const apiOrigin = customOrigins[0];
+  const apiBehavior = apiBehaviors[0];
+  const customDomain = context.config.domain.mode === 'CUSTOM_AUTHORIZED';
+  const serializedManagedDomain = JSON.stringify(apiOrigin?.DomainName) ?? '';
+  const domainValid = customDomain
+    ? apiOrigin?.DomainName === context.config.domain.apiHostname
+    : serializedManagedDomain.includes('.execute-api.') &&
+      serializedManagedDomain.includes(context.config.aws.region);
+  if (
+    customOrigins.length !== 1 ||
+    apiBehaviors.length !== 1 ||
+    typeof apiOrigin?.Id !== 'string' ||
+    apiOrigin.Id === '' ||
+    apiBehavior?.TargetOriginId !== apiOrigin.Id ||
+    !domainValid ||
+    apiOrigin.CustomOriginConfig?.OriginProtocolPolicy !== 'https-only' ||
+    JSON.stringify(apiOrigin.CustomOriginConfig?.OriginSSLProtocols) !== JSON.stringify(['TLSv1.2'])
+  ) {
+    fail('E7_CLOUD_ASSEMBLY_INITIAL_WEB_PUBLICATION_INVALID');
+  }
+  return apiOrigin;
+};
+
+const logicalReference = (value) =>
+  exactKeys(value, ['Ref']) && typeof value.Ref === 'string' ? value.Ref : null;
+
+const logicalGetAtt = (value, attribute) =>
+  exactKeys(value, ['Fn::GetAtt']) &&
+  Array.isArray(value['Fn::GetAtt']) &&
+  value['Fn::GetAtt'].length === 2 &&
+  typeof value['Fn::GetAtt'][0] === 'string' &&
+  value['Fn::GetAtt'][1] === attribute
+    ? value['Fn::GetAtt'][0]
+    : null;
+
+const validatePublicationControlUsage = (template, { expectedLiteralPaths }, code) => {
+  const actualLiteralPaths = [];
+  const visit = (value, path = []) => {
+    if (
+      typeof value === 'string' &&
+      (value.includes('PublicationState') || value.includes('PublicationEnabled'))
+    ) {
+      actualLiteralPaths.push(path.join('.'));
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => visit(entry, [...path, String(index)]));
+      return;
+    }
+    if (!object(value)) return;
+    for (const [key, entry] of Object.entries(value)) {
+      const entryPath = [...path, key];
+      if (key.includes('PublicationState') || key.includes('PublicationEnabled')) {
+        actualLiteralPaths.push(`${entryPath.join('.')}#key`);
+      }
+      visit(entry, entryPath);
+    }
+  };
+  visit(template);
+  const expected = expectedLiteralPaths.toSorted();
+  const actual = actualLiteralPaths.toSorted();
+  if (
+    JSON.stringify(actual) !== JSON.stringify(expected) ||
+    (expected.length > 0 &&
+      (canonicalJson(template.Parameters?.PublicationState) !==
+        canonicalJson({
+          Type: 'String',
+          Default: 'DISABLED',
+          AllowedValues: ['DISABLED', 'ENABLED'],
+          Description:
+            'CloudFormation-managed publication state; changed only by audited activation/rollback',
+        }) ||
+        canonicalJson(template.Conditions?.PublicationEnabled) !==
+          canonicalJson({ 'Fn::Equals': [{ Ref: 'PublicationState' }, 'ENABLED'] })))
+  ) {
+    fail(code);
+  }
+};
+
+const validateReleaseStackResourceAllowlist = (context, artifactId, template) => {
+  const suffix = STACK_SUFFIXES.find((value) => artifactId.endsWith(`-${value}`));
+  if (suffix === undefined) fail('E7_CLOUD_ASSEMBLY_RESOURCE_ALLOWLIST_INVALID');
+  const commonMetadata = { 'AWS::CDK::Metadata': 1 };
+  const expectedBySuffix = {
+    data: {
+      ...commonMetadata,
+      'AWS::DynamoDB::Table': 2,
+    },
+    api: {
+      ...commonMetadata,
+      'AWS::ApiGatewayV2::Api': 1,
+      ...(context.config.domain.mode === 'CUSTOM_AUTHORIZED'
+        ? {
+            'AWS::ApiGatewayV2::ApiMapping': 1,
+            'AWS::ApiGatewayV2::DomainName': 1,
+            'AWS::Route53::RecordSet': 2,
+          }
+        : {}),
+      'AWS::ApiGatewayV2::Integration': 1,
+      'AWS::ApiGatewayV2::Route': 1,
+      'AWS::ApiGatewayV2::Stage': 1,
+      'AWS::IAM::Policy': 3,
+      'AWS::IAM::Role': 3,
+      'AWS::Lambda::Alias': 2,
+      'AWS::Lambda::Function': 2,
+      'AWS::Lambda::Permission': 1,
+      'AWS::Lambda::Version': 2,
+      'AWS::Logs::LogGroup': 3,
+      'AWS::Scheduler::Schedule': 1,
+    },
+    observability: {
+      ...commonMetadata,
+      'AWS::Budgets::Budget': 1,
+      'AWS::CloudWatch::Alarm': 15,
+      'AWS::CloudWatch::Dashboard': 1,
+      'AWS::Logs::MetricFilter': 11,
+      'AWS::SNS::Subscription': 1,
+      'AWS::SNS::Topic': 1,
+      'AWS::SNS::TopicPolicy': 1,
+    },
+    web: {
+      ...commonMetadata,
+      'AWS::CloudFront::Distribution': 1,
+      'AWS::CloudFront::Function': 1,
+      'AWS::CloudFront::OriginAccessControl': 1,
+      'AWS::CloudFront::ResponseHeadersPolicy': 3,
+      'AWS::CloudWatch::Alarm': 1,
+      'AWS::CloudWatch::Dashboard': 1,
+      'AWS::IAM::Policy': 1,
+      'AWS::IAM::Role': context.scope === 'prerelease' ? 2 : 1,
+      'AWS::Lambda::Function': context.scope === 'prerelease' ? 2 : 1,
+      'AWS::Lambda::LayerVersion': 2,
+      'AWS::Logs::LogGroup': 1,
+      ...(context.config.domain.mode === 'CUSTOM_AUTHORIZED'
+        ? { 'AWS::Route53::RecordSet': 2 }
+        : {}),
+      'AWS::S3::Bucket': 1,
+      'AWS::S3::BucketPolicy': 1,
+      'AWS::SSM::Parameter': 1,
+      'Custom::CDKBucketDeployment': 2,
+      ...(context.scope === 'prerelease' ? { 'Custom::S3AutoDeleteObjects': 1 } : {}),
+    },
+  };
+  const actual = Object.fromEntries(
+    Object.entries(
+      Object.groupBy(Object.values(template?.Resources ?? {}), (resource) => resource.Type),
+    ).map(([type, resources]) => [type, resources.length]),
+  );
+  if (JSON.stringify(actual) !== JSON.stringify(expectedBySuffix[suffix])) {
+    const sortedActual = Object.fromEntries(
+      Object.entries(actual).toSorted(([a], [b]) => a.localeCompare(b)),
+    );
+    const sortedExpected = Object.fromEntries(
+      Object.entries(expectedBySuffix[suffix]).toSorted(([a], [b]) => a.localeCompare(b)),
+    );
+    if (JSON.stringify(sortedActual) !== JSON.stringify(sortedExpected)) {
+      fail('E7_CLOUD_ASSEMBLY_RESOURCE_ALLOWLIST_INVALID');
+    }
+  }
+  if (['data', 'observability'].includes(suffix)) {
+    validatePublicationControlUsage(
+      template,
+      { expectedLiteralPaths: [] },
+      'E7_CLOUD_ASSEMBLY_RESOURCE_ALLOWLIST_INVALID',
+    );
+  }
+};
+
+const validateInitialWebPublicationContract = (context, template) => {
+  const resourceEntries = object(template?.Resources) ? Object.entries(template.Resources) : [];
+  const resourcesOfType = (type) =>
+    resourceEntries.filter(([, resource]) => resource.Type === type);
+  const distributions = resourcesOfType('AWS::CloudFront::Distribution');
+  const buckets = resourcesOfType('AWS::S3::Bucket');
+  const bucketPolicies = resourcesOfType('AWS::S3::BucketPolicy');
+  const originAccessControls = resourcesOfType('AWS::CloudFront::OriginAccessControl');
+  const cloudFrontFunctions = resourcesOfType('AWS::CloudFront::Function');
+  const responseHeadersPolicies = resourcesOfType('AWS::CloudFront::ResponseHeadersPolicy');
+  const dnsRecords = resourcesOfType('AWS::Route53::RecordSet');
+  const parameters = resourcesOfType('AWS::SSM::Parameter');
+  const [distributionLogicalId, distribution] = distributions[0] ?? [];
+  const [bucketLogicalId] = buckets[0] ?? [];
+  const bucket = buckets[0]?.[1];
+  const bucketPolicy = bucketPolicies[0]?.[1];
+  const [originAccessControlLogicalId, originAccessControl] = originAccessControls[0] ?? [];
+  const [cloudFrontFunctionLogicalId] = cloudFrontFunctions[0] ?? [];
+  validatePublicationControlUsage(
+    template,
+    {
+      expectedLiteralPaths: [
+        'Parameters.PublicationState#key',
+        'Conditions.PublicationEnabled#key',
+        'Conditions.PublicationEnabled.Fn::Equals.0.Ref',
+        `Resources.${distributionLogicalId}.Properties.DistributionConfig.Enabled.Fn::If.0`,
+        'Outputs.WebPublicationStatus.Value.Fn::If.0',
+      ],
+    },
+    'E7_CLOUD_ASSEMBLY_INITIAL_WEB_PUBLICATION_INVALID',
+  );
+  const distributionConfig = distribution?.Properties?.DistributionConfig;
+  const origins = distributionConfig?.Origins;
+  const s3Origins = Array.isArray(origins)
+    ? origins.filter((origin) => object(origin?.S3OriginConfig))
+    : [];
+  const customOrigins = Array.isArray(origins)
+    ? origins.filter((origin) => object(origin?.CustomOriginConfig))
+    : [];
+  const webOrigin = s3Origins[0];
+  const apiOrigin = customOrigins[0];
+  const defaultBehavior = distributionConfig?.DefaultCacheBehavior;
+  const cacheBehaviors = distributionConfig?.CacheBehaviors;
+  const assetsBehaviors = Array.isArray(cacheBehaviors)
+    ? cacheBehaviors.filter(({ PathPattern }) => PathPattern === 'assets/*')
+    : [];
+  const apiBehaviors = Array.isArray(cacheBehaviors)
+    ? cacheBehaviors.filter(({ PathPattern }) => PathPattern === 'api/*')
+    : [];
+  const assetsBehavior = assetsBehaviors[0];
+  const apiBehavior = apiBehaviors[0];
+  const customDomain = context.config.domain.mode === 'CUSTOM_AUTHORIZED';
+  const expectedBaseUrl = customDomain
+    ? `https://${context.config.domain.hostname}`
+    : {
+        'Fn::Join': ['', ['https://', { 'Fn::GetAtt': [distributionLogicalId, 'DomainName'] }]],
+      };
+  const expectedOutput = (suffix) =>
+    customDomain
+      ? `${expectedBaseUrl}${suffix}`
+      : {
+          'Fn::Join': [
+            '',
+            [
+              'https://',
+              { 'Fn::GetAtt': [distributionLogicalId, 'DomainName'] },
+              ...(suffix === '' ? [] : [suffix]),
+            ],
+          ],
+        };
+  const outputs = template?.Outputs;
+  const expectedOriginAccessControlConfig =
+    originAccessControl?.Properties?.OriginAccessControlConfig;
+  const responseHeadersPolicyLogicalIds = responseHeadersPolicies.map(([logicalId]) => logicalId);
+  const behaviorResponseHeadersPolicyLogicalIds = [
+    logicalReference(defaultBehavior?.ResponseHeadersPolicyId),
+    logicalReference(assetsBehavior?.ResponseHeadersPolicyId),
+    logicalReference(apiBehavior?.ResponseHeadersPolicyId),
+  ];
+  const expectedDnsAliasTarget = {
+    DNSName: { 'Fn::GetAtt': [distributionLogicalId, 'DomainName'] },
+    HostedZoneId: {
+      'Fn::FindInMap': [
+        'AWSCloudFrontPartitionHostedZoneIdMap',
+        { Ref: 'AWS::Partition' },
+        'zoneId',
+      ],
+    },
+  };
+  const bucketPolicyStatements = bucketPolicy?.Properties?.PolicyDocument?.Statement;
+  const expectedCloudFrontSourceArn = {
+    'Fn::Join': [
+      '',
+      [
+        'arn:',
+        { Ref: 'AWS::Partition' },
+        ':cloudfront::',
+        { Ref: 'AWS::AccountId' },
+        ':distribution/',
+        { Ref: distributionLogicalId },
+      ],
+    ],
+  };
+  const expectedBucketObjectArn = {
+    'Fn::Join': ['', [{ 'Fn::GetAtt': [bucketLogicalId, 'Arn'] }, '/*']],
+  };
+  const cloudFrontReadStatements = Array.isArray(bucketPolicyStatements)
+    ? bucketPolicyStatements.filter(
+        (statement) =>
+          statement?.Effect === 'Allow' &&
+          statement?.Principal?.Service === 'cloudfront.amazonaws.com',
+      )
+    : [];
+  const bucketManagementStatements = Array.isArray(bucketPolicyStatements)
+    ? bucketPolicyStatements.filter(
+        (statement) =>
+          statement?.Effect === 'Allow' &&
+          statement?.Principal?.Service !== 'cloudfront.amazonaws.com',
+      )
+    : [];
+  const expectedBucketResources = [
+    { 'Fn::GetAtt': [bucketLogicalId, 'Arn'] },
+    expectedBucketObjectArn,
+  ];
+  const prereleaseBucketManagementValid =
+    context.scope === 'prerelease'
+      ? bucketManagementStatements.length === 1 &&
+        JSON.stringify(bucketManagementStatements[0]?.Action) ===
+          JSON.stringify(['s3:PutBucketPolicy', 's3:GetBucket*', 's3:List*', 's3:DeleteObject*']) &&
+        typeof logicalGetAtt(bucketManagementStatements[0]?.Principal?.AWS, 'Arn') === 'string' &&
+        JSON.stringify(bucketManagementStatements[0]?.Resource) ===
+          JSON.stringify(expectedBucketResources)
+      : bucketManagementStatements.length === 0;
+  const unsafeBucketAllow = Array.isArray(bucketPolicyStatements)
+    ? bucketPolicyStatements.some((statement) => {
+        if (statement?.Effect !== 'Allow') return false;
+        const actions = Array.isArray(statement.Action) ? statement.Action : [statement.Action];
+        const publicPrincipal = statement.Principal === '*' || statement.Principal?.AWS === '*';
+        const objectReadOutsideCloudFront =
+          statement.Principal?.Service !== 'cloudfront.amazonaws.com' &&
+          actions.some((action) => action === 's3:GetObject' || action === 's3:*');
+        return publicPrincipal || objectReadOutsideCloudFront;
+      })
+    : true;
+  const bucketSecurityValid =
+    bucketPolicies.length === 1 &&
+    logicalReference(bucketPolicy?.Properties?.Bucket) === bucketLogicalId &&
+    bucketPolicy?.Properties?.PolicyDocument?.Version === '2012-10-17' &&
+    Array.isArray(bucketPolicyStatements) &&
+    bucketPolicyStatements.length === (context.scope === 'prerelease' ? 3 : 2) &&
+    cloudFrontReadStatements.length === 1 &&
+    cloudFrontReadStatements[0]?.Action === 's3:GetObject' &&
+    JSON.stringify(cloudFrontReadStatements[0]?.Condition) ===
+      JSON.stringify({ StringEquals: { 'AWS:SourceArn': expectedCloudFrontSourceArn } }) &&
+    JSON.stringify(cloudFrontReadStatements[0]?.Resource) ===
+      JSON.stringify(expectedBucketObjectArn) &&
+    prereleaseBucketManagementValid &&
+    !unsafeBucketAllow &&
+    bucketPolicyStatements.some(
+      (statement) =>
+        statement?.Effect === 'Deny' &&
+        statement?.Action === 's3:*' &&
+        statement?.Principal?.AWS === '*' &&
+        statement?.Condition?.Bool?.['aws:SecureTransport'] === 'false',
+    ) &&
+    JSON.stringify(bucket?.Properties?.PublicAccessBlockConfiguration) ===
+      JSON.stringify({
+        BlockPublicAcls: true,
+        BlockPublicPolicy: true,
+        IgnorePublicAcls: true,
+        RestrictPublicBuckets: true,
+      }) &&
+    JSON.stringify(bucket?.Properties?.OwnershipControls) ===
+      JSON.stringify({ Rules: [{ ObjectOwnership: 'BucketOwnerEnforced' }] }) &&
+    JSON.stringify(bucket?.Properties?.BucketEncryption) ===
+      JSON.stringify({
+        ServerSideEncryptionConfiguration: [
+          { ServerSideEncryptionByDefault: { SSEAlgorithm: 'AES256' } },
+        ],
+      }) &&
+    bucket?.Properties?.VersioningConfiguration?.Status === 'Enabled';
+  const topologyValid =
+    distributions.length === 1 &&
+    buckets.length === 1 &&
+    bucketSecurityValid &&
+    originAccessControls.length === 1 &&
+    cloudFrontFunctions.length === 1 &&
+    responseHeadersPolicies.length === 3 &&
+    Array.isArray(origins) &&
+    origins.length === 2 &&
+    s3Origins.length === 1 &&
+    customOrigins.length === 1 &&
+    typeof webOrigin?.Id === 'string' &&
+    webOrigin.Id !== '' &&
+    logicalGetAtt(webOrigin?.DomainName, 'RegionalDomainName') === bucketLogicalId &&
+    JSON.stringify(webOrigin?.S3OriginConfig) === JSON.stringify({ OriginAccessIdentity: '' }) &&
+    logicalGetAtt(webOrigin?.OriginAccessControlId, 'Id') === originAccessControlLogicalId &&
+    expectedOriginAccessControlConfig?.OriginAccessControlOriginType === 's3' &&
+    expectedOriginAccessControlConfig?.SigningBehavior === 'always' &&
+    expectedOriginAccessControlConfig?.SigningProtocol === 'sigv4' &&
+    validateWebApiOriginContract(context, distributionConfig) === apiOrigin &&
+    Array.isArray(cacheBehaviors) &&
+    cacheBehaviors.length === 2 &&
+    assetsBehaviors.length === 1 &&
+    apiBehaviors.length === 1 &&
+    defaultBehavior?.TargetOriginId === webOrigin.Id &&
+    defaultBehavior?.CachePolicyId === '4135ea2d-6df8-44a3-9df3-4b5a84be39ad' &&
+    defaultBehavior?.Compress === true &&
+    defaultBehavior?.ViewerProtocolPolicy === 'redirect-to-https' &&
+    defaultBehavior?.AllowedMethods === undefined &&
+    defaultBehavior?.OriginRequestPolicyId === undefined &&
+    Array.isArray(defaultBehavior?.FunctionAssociations) &&
+    defaultBehavior.FunctionAssociations.length === 1 &&
+    defaultBehavior.FunctionAssociations[0]?.EventType === 'viewer-request' &&
+    logicalGetAtt(defaultBehavior.FunctionAssociations[0]?.FunctionARN, 'FunctionARN') ===
+      cloudFrontFunctionLogicalId &&
+    assetsBehavior?.TargetOriginId === webOrigin.Id &&
+    assetsBehavior?.CachePolicyId === '658327ea-f89d-4fab-a63d-7e88639e58f6' &&
+    assetsBehavior?.Compress === true &&
+    assetsBehavior?.ViewerProtocolPolicy === 'redirect-to-https' &&
+    JSON.stringify(assetsBehavior?.AllowedMethods) === JSON.stringify(['GET', 'HEAD', 'OPTIONS']) &&
+    assetsBehavior?.OriginRequestPolicyId === undefined &&
+    assetsBehavior?.FunctionAssociations === undefined &&
+    apiBehavior?.TargetOriginId === apiOrigin.Id &&
+    apiBehavior?.CachePolicyId === '4135ea2d-6df8-44a3-9df3-4b5a84be39ad' &&
+    apiBehavior?.OriginRequestPolicyId === 'b689b0a8-53d0-40ab-baf2-68738e2966ac' &&
+    apiBehavior?.Compress === true &&
+    apiBehavior?.ViewerProtocolPolicy === 'redirect-to-https' &&
+    JSON.stringify(apiBehavior?.AllowedMethods) ===
+      JSON.stringify(['GET', 'HEAD', 'OPTIONS', 'PUT', 'PATCH', 'POST', 'DELETE']) &&
+    apiBehavior?.FunctionAssociations === undefined &&
+    new Set(behaviorResponseHeadersPolicyLogicalIds).size === 3 &&
+    behaviorResponseHeadersPolicyLogicalIds.toSorted().join('\0') ===
+      responseHeadersPolicyLogicalIds.toSorted().join('\0') &&
+    distributionConfig?.DefaultRootObject === 'index.html' &&
+    distributionConfig?.HttpVersion === 'http2and3' &&
+    distributionConfig?.PriceClass === 'PriceClass_100' &&
+    JSON.stringify(distributionConfig?.Enabled) ===
+      JSON.stringify({ 'Fn::If': ['PublicationEnabled', true, false] });
+  const domainValid = customDomain
+    ? JSON.stringify(distributionConfig?.Aliases) ===
+        JSON.stringify([context.config.domain.hostname]) &&
+      distributionConfig?.ViewerCertificate?.AcmCertificateArn ===
+        context.config.domain.webCertificateArn &&
+      distributionConfig?.ViewerCertificate?.MinimumProtocolVersion === 'TLSv1.2_2021' &&
+      distributionConfig?.ViewerCertificate?.SslSupportMethod === 'sni-only' &&
+      dnsRecords.length === 2 &&
+      dnsRecords
+        .map(([, record]) => record.Properties?.Type)
+        .toSorted()
+        .join('\0') === ['A', 'AAAA'].join('\0') &&
+      dnsRecords.every(([, record]) => {
+        const properties = record.Properties;
+        return (
+          properties?.HostedZoneId === context.config.domain.hostedZoneId &&
+          [context.config.domain.hostname, `${context.config.domain.hostname}.`].includes(
+            properties?.Name,
+          ) &&
+          JSON.stringify(properties?.AliasTarget) === JSON.stringify(expectedDnsAliasTarget)
+        );
+      })
+    : (distributionConfig?.Aliases === undefined || distributionConfig.Aliases.length === 0) &&
+      JSON.stringify(distributionConfig?.ViewerCertificate) ===
+        JSON.stringify({ CloudFrontDefaultCertificate: true }) &&
+      dnsRecords.length === 0;
+  const expectedParameterName = `/checkout-${context.config.environment}/public-origin`;
+  const parameter = parameters[0]?.[1];
+  const outputValid =
+    object(outputs) &&
+    JSON.stringify(outputs.ApplicationUrl?.Value) === JSON.stringify(expectedOutput('')) &&
+    JSON.stringify(outputs.ApiUrl?.Value) === JSON.stringify(expectedOutput('/api')) &&
+    JSON.stringify(outputs.ApiDocsUrl?.Value) === JSON.stringify(expectedOutput('/api/docs')) &&
+    JSON.stringify(outputs.HealthUrl?.Value) ===
+      JSON.stringify(expectedOutput('/api/health/ready')) &&
+    outputs.PublicOriginParameterName?.Value === expectedParameterName &&
+    logicalReference(outputs.WebBucketName?.Value) === bucketLogicalId &&
+    logicalReference(outputs.DistributionId?.Value) === distributionLogicalId &&
+    parameters.length === 1 &&
+    parameter?.Properties?.Name === expectedParameterName &&
+    parameter?.Properties?.Type === 'String' &&
+    JSON.stringify(parameter?.Properties?.Value) === JSON.stringify(expectedOutput(''));
+  if (!topologyValid || !domainValid || !outputValid) {
+    fail('E7_CLOUD_ASSEMBLY_INITIAL_WEB_PUBLICATION_INVALID');
+  }
+  return {
+    apiOrigin,
+    behaviors: [defaultBehavior, ...cacheBehaviors],
+    distributionConfig,
+  };
+};
+
+const validateInitialApiPublicationContract = (context, template, dataTemplate) => {
+  const outputs = template.Outputs;
+  const resourceEntries = object(template.Resources) ? Object.entries(template.Resources) : [];
+  const resources = resourceEntries.map(([, resource]) => resource);
+  const publicationParameter = template.Parameters?.PublicationState;
+  const publicationCondition = template.Conditions?.PublicationEnabled;
+  const schedules = resourceEntries.filter(([, { Type }]) => Type === 'AWS::Scheduler::Schedule');
+  const apis = resourceEntries.filter(([, { Type }]) => Type === 'AWS::ApiGatewayV2::Api');
+  const integrations = resourceEntries.filter(
+    ([, { Type }]) => Type === 'AWS::ApiGatewayV2::Integration',
+  );
+  const routes = resourceEntries.filter(([, { Type }]) => Type === 'AWS::ApiGatewayV2::Route');
+  const stages = resourceEntries.filter(([, { Type }]) => Type === 'AWS::ApiGatewayV2::Stage');
+  const mappings = resourceEntries.filter(
+    ([, { Type }]) => Type === 'AWS::ApiGatewayV2::ApiMapping',
+  );
+  const domains = resourceEntries.filter(
+    ([, { Type }]) => Type === 'AWS::ApiGatewayV2::DomainName',
+  );
+  const dnsRecords = resources.filter(({ Type }) => Type === 'AWS::Route53::RecordSet');
+  const lambdaFunctions = resources.filter(({ Type }) => Type === 'AWS::Lambda::Function');
+  const lambdaFunctionEntries = resourceEntries.filter(
+    ([, { Type }]) => Type === 'AWS::Lambda::Function',
+  );
+  const lambdaVersionEntries = resourceEntries.filter(
+    ([, { Type }]) => Type === 'AWS::Lambda::Version',
+  );
+  const lambdaAliasEntries = resourceEntries.filter(
+    ([, { Type }]) => Type === 'AWS::Lambda::Alias',
+  );
+  const lambdaPermissions = resourceEntries.filter(
+    ([, { Type }]) => Type === 'AWS::Lambda::Permission',
+  );
+  const iamPolicies = resourceEntries.filter(([, { Type }]) => Type === 'AWS::IAM::Policy');
+  const runtimeFunctions = lambdaFunctions.filter(
+    ({ Type, Properties }) =>
+      Type === 'AWS::Lambda::Function' &&
+      Properties?.Environment?.Variables?.PAYMENT_ADAPTER === 'sandbox',
+  );
+  const prerelease = context.scope === 'prerelease';
+  const customDomain = context.config.domain.mode === 'CUSTOM_AUTHORIZED';
+  const [apiLogicalId, api] = apis[0] ?? [];
+  const [scheduleLogicalId] = schedules[0] ?? [];
+  const [, stage] = stages[0] ?? [];
+  const [domainLogicalId, domain] = domains[0] ?? [];
+  const mapping = mappings[0]?.[1];
+  const [mappingLogicalId] = mappings[0] ?? [];
+  validatePublicationControlUsage(
+    template,
+    {
+      expectedLiteralPaths: [
+        'Parameters.PublicationState#key',
+        'Conditions.PublicationEnabled#key',
+        'Conditions.PublicationEnabled.Fn::Equals.0.Ref',
+        `Resources.${apiLogicalId}.Properties.DisableExecuteApiEndpoint.Fn::If.0`,
+        `Resources.${scheduleLogicalId}.Properties.State.Fn::If.0`,
+        'Outputs.ApiPublicationStatus.Value.Fn::If.0',
+        'Outputs.SchedulerStatus.Value.Fn::If.0',
+        ...(customDomain ? [`Resources.${mappingLogicalId}.Condition`] : []),
+      ],
+    },
+    'E7_CLOUD_ASSEMBLY_INITIAL_API_PUBLICATION_INVALID',
+  );
+  const domainConfiguration = domain?.Properties?.DomainNameConfigurations;
+  const expectedDomainReference = { Ref: domainLogicalId };
+  const expectedDomainName = context.config.domain.apiHostname;
+  const expectedRuntimeSecretArn = runtimeSecretReference(context.config);
+  const expectedRuntimeSecretVersionId = runtimeSecretVersionId(context.config);
+  const expectedPublicOriginParameterName = `/checkout-${context.config.environment}/public-origin`;
+  const dataResourceEntries = object(dataTemplate?.Resources)
+    ? Object.entries(dataTemplate.Resources)
+    : [];
+  const dataTables = dataResourceEntries.filter(([, { Type }]) => Type === 'AWS::DynamoDB::Table');
+  const [catalogTableLogicalId] =
+    dataTables.find(
+      ([, table]) =>
+        table.Properties?.TableName === `checkout-${context.config.environment}-catalog`,
+    ) ?? [];
+  const [checkoutTableLogicalId] =
+    dataTables.find(
+      ([, table]) =>
+        table.Properties?.TableName === `checkout-${context.config.environment}-checkout`,
+    ) ?? [];
+  const dataOutputs = object(dataTemplate?.Outputs) ? Object.values(dataTemplate.Outputs) : [];
+  const exportNamesFor = (logicalId) =>
+    dataOutputs
+      .filter(
+        (output) =>
+          logicalReference(output?.Value) === logicalId && typeof output?.Export?.Name === 'string',
+      )
+      .map((output) => output.Export.Name);
+  const catalogExportNames = exportNamesFor(catalogTableLogicalId);
+  const checkoutExportNames = exportNamesFor(checkoutTableLogicalId);
+  const dataBindingsValid =
+    dataTables.length === 2 &&
+    typeof catalogTableLogicalId === 'string' &&
+    typeof checkoutTableLogicalId === 'string' &&
+    catalogTableLogicalId !== checkoutTableLogicalId &&
+    logicalReference(dataTemplate?.Outputs?.CatalogTableName?.Value) === catalogTableLogicalId &&
+    logicalReference(dataTemplate?.Outputs?.CheckoutTableName?.Value) === checkoutTableLogicalId &&
+    catalogExportNames.length === 1 &&
+    checkoutExportNames.length === 1 &&
+    catalogExportNames[0] !== checkoutExportNames[0];
+  const expectedCatalogTableImport = { 'Fn::ImportValue': catalogExportNames[0] };
+  const expectedCheckoutTableImport = { 'Fn::ImportValue': checkoutExportNames[0] };
+
+  const apiAliasLogicalId = logicalReference(outputs?.ApiAliasArn?.Value);
+  const workerAliasLogicalId = logicalReference(outputs?.WorkerAliasArn?.Value);
+  const apiVersionLogicalId = logicalGetAtt(outputs?.ApiFunctionVersion?.Value, 'Version');
+  const workerVersionLogicalId = logicalGetAtt(outputs?.WorkerFunctionVersion?.Value, 'Version');
+  const aliasByLogicalId = new Map(lambdaAliasEntries);
+  const versionByLogicalId = new Map(lambdaVersionEntries);
+  const functionByLogicalId = new Map(lambdaFunctionEntries);
+  const apiAlias = aliasByLogicalId.get(apiAliasLogicalId);
+  const workerAlias = aliasByLogicalId.get(workerAliasLogicalId);
+  const apiFunctionLogicalId = logicalReference(apiAlias?.Properties?.FunctionName);
+  const workerFunctionLogicalId = logicalReference(workerAlias?.Properties?.FunctionName);
+  const apiVersion = versionByLogicalId.get(apiVersionLogicalId);
+  const workerVersion = versionByLogicalId.get(workerVersionLogicalId);
+  const [integrationLogicalId, integration] = integrations[0] ?? [];
+  const [, route] = routes[0] ?? [];
+  const [, schedule] = schedules[0] ?? [];
+  const schedulerRoleLogicalId = logicalGetAtt(schedule?.Properties?.Target?.RoleArn, 'Arn');
+  const schedulerRole = resourceEntries.find(
+    ([logicalId]) => logicalId === schedulerRoleLogicalId,
+  )?.[1];
+  const schedulerPolicies = iamPolicies.filter(([, policy]) =>
+    policy.Properties?.Roles?.some(
+      (roleReference) => logicalReference(roleReference) === schedulerRoleLogicalId,
+    ),
+  );
+  const schedulerPolicyStatements =
+    schedulerPolicies[0]?.[1]?.Properties?.PolicyDocument?.Statement;
+  const apiPermission = lambdaPermissions[0]?.[1];
+  const expectedApiPermissionSourceArn = {
+    'Fn::Join': [
+      '',
+      [
+        'arn:',
+        { Ref: 'AWS::Partition' },
+        `:execute-api:${context.config.aws.region}:`,
+        { Ref: 'AWS::AccountId' },
+        ':',
+        { Ref: apiLogicalId },
+        '/*/*/{proxy+}',
+      ],
+    ],
+  };
+  const apiRuntimeTopologyValid =
+    lambdaFunctionEntries.length === 2 &&
+    lambdaVersionEntries.length === 2 &&
+    lambdaAliasEntries.length === 2 &&
+    typeof apiAliasLogicalId === 'string' &&
+    typeof workerAliasLogicalId === 'string' &&
+    apiAliasLogicalId !== workerAliasLogicalId &&
+    typeof apiVersionLogicalId === 'string' &&
+    typeof workerVersionLogicalId === 'string' &&
+    apiVersionLogicalId !== workerVersionLogicalId &&
+    typeof apiFunctionLogicalId === 'string' &&
+    typeof workerFunctionLogicalId === 'string' &&
+    apiFunctionLogicalId !== workerFunctionLogicalId &&
+    functionByLogicalId.has(apiFunctionLogicalId) &&
+    functionByLogicalId.has(workerFunctionLogicalId) &&
+    apiAlias?.Properties?.Name === 'live' &&
+    workerAlias?.Properties?.Name === 'live' &&
+    logicalGetAtt(apiAlias?.Properties?.FunctionVersion, 'Version') === apiVersionLogicalId &&
+    logicalGetAtt(workerAlias?.Properties?.FunctionVersion, 'Version') === workerVersionLogicalId &&
+    logicalReference(apiVersion?.Properties?.FunctionName) === apiFunctionLogicalId &&
+    logicalReference(workerVersion?.Properties?.FunctionName) === workerFunctionLogicalId &&
+    outputs?.ScheduleName?.Value === `checkout-${context.config.environment}-reconcile` &&
+    logicalReference(outputs?.HttpApiId?.Value) === apiLogicalId &&
+    integrations.length === 1 &&
+    integration?.Properties?.IntegrationType === 'AWS_PROXY' &&
+    integration?.Properties?.PayloadFormatVersion === '2.0' &&
+    logicalReference(integration?.Properties?.ApiId) === apiLogicalId &&
+    logicalReference(integration?.Properties?.IntegrationUri) === apiAliasLogicalId &&
+    lambdaPermissions.length === 1 &&
+    apiPermission?.Properties?.Action === 'lambda:InvokeFunction' &&
+    logicalReference(apiPermission?.Properties?.FunctionName) === apiAliasLogicalId &&
+    apiPermission?.Properties?.Principal === 'apigateway.amazonaws.com' &&
+    JSON.stringify(apiPermission?.Properties?.SourceArn) ===
+      JSON.stringify(expectedApiPermissionSourceArn) &&
+    routes.length === 1 &&
+    route?.Properties?.AuthorizationType === 'NONE' &&
+    route?.Properties?.RouteKey === 'ANY /{proxy+}' &&
+    logicalReference(route?.Properties?.ApiId) === apiLogicalId &&
+    JSON.stringify(route?.Properties?.Target) ===
+      JSON.stringify({
+        'Fn::Join': ['', ['integrations/', { Ref: integrationLogicalId }]],
+      }) &&
+    schedule?.Properties?.Name === `checkout-${context.config.environment}-reconcile` &&
+    schedule?.Properties?.ScheduleExpression === 'rate(1 minute)' &&
+    schedule?.Properties?.FlexibleTimeWindow?.Mode === 'OFF' &&
+    logicalReference(schedule?.Properties?.Target?.Arn) === workerAliasLogicalId &&
+    schedule?.Properties?.Target?.Input === '{"action":"reconcile","mode":"sandbox"}' &&
+    JSON.stringify(schedule?.Properties?.Target?.RetryPolicy) ===
+      JSON.stringify({ MaximumEventAgeInSeconds: 300, MaximumRetryAttempts: 2 }) &&
+    schedulerRole?.Type === 'AWS::IAM::Role' &&
+    JSON.stringify(schedulerRole?.Properties?.AssumeRolePolicyDocument) ===
+      JSON.stringify({
+        Statement: [
+          {
+            Action: 'sts:AssumeRole',
+            Effect: 'Allow',
+            Principal: { Service: 'scheduler.amazonaws.com' },
+          },
+        ],
+        Version: '2012-10-17',
+      }) &&
+    schedulerPolicies.length === 1 &&
+    JSON.stringify(schedulerPolicyStatements) ===
+      JSON.stringify([
+        {
+          Action: 'lambda:InvokeFunction',
+          Effect: 'Allow',
+          Resource: { Ref: workerAliasLogicalId },
+          Sid: 'InvokeWorkerAlias',
+        },
+      ]);
+  const expectedManagedApiOrigin = {
+    'Fn::Join': [
+      '',
+      [
+        'https://',
+        { Ref: apiLogicalId },
+        `.execute-api.${context.config.aws.region}.`,
+        { Ref: 'AWS::URLSuffix' },
+      ],
+    ],
+  };
+  const customDomainResourcesValid = customDomain
+    ? domains.length === 1 &&
+      domain?.Condition === undefined &&
+      domain?.Properties?.DomainName === expectedDomainName &&
+      Array.isArray(domainConfiguration) &&
+      domainConfiguration.length === 1 &&
+      domainConfiguration[0]?.CertificateArn === context.config.domain.apiCertificateArn &&
+      domainConfiguration[0]?.EndpointType === 'REGIONAL' &&
+      domainConfiguration[0]?.SecurityPolicy === 'TLS_1_2' &&
+      mappings.length === 1 &&
+      mapping?.Condition === 'PublicationEnabled' &&
+      JSON.stringify(mapping?.Properties?.ApiId) === JSON.stringify({ Ref: apiLogicalId }) &&
+      JSON.stringify(mapping?.Properties?.DomainName) === JSON.stringify(expectedDomainReference) &&
+      mapping?.Properties?.Stage === '$default' &&
+      dnsRecords.length === 2 &&
+      dnsRecords
+        .map(({ Properties }) => Properties?.Type)
+        .toSorted()
+        .join('\0') === ['A', 'AAAA'].join('\0') &&
+      dnsRecords.every(
+        ({ Condition, Properties }) =>
+          Condition === undefined &&
+          [expectedDomainName, `${expectedDomainName}.`].includes(Properties?.Name) &&
+          Properties?.HostedZoneId === context.config.domain.hostedZoneId &&
+          JSON.stringify(Properties?.AliasTarget?.DNSName) ===
+            JSON.stringify({ 'Fn::GetAtt': [domainLogicalId, 'RegionalDomainName'] }) &&
+          JSON.stringify(Properties?.AliasTarget?.HostedZoneId) ===
+            JSON.stringify({ 'Fn::GetAtt': [domainLogicalId, 'RegionalHostedZoneId'] }),
+      ) &&
+      outputs?.ApiCustomDomainName?.Value === expectedDomainName &&
+      outputs?.ApiOriginUrl?.Value === `https://${expectedDomainName}`
+    : domains.length === 0 &&
+      mappings.length === 0 &&
+      dnsRecords.length === 0 &&
+      outputs?.ApiCustomDomainName?.Value === 'NONE_MANAGED_PRERELEASE' &&
+      JSON.stringify(outputs?.ApiOriginUrl?.Value) === JSON.stringify(expectedManagedApiOrigin);
+  if (
+    publicationParameter?.Default !== 'DISABLED' ||
+    JSON.stringify(publicationParameter?.AllowedValues) !==
+      JSON.stringify(['DISABLED', 'ENABLED']) ||
+    JSON.stringify(publicationCondition) !==
+      JSON.stringify({ 'Fn::Equals': [{ Ref: 'PublicationState' }, 'ENABLED'] }) ||
+    schedules.length !== 1 ||
+    JSON.stringify(schedules[0]?.[1]?.Properties?.State) !==
+      JSON.stringify({ 'Fn::If': ['PublicationEnabled', 'ENABLED', 'DISABLED'] }) ||
+    apis.length !== 1 ||
+    stages.length !== 1 ||
+    stage?.Properties?.StageName !== '$default' ||
+    stage?.Properties?.AutoDeploy !== true ||
+    JSON.stringify(stage?.Properties?.ApiId) !== JSON.stringify({ Ref: apiLogicalId }) ||
+    api?.Properties?.ProtocolType !== 'HTTP' ||
+    JSON.stringify(api?.Properties?.DisableExecuteApiEndpoint) !==
+      JSON.stringify({ 'Fn::If': ['PublicationEnabled', customDomain, true] }) ||
+    !customDomainResourcesValid ||
+    !dataBindingsValid ||
+    !apiRuntimeTopologyValid ||
+    lambdaFunctions.length !== 2 ||
+    runtimeFunctions.length !== 2 ||
+    runtimeFunctions.some(
+      ({ Properties }) =>
+        Properties.Environment.Variables.APP_ENV !== 'assessment' ||
+        Properties.Environment.Variables.AUTO_SEED_CATALOG !== 'false' ||
+        Properties.Environment.Variables.CANDIDATE_SHA !== context.identity.candidateSha ||
+        JSON.stringify(Properties.Environment.Variables.CATALOG_TABLE_NAME) !==
+          JSON.stringify(expectedCatalogTableImport) ||
+        JSON.stringify(Properties.Environment.Variables.CHECKOUT_TABLE_NAME) !==
+          JSON.stringify(expectedCheckoutTableImport) ||
+        Properties.Environment.Variables.DATA_ADAPTER !== 'dynamodb' ||
+        Properties.Environment.Variables.PAYMENTS_ENABLED !== 'true' ||
+        Properties.Environment.Variables.RELEASE_ID !== context.identity.releaseId ||
+        Properties.Environment.Variables.RUNTIME_SECRET_ARN !== expectedRuntimeSecretArn ||
+        Properties.Environment.Variables.RUNTIME_SECRET_VERSION_ID !==
+          expectedRuntimeSecretVersionId ||
+        Properties.Environment.Variables.SANDBOX_AUTHORIZED_UNTIL_UTC !==
+          context.config.authorization.expiresAtUtc ||
+        Properties.Environment.Variables.PRERELEASE_ACCESS_MODE !==
+          (prerelease ? 'cloudfront_signed_cookie' : 'origin_gate') ||
+        Properties.Environment.Variables.TOKENIZATION_MODE !== 'direct_jwe' ||
+        Properties.Environment.Variables.ALLOWED_ORIGIN_PARAMETER_NAME !==
+          expectedPublicOriginParameterName ||
+        Properties.Environment.Variables.PUBLIC_ASSET_ORIGIN_PARAMETER_NAME !==
+          expectedPublicOriginParameterName ||
+        Properties.Handler !== 'index.handler' ||
+        Properties.Runtime !== 'nodejs24.x' ||
+        JSON.stringify(Properties.Architectures) !== JSON.stringify(['arm64']),
+    ) ||
+    JSON.stringify(outputs?.SchedulerStatus?.Value) !==
+      JSON.stringify({ 'Fn::If': ['PublicationEnabled', 'ENABLED', 'DISABLED'] }) ||
+    JSON.stringify(outputs?.ApiPublicationStatus?.Value) !==
+      JSON.stringify({ 'Fn::If': ['PublicationEnabled', 'ENABLED', 'DISABLED'] })
+  ) {
+    fail('E7_CLOUD_ASSEMBLY_INITIAL_API_PUBLICATION_INVALID');
+  }
+};
+
 const validateAssemblyIdentity = (context, assemblyPath, freezeManifestPath) => {
   const assembly = cloudAssemblyStacks(assemblyPath);
   const actualNames = assembly.stacks.map(({ artifactId }) => artifactId).toSorted();
   if (actualNames.join('\0') !== context.stacks.toSorted().join('\0')) {
     fail('E7_CLOUD_ASSEMBLY_STACK_SET_MISMATCH');
   }
+  const dataTemplate = assembly.stacks.find(({ artifactId }) =>
+    artifactId.endsWith('-data'),
+  )?.template;
   const expectedTerminationProtection = context.scope !== 'prerelease';
   for (const { artifactId, tags, template, terminationProtection } of assembly.stacks) {
     const outputs = template.Outputs;
-    const resources = object(template.Resources) ? Object.values(template.Resources) : [];
     if (
       !object(outputs) ||
       outputs.CandidateSha?.Value !== context.identity.candidateSha ||
@@ -1672,63 +2679,16 @@ const validateAssemblyIdentity = (context, assemblyPath, freezeManifestPath) => 
     ) {
       fail('E7_CLOUD_ASSEMBLY_STACK_TAGS_INVALID');
     }
+    validateReleaseStackResourceAllowlist(context, artifactId, template);
     if (artifactId.endsWith('-api')) {
-      const publicationParameter = template.Parameters?.PublicationState;
-      const publicationCondition = template.Conditions?.PublicationEnabled;
-      const schedules = resources.filter(({ Type }) => Type === 'AWS::Scheduler::Schedule');
-      const apis = resources.filter(({ Type }) => Type === 'AWS::ApiGatewayV2::Api');
-      const mappings = resources.filter(({ Type }) => Type === 'AWS::ApiGatewayV2::ApiMapping');
-      const domains = resources.filter(({ Type }) => Type === 'AWS::ApiGatewayV2::DomainName');
-      const runtimeFunctions = resources.filter(
-        ({ Type, Properties }) =>
-          Type === 'AWS::Lambda::Function' &&
-          Properties?.Environment?.Variables?.PAYMENT_ADAPTER === 'sandbox',
-      );
-      const full = context.scope !== 'prerelease';
-      if (
-        publicationParameter?.Default !== 'DISABLED' ||
-        JSON.stringify(publicationParameter?.AllowedValues) !==
-          JSON.stringify(['DISABLED', 'ENABLED']) ||
-        JSON.stringify(publicationCondition) !==
-          JSON.stringify({ 'Fn::Equals': [{ Ref: 'PublicationState' }, 'ENABLED'] }) ||
-        schedules.length !== 1 ||
-        JSON.stringify(schedules[0]?.Properties?.State) !==
-          JSON.stringify({ 'Fn::If': ['PublicationEnabled', 'ENABLED', 'DISABLED'] }) ||
-        apis.length !== 1 ||
-        JSON.stringify(apis[0]?.Properties?.DisableExecuteApiEndpoint) !==
-          JSON.stringify({ 'Fn::If': ['PublicationEnabled', full, true] }) ||
-        mappings.length !== (full ? 1 : 0) ||
-        (full && mappings[0]?.Condition !== 'PublicationEnabled') ||
-        domains.length !== (full ? 1 : 0) ||
-        runtimeFunctions.length !== 2 ||
-        runtimeFunctions.some(
-          ({ Properties }) =>
-            Properties.Environment.Variables.SANDBOX_AUTHORIZED_UNTIL_UTC !==
-              context.config.authorization.expiresAtUtc ||
-            Properties.Environment.Variables.PRERELEASE_ACCESS_MODE !==
-              (full ? 'origin_gate' : 'cloudfront_signed_cookie'),
-        ) ||
-        JSON.stringify(outputs.SchedulerStatus?.Value) !==
-          JSON.stringify({ 'Fn::If': ['PublicationEnabled', 'ENABLED', 'DISABLED'] }) ||
-        JSON.stringify(outputs.ApiPublicationStatus?.Value) !==
-          JSON.stringify({ 'Fn::If': ['PublicationEnabled', 'ENABLED', 'DISABLED'] })
-      ) {
-        fail('E7_CLOUD_ASSEMBLY_INITIAL_API_PUBLICATION_INVALID');
-      }
+      validateInitialApiPublicationContract(context, template, dataTemplate);
     }
     if (artifactId.endsWith('-web')) {
       const publicationParameter = template.Parameters?.PublicationState;
       const publicationCondition = template.Conditions?.PublicationEnabled;
-      const distributions = resources.filter(
-        ({ Type }) => Type === 'AWS::CloudFront::Distribution',
-      );
-      const distributionConfig = distributions[0]?.Properties?.DistributionConfig;
-      const behaviors = [
-        distributionConfig?.DefaultCacheBehavior,
-        ...(distributionConfig?.CacheBehaviors ?? []),
-      ];
-      const apiOrigin = distributionConfig?.Origins?.find(
-        ({ CustomOriginConfig }) => CustomOriginConfig !== undefined,
+      const { apiOrigin, behaviors, distributionConfig } = validateInitialWebPublicationContract(
+        context,
+        template,
       );
       const originHeaders = apiOrigin?.OriginCustomHeaders ?? [];
       const prerelease = context.scope === 'prerelease';
@@ -1764,7 +2724,6 @@ const validateAssemblyIdentity = (context, assemblyPath, freezeManifestPath) => 
           JSON.stringify(['DISABLED', 'ENABLED']) ||
         JSON.stringify(publicationCondition) !==
           JSON.stringify({ 'Fn::Equals': [{ Ref: 'PublicationState' }, 'ENABLED'] }) ||
-        distributions.length !== 1 ||
         JSON.stringify(distributionConfig?.Enabled) !==
           JSON.stringify({ 'Fn::If': ['PublicationEnabled', true, false] }) ||
         !prereleaseAccessValid ||
@@ -1980,7 +2939,7 @@ const describeStack = (context, stackName, { allowMissing = false } = {}) => {
     command: context.awsCommand,
     args: arguments_,
     cwd: workspaceRoot,
-    env: context.environmentVariables,
+    env: context.childEnvironment,
   });
   if (!object(result) || typeof result.stdout !== 'string') {
     fail('E7_CLOUDFORMATION_DESCRIBE_FAILED');
@@ -2098,9 +3057,40 @@ const stackStateFingerprint = (stackName, state) =>
     creationTime: state.creationTime,
     lastUpdatedTime: state.lastUpdatedTime,
     terminationProtection: state.terminationProtection,
-    parametersSha256: objectSha256(state.parameters),
-    outputsSha256: objectSha256(state.outputs),
+    parametersSha256: objectSha256(state.parameters ?? {}),
+    outputsSha256: objectSha256(state.outputs ?? {}),
+    tagsSha256: objectSha256(state.tags ?? {}),
   });
+
+const assemblyTemplateSha256 = (assembly, stackName) => {
+  const stack = assembly.stacks.find(({ artifactId }) => artifactId === stackName);
+  if (stack === undefined || !object(stack.template)) {
+    fail('E7_CLOUD_ASSEMBLY_STACK_TEMPLATE_INVALID');
+  }
+  return objectSha256(stack.template);
+};
+
+const originalStackTemplateSha256 = (context, stackName) => {
+  const response = awsJson(
+    context,
+    ['cloudformation', 'get-template', '--stack-name', stackName, '--template-stage', 'Original'],
+    'E7_CLOUDFORMATION_ORIGINAL_TEMPLATE_READ_FAILED',
+  );
+  if (!object(response) || !object(response.TemplateBody)) {
+    fail('E7_CLOUDFORMATION_ORIGINAL_TEMPLATE_INVALID');
+  }
+  return objectSha256(response.TemplateBody);
+};
+
+const validateOriginalStackTemplate = (context, stackName, expectedSha256) => {
+  if (
+    !SHA256.test(expectedSha256 ?? '') ||
+    originalStackTemplateSha256(context, stackName) !== expectedSha256
+  ) {
+    fail('E7_CLOUDFORMATION_ORIGINAL_TEMPLATE_DRIFT');
+  }
+  return expectedSha256;
+};
 
 const publicationStateForStack = (context, suffix) => {
   if (!['api', 'web'].includes(suffix)) fail('E7_PUBLICATION_STACK_INVALID');
@@ -2120,11 +3110,31 @@ const publicationStateForStack = (context, suffix) => {
   return { publicationState, stackName, state };
 };
 
-const updatePublicationStack = (context, suffix, targetState) => {
+const updatePublicationStack = (
+  context,
+  suffix,
+  targetState,
+  { expectedBeforeStateSha256, expectedTemplateSha256, clientRequestToken } = {},
+) => {
   if (!['DISABLED', 'ENABLED'].includes(targetState)) {
     fail('E7_PUBLICATION_STATE_INVALID');
   }
   const before = publicationStateForStack(context, suffix);
+  if (
+    expectedBeforeStateSha256 !== undefined &&
+    stackStateFingerprint(before.stackName, before.state) !== expectedBeforeStateSha256
+  ) {
+    fail('E7_PUBLICATION_STACK_PRECONDITION_CHANGED');
+  }
+  if (expectedTemplateSha256 !== undefined) {
+    validateOriginalStackTemplate(context, before.state.stackId, expectedTemplateSha256);
+  }
+  if (
+    clientRequestToken !== undefined &&
+    !CLOUDFORMATION_CLIENT_REQUEST_TOKEN.test(clientRequestToken)
+  ) {
+    fail('E7_PUBLICATION_STACK_CLIENT_REQUEST_TOKEN_INVALID');
+  }
   if (before.publicationState === targetState) {
     return {
       changed: false,
@@ -2134,27 +3144,25 @@ const updatePublicationStack = (context, suffix, targetState) => {
       stackName: before.stackName,
     };
   }
-  const response = awsJson(
-    context,
-    [
-      'cloudformation',
-      'update-stack',
-      '--stack-name',
-      before.stackName,
-      '--use-previous-template',
-      '--parameters',
-      `ParameterKey=PublicationState,ParameterValue=${targetState}`,
-      '--capabilities',
-      'CAPABILITY_NAMED_IAM',
-    ],
-    'E7_PUBLICATION_STACK_UPDATE_FAILED',
-  );
+  const updateArguments = [
+    'cloudformation',
+    'update-stack',
+    '--stack-name',
+    before.state.stackId,
+    '--use-previous-template',
+    '--parameters',
+    `ParameterKey=PublicationState,ParameterValue=${targetState}`,
+    '--capabilities',
+    'CAPABILITY_NAMED_IAM',
+    ...(clientRequestToken === undefined ? [] : ['--client-request-token', clientRequestToken]),
+  ];
+  const response = awsJson(context, updateArguments, 'E7_PUBLICATION_STACK_UPDATE_FAILED');
   if (response?.StackId !== before.state.stackId) {
     fail('E7_PUBLICATION_STACK_UPDATE_INVALID');
   }
   aws(
     context,
-    ['cloudformation', 'wait', 'stack-update-complete', '--stack-name', before.stackName],
+    ['cloudformation', 'wait', 'stack-update-complete', '--stack-name', before.state.stackId],
     'E7_PUBLICATION_STACK_WAIT_FAILED',
   );
   const after = publicationStateForStack(context, suffix);
@@ -2172,6 +3180,635 @@ const updatePublicationStack = (context, suffix, targetState) => {
     stackIdSha256: sha256(after.state.stackId),
     stackName: after.stackName,
   };
+};
+
+const initialRollbackCode = (suffix, reason) => {
+  if (!['api', 'web'].includes(suffix) || !/^[A-Z_]{3,64}$/u.test(reason)) {
+    fail('E7_INITIAL_ROLLBACK_COMPONENT_INVALID');
+  }
+  return `E7_INITIAL_${suffix.toUpperCase()}_ROLLBACK_${reason}`;
+};
+
+const rollbackEvidenceSource = (context, { allowMissing = false } = {}) => {
+  const target = evidenceTarget(context, 'rollback');
+  if (!existsSync(target)) {
+    if (allowMissing) return null;
+    fail('E7_INITIAL_ROLLBACK_EVIDENCE_MISSING');
+  }
+  const source = readJson(target, 'E7_INITIAL_ROLLBACK_EVIDENCE_INVALID');
+  if (
+    source?.schemaVersion !== 1 ||
+    source?.stage !== 7 ||
+    source?.environment !== context.config.environment ||
+    source?.releaseId !== context.identity.releaseId ||
+    source?.candidateSha !== context.identity.candidateSha ||
+    source?.configSha256 !== objectSha256(context.config) ||
+    source?.containsSensitiveData !== false ||
+    !object(source.checkpoints)
+  ) {
+    fail('E7_INITIAL_ROLLBACK_EVIDENCE_INVALID');
+  }
+  return source;
+};
+
+const initialRollbackIntentCheckpoint = (suffix) => `${suffix}RollbackIntent`;
+
+const createInitialRollbackIntent = ({ context, suffix, record, observed }) => ({
+  decision: 'INITIAL_RELEASE_PUBLICATION_DISABLE_INTENT',
+  releaseMode: 'INITIAL',
+  component: suffix.toUpperCase(),
+  candidateSha: context.identity.candidateSha,
+  releaseId: context.identity.releaseId,
+  configSha256: objectSha256(context.config),
+  rollbackRecordSha256: record.recordSha256,
+  stackName: observed.stackName,
+  stackIdSha256: sha256(observed.state.stackId),
+  preTransitionStateSha256: stackStateFingerprint(observed.stackName, observed.state),
+  persistedAtUtc: utc(context.now),
+  previousState: 'ENABLED',
+  targetState: 'DISABLED',
+});
+
+const validateInitialRollbackIntent = ({
+  context,
+  suffix,
+  record,
+  observed,
+  intent,
+  requirePreTransitionState,
+}) => {
+  const code = initialRollbackCode(suffix, 'RESUME_INTENT_INVALID');
+  if (
+    !exactKeys(intent, [
+      'decision',
+      'releaseMode',
+      'component',
+      'candidateSha',
+      'releaseId',
+      'configSha256',
+      'rollbackRecordSha256',
+      'stackName',
+      'stackIdSha256',
+      'preTransitionStateSha256',
+      'persistedAtUtc',
+      'previousState',
+      'targetState',
+    ]) ||
+    intent.decision !== 'INITIAL_RELEASE_PUBLICATION_DISABLE_INTENT' ||
+    intent.releaseMode !== 'INITIAL' ||
+    intent.component !== suffix.toUpperCase() ||
+    intent.candidateSha !== context.identity.candidateSha ||
+    intent.releaseId !== context.identity.releaseId ||
+    intent.configSha256 !== objectSha256(context.config) ||
+    !SHA256.test(record?.recordSha256 ?? '') ||
+    intent.rollbackRecordSha256 !== record.recordSha256 ||
+    intent.stackName !== observed.stackName ||
+    intent.stackIdSha256 !== sha256(observed.state.stackId) ||
+    !SHA256.test(intent.preTransitionStateSha256 ?? '') ||
+    !canonicalUtc(intent.persistedAtUtc) ||
+    Date.parse(intent.persistedAtUtc) >
+      context.now.getTime() + INITIAL_ROLLBACK_EVENT_CLOCK_SKEW_MS ||
+    intent.previousState !== 'ENABLED' ||
+    intent.targetState !== 'DISABLED' ||
+    (requirePreTransitionState &&
+      intent.preTransitionStateSha256 !== stackStateFingerprint(observed.stackName, observed.state))
+  ) {
+    fail(code);
+  }
+  return intent;
+};
+
+const persistInitialRollbackIntent = async ({ context, suffix, record, observed }) => {
+  const checkpoint = initialRollbackIntentCheckpoint(suffix);
+  const source = rollbackEvidenceSource(context, { allowMissing: true });
+  const expected = createInitialRollbackIntent({ context, suffix, record, observed });
+  const existing = source?.checkpoints?.[checkpoint];
+  if (existing !== undefined) {
+    validateInitialRollbackIntent({
+      context,
+      suffix,
+      record,
+      observed,
+      intent: existing,
+      requirePreTransitionState: true,
+    });
+    return existing;
+  }
+  await updateEvidence(context, 'rollback', checkpoint, expected);
+  const persisted = rollbackEvidenceSource(context)?.checkpoints?.[checkpoint];
+  validateInitialRollbackIntent({
+    context,
+    suffix,
+    record,
+    observed,
+    intent: persisted,
+    requirePreTransitionState: true,
+  });
+  if (objectSha256(persisted) !== objectSha256(expected)) {
+    fail(initialRollbackCode(suffix, 'RESUME_INTENT_PERSISTENCE_INVALID'));
+  }
+  return persisted;
+};
+
+const initialRollbackRequestBinding = ({ context, suffix, record, observed }) => ({
+  component: suffix.toUpperCase(),
+  candidateSha: context.identity.candidateSha,
+  releaseId: context.identity.releaseId,
+  configSha256: objectSha256(context.config),
+  rollbackRecordSha256: record.recordSha256,
+  stackName: observed.stackName,
+  stackIdSha256: sha256(observed.state.stackId),
+  previousState: 'ENABLED',
+  targetState: 'DISABLED',
+});
+
+const initialRollbackClientRequestToken = ({ context, suffix, record, observed }) => {
+  const requestSha256 = objectSha256(
+    initialRollbackRequestBinding({ context, suffix, record, observed }),
+  );
+  const token = `e7-initial-${suffix}-${requestSha256}`;
+  if (!CLOUDFORMATION_CLIENT_REQUEST_TOKEN.test(token)) {
+    fail(initialRollbackCode(suffix, 'CLIENT_REQUEST_TOKEN_INVALID'));
+  }
+  return token;
+};
+
+const readInitialRollbackStackEventsPage = ({ context, suffix, observed, nextToken }) =>
+  awsJson(
+    context,
+    [
+      'cloudformation',
+      'describe-stack-events',
+      '--stack-name',
+      observed.stackName,
+      '--no-paginate',
+      ...(nextToken === undefined ? [] : ['--next-token', nextToken]),
+    ],
+    initialRollbackCode(suffix, 'STACK_EVENTS_UNAVAILABLE'),
+  );
+
+const captureInitialRollbackCausality = ({
+  context,
+  suffix,
+  observed,
+  intent,
+  clientRequestToken,
+  readPage = readInitialRollbackStackEventsPage,
+}) => {
+  const eventsById = new Map();
+  const seenTokens = new Set();
+  let nextToken;
+  let completed = false;
+  for (let page = 0; page < 20; page += 1) {
+    const response = readPage({ context, suffix, observed, nextToken });
+    if (!Array.isArray(response?.StackEvents) || response.StackEvents.length > 1000) {
+      fail(initialRollbackCode(suffix, 'STACK_EVENTS_INVALID'));
+    }
+    for (const event of response.StackEvents) {
+      if (
+        !object(event) ||
+        typeof event.EventId !== 'string' ||
+        event.EventId.length === 0 ||
+        event.EventId.length > 1024
+      ) {
+        fail(initialRollbackCode(suffix, 'STACK_EVENTS_INVALID'));
+      }
+      const digest = objectSha256(event);
+      const prior = eventsById.get(event.EventId);
+      if (prior !== undefined && prior.digest !== digest) {
+        fail(initialRollbackCode(suffix, 'STACK_EVENT_ID_COLLISION'));
+      }
+      if (prior === undefined) eventsById.set(event.EventId, { digest, event });
+      if (eventsById.size > 5000) fail(initialRollbackCode(suffix, 'STACK_EVENTS_OVERFLOW'));
+    }
+    const responseToken = response.NextToken;
+    if (responseToken === undefined) {
+      completed = true;
+      break;
+    }
+    const tokenContainsControlCharacter =
+      typeof responseToken === 'string' &&
+      [...responseToken].some((character) => {
+        const codePoint = character.codePointAt(0);
+        return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
+      });
+    if (
+      typeof responseToken !== 'string' ||
+      responseToken.length === 0 ||
+      responseToken.length > 2048 ||
+      tokenContainsControlCharacter ||
+      seenTokens.has(responseToken)
+    ) {
+      fail(initialRollbackCode(suffix, 'STACK_EVENTS_PAGINATION_INVALID'));
+    }
+    seenTokens.add(responseToken);
+    nextToken = responseToken;
+  }
+  if (!completed) fail(initialRollbackCode(suffix, 'STACK_EVENTS_PAGINATION_OVERFLOW'));
+
+  const rootEvents = [...eventsById.values()]
+    .map(({ event }) => event)
+    .filter(
+      (event) =>
+        event?.StackId === observed.state.stackId &&
+        event?.StackName === observed.stackName &&
+        event?.LogicalResourceId === observed.stackName &&
+        event?.PhysicalResourceId === observed.state.stackId &&
+        event?.ResourceType === 'AWS::CloudFormation::Stack',
+    );
+  const matching = rootEvents.filter((event) => event?.ClientRequestToken === clientRequestToken);
+  const started = matching.filter(({ ResourceStatus }) => ResourceStatus === 'UPDATE_IN_PROGRESS');
+  const completedEvents = matching.filter(
+    ({ ResourceStatus }) => ResourceStatus === 'UPDATE_COMPLETE',
+  );
+  const startedAt = new Date(started[0]?.Timestamp ?? 'invalid');
+  const completedAt = new Date(completedEvents[0]?.Timestamp ?? 'invalid');
+  const observedUpdatedAt = new Date(observed?.state?.lastUpdatedTime ?? 'invalid');
+  const intentPersistedAt = new Date(intent?.persistedAtUtc ?? 'invalid');
+  if (
+    started.length !== 1 ||
+    completedEvents.length !== 1 ||
+    typeof started[0]?.EventId !== 'string' ||
+    started[0].EventId.length === 0 ||
+    typeof completedEvents[0]?.EventId !== 'string' ||
+    completedEvents[0].EventId.length === 0 ||
+    Number.isNaN(startedAt.getTime()) ||
+    Number.isNaN(completedAt.getTime()) ||
+    Number.isNaN(observedUpdatedAt.getTime()) ||
+    Number.isNaN(intentPersistedAt.getTime()) ||
+    startedAt.getTime() > completedAt.getTime() ||
+    observedUpdatedAt.getTime() < startedAt.getTime() ||
+    observedUpdatedAt.getTime() > completedAt.getTime() ||
+    startedAt.getTime() + INITIAL_ROLLBACK_EVENT_CLOCK_SKEW_MS < intentPersistedAt.getTime()
+  ) {
+    fail(initialRollbackCode(suffix, 'STACK_EVENT_CAUSALITY_INVALID'));
+  }
+  const hasLaterOrAmbiguousRootEvent = rootEvents.some((event) => {
+    if (event.EventId === completedEvents[0].EventId) return false;
+    const timestamp = new Date(event.Timestamp ?? 'invalid');
+    if (Number.isNaN(timestamp.getTime())) {
+      fail(initialRollbackCode(suffix, 'STACK_EVENTS_INVALID'));
+    }
+    return timestamp.getTime() >= completedAt.getTime();
+  });
+  if (hasLaterOrAmbiguousRootEvent) {
+    fail(initialRollbackCode(suffix, 'STACK_EVENT_CAUSALITY_INVALID'));
+  }
+  return {
+    provider: 'CLOUDFORMATION_STACK_EVENT',
+    requestTokenSha256: sha256(clientRequestToken),
+    updateStartedEventIdSha256: sha256(started[0].EventId),
+    updateCompletedEventIdSha256: sha256(completedEvents[0].EventId),
+    updateStartedAtUtc: startedAt.toISOString(),
+    updateCompletedAtUtc: completedAt.toISOString(),
+    transition: 'UPDATE_IN_PROGRESS_TO_UPDATE_COMPLETE',
+  };
+};
+
+const completedInitialRollbackPublication = (source, suffix) =>
+  suffix === 'api'
+    ? source?.checkpoints?.apiRollback?.publication
+    : source?.checkpoints?.rollbackInfrastructure?.publication?.webStack;
+
+const validateInitialRollbackLiveBinding = (context, suffix, record, observed) => {
+  const outputs = observed?.state?.outputs;
+  if (
+    canonicalJson(observed?.state?.tags) !== canonicalJson(expectedReleaseStackTags(context)) ||
+    outputs?.CandidateSha !== context.identity.candidateSha ||
+    outputs?.ReleaseId !== context.identity.releaseId
+  ) {
+    fail(initialRollbackCode(suffix, 'LIVE_BINDING_INVALID'));
+  }
+  if (suffix === 'api') {
+    const deployed = apiVersionsFromOutputs(
+      context,
+      outputs,
+      initialRollbackCode(suffix, 'LIVE_BINDING_INVALID'),
+    );
+    if (
+      canonicalJson(deployed) !== canonicalJson(record?.deployed) ||
+      outputs.HttpApiId !== record?.publication?.apiId ||
+      outputs.ApiCustomDomainName !== context.config.domain.apiHostname ||
+      releaseApiOriginFromOutputs(
+        context,
+        outputs,
+        initialRollbackCode(suffix, 'LIVE_BINDING_INVALID'),
+      ) !== `https://${context.config.domain.apiHostname}`
+    ) {
+      fail(initialRollbackCode(suffix, 'LIVE_BINDING_INVALID'));
+    }
+    return observed;
+  }
+  const publicOriginValue = validateDeployedWebOutputs(
+    context,
+    outputs,
+    initialRollbackCode(suffix, 'LIVE_BINDING_INVALID'),
+  );
+  if (
+    outputs.WebBucketName !== record?.bucketName ||
+    outputs.DistributionId !== record?.distributionId ||
+    outputs.DistributionId !== record?.publication?.distributionId ||
+    sha256(publicOriginValue) !== record?.publicOriginSha256
+  ) {
+    fail(initialRollbackCode(suffix, 'LIVE_BINDING_INVALID'));
+  }
+  return observed;
+};
+
+const transitionInitialRollbackPublication = async ({
+  context,
+  suffix,
+  record,
+  dependencies = {},
+}) => {
+  const readPublication = dependencies.readPublication ?? publicationStateForStack;
+  const readEvidence = dependencies.readEvidence ?? rollbackEvidenceSource;
+  const persistIntent = dependencies.persistIntent ?? persistInitialRollbackIntent;
+  const applyUpdate = dependencies.applyUpdate ?? updatePublicationStack;
+  const captureCausality = dependencies.captureCausality ?? captureInitialRollbackCausality;
+  const validateTemplate = dependencies.validateTemplate ?? validateOriginalStackTemplate;
+  const observed = readPublication(context, suffix);
+  if (!SHA256.test(record?.templateSha256 ?? '')) {
+    fail(initialRollbackCode(suffix, 'RECORD_TEMPLATE_INVALID'));
+  }
+  validateTemplate(context, observed.state.stackId, record.templateSha256);
+  validateInitialRollbackLiveBinding(context, suffix, record, observed);
+  const clientRequestToken = initialRollbackClientRequestToken({
+    context,
+    suffix,
+    record,
+    observed,
+  });
+  const requestSha256 = objectSha256(
+    initialRollbackRequestBinding({ context, suffix, record, observed }),
+  );
+  const source = readEvidence(context, { allowMissing: true });
+  const completed = completedInitialRollbackPublication(source, suffix);
+  const intent = source?.checkpoints?.[initialRollbackIntentCheckpoint(suffix)];
+
+  if (completed !== undefined) {
+    try {
+      validateStage7InitialRollbackPublicationTransition(completed, {
+        stackName: observed.stackName,
+      });
+    } catch (error) {
+      if (error instanceof Stage7Error) {
+        fail(initialRollbackCode(suffix, 'COMPLETED_TRANSITION_INVALID'));
+      }
+      throw error;
+    }
+    if (intent === undefined) fail(initialRollbackCode(suffix, 'RESUME_INTENT_MISSING'));
+    validateInitialRollbackIntent({
+      context,
+      suffix,
+      record,
+      observed,
+      intent,
+      requirePreTransitionState: false,
+    });
+    if (
+      completed.intent.sha256 !== requestSha256 ||
+      observed.publicationState !== 'DISABLED' ||
+      completed.stackIdSha256 !== sha256(observed.state.stackId)
+    ) {
+      fail(initialRollbackCode(suffix, 'COMPLETED_TRANSITION_DRIFT'));
+    }
+    const causality = captureCausality({
+      context,
+      suffix,
+      observed,
+      intent,
+      clientRequestToken,
+    });
+    if (objectSha256(completed.causality) !== objectSha256(causality)) {
+      fail(initialRollbackCode(suffix, 'COMPLETED_TRANSITION_CAUSALITY_INVALID'));
+    }
+    return completed;
+  }
+
+  if (observed.publicationState === 'ENABLED') {
+    const persistedIntent = await persistIntent({ context, suffix, record, observed });
+    const updated = applyUpdate(context, suffix, 'DISABLED', {
+      expectedBeforeStateSha256: persistedIntent.preTransitionStateSha256,
+      expectedTemplateSha256: record.templateSha256,
+      clientRequestToken,
+    });
+    if (
+      updated?.changed !== true ||
+      updated?.previousState !== 'ENABLED' ||
+      updated?.state !== 'DISABLED' ||
+      updated?.stackName !== observed.stackName ||
+      updated?.stackIdSha256 !== sha256(observed.state.stackId)
+    ) {
+      fail(initialRollbackCode(suffix, 'TRANSITION_INVALID'));
+    }
+    const updatedObserved = readPublication(context, suffix);
+    if (
+      updatedObserved?.publicationState !== 'DISABLED' ||
+      updatedObserved?.stackName !== observed.stackName ||
+      updatedObserved?.state?.stackId !== observed.state.stackId
+    ) {
+      fail(initialRollbackCode(suffix, 'TRANSITION_INVALID'));
+    }
+    const causality = captureCausality({
+      context,
+      suffix,
+      observed: updatedObserved,
+      intent: persistedIntent,
+      clientRequestToken,
+    });
+    return {
+      ...updated,
+      intent: {
+        mode: 'APPLIED_AFTER_LOCAL_INTENT',
+        sha256: requestSha256,
+        previousState: 'ENABLED',
+        targetState: 'DISABLED',
+      },
+      causality,
+    };
+  }
+
+  if (intent === undefined) fail(initialRollbackCode(suffix, 'RESUME_INTENT_MISSING'));
+  validateInitialRollbackIntent({
+    context,
+    suffix,
+    record,
+    observed,
+    intent,
+    requirePreTransitionState: false,
+  });
+  const causality = captureCausality({
+    context,
+    suffix,
+    observed,
+    intent,
+    clientRequestToken,
+  });
+  return {
+    changed: true,
+    previousState: 'ENABLED',
+    state: 'DISABLED',
+    stackIdSha256: sha256(observed.state.stackId),
+    stackName: observed.stackName,
+    intent: {
+      mode: 'RECOVERED_AFTER_CLOUDFORMATION_EVENT',
+      sha256: requestSha256,
+      previousState: 'ENABLED',
+      targetState: 'DISABLED',
+    },
+    causality,
+  };
+};
+
+const validateInitialApiRollbackEvidenceForWeb = ({
+  context,
+  apiRecord,
+  apiStack,
+  rollbackEvidence,
+  captureCausality = captureInitialRollbackCausality,
+}) => {
+  const apiRollback = rollbackEvidence?.checkpoints?.apiRollback;
+  const apiIntent = rollbackEvidence?.checkpoints?.apiRollbackIntent;
+  if (
+    apiRollback?.decision !== 'INITIAL_RELEASE_DISABLED_REQUIRES_UNAVAILABLE_SMOKE' ||
+    apiRollback?.releaseMode !== 'INITIAL' ||
+    apiRollback?.aliasesChanged !== false ||
+    apiRollback?.dataFactsChanged !== false ||
+    apiRollback?.stacksDeleted !== 0
+  ) {
+    fail('E7_INITIAL_API_ROLLBACK_EVIDENCE_INVALID');
+  }
+  try {
+    validateInitialRollbackLiveBinding(context, 'api', apiRecord, apiStack);
+  } catch (error) {
+    if (error instanceof Stage7Error || error instanceof Stage7AwsError) {
+      fail('E7_INITIAL_API_ROLLBACK_EVIDENCE_INVALID');
+    }
+    throw error;
+  }
+  try {
+    validateStage7InitialRollbackPublicationTransition(apiRollback.publication, {
+      stackName: stackFor(context, 'api'),
+    });
+    if (apiIntent === undefined) fail('E7_INITIAL_API_ROLLBACK_EVIDENCE_INVALID');
+    validateInitialRollbackIntent({
+      context,
+      suffix: 'api',
+      record: apiRecord,
+      observed: apiStack,
+      intent: apiIntent,
+      requirePreTransitionState: false,
+    });
+  } catch (error) {
+    if (error instanceof Stage7Error || error instanceof Stage7AwsError) {
+      fail('E7_INITIAL_API_ROLLBACK_EVIDENCE_INVALID');
+    }
+    throw error;
+  }
+  const requestSha256 = objectSha256(
+    initialRollbackRequestBinding({
+      context,
+      suffix: 'api',
+      record: apiRecord,
+      observed: apiStack,
+    }),
+  );
+  const clientRequestToken = initialRollbackClientRequestToken({
+    context,
+    suffix: 'api',
+    record: apiRecord,
+    observed: apiStack,
+  });
+  const causality = captureCausality({
+    context,
+    suffix: 'api',
+    observed: apiStack,
+    intent: apiIntent,
+    clientRequestToken,
+  });
+  if (
+    apiRollback.publication.intent.sha256 !== requestSha256 ||
+    apiRollback.publication.stackIdSha256 !== sha256(apiStack.state.stackId) ||
+    objectSha256(apiRollback.publication.causality) !== objectSha256(causality)
+  ) {
+    fail('E7_INITIAL_API_ROLLBACK_EVIDENCE_INVALID');
+  }
+  return apiRollback;
+};
+
+const captureInitialApiRollbackPosture = ({
+  context,
+  expectedStack,
+  readApiPublication = publicationStateForStack,
+  readScheduler = getSchedule,
+  readHttpApi = getHttpApi,
+  readMappings = getApiMappings,
+}) => {
+  const apiStack = readApiPublication(context, 'api');
+  const scheduler = readScheduler(context);
+  const apiId = apiStack?.state?.outputs?.HttpApiId;
+  const api = readHttpApi(context, apiId);
+  const mappings =
+    context.config.domain.mode === 'CUSTOM_AUTHORIZED'
+      ? readMappings(context, context.config.domain.apiHostname)
+      : [];
+  if (
+    expectedStack?.publicationState !== 'DISABLED' ||
+    apiStack?.publicationState !== 'DISABLED' ||
+    scheduler?.State !== 'DISABLED' ||
+    api?.ApiId !== apiId ||
+    api?.DisableExecuteApiEndpoint !== true ||
+    !Array.isArray(mappings) ||
+    mappings.length !== 0 ||
+    apiStack?.stackName !== expectedStack.stackName ||
+    apiStack?.state?.stackId !== expectedStack.state.stackId ||
+    stackStateFingerprint(apiStack.stackName, apiStack.state) !==
+      stackStateFingerprint(expectedStack.stackName, expectedStack.state)
+  ) {
+    fail('E7_INITIAL_API_ROLLBACK_POST_CAUSALITY_DRIFT');
+  }
+  return {
+    apiId,
+    apiStackSha256: stackStateFingerprint(apiStack.stackName, apiStack.state),
+    disableExecuteApiEndpoint: true,
+    mappingCount: 0,
+    schedulerState: 'DISABLED',
+  };
+};
+
+const transitionInitialWebRollback = async ({
+  context,
+  record,
+  apiRecord,
+  apiStack,
+  rollbackEvidence,
+  transition = transitionInitialRollbackPublication,
+  captureApiCausality = captureInitialRollbackCausality,
+  readApiPublication = publicationStateForStack,
+  readScheduler = getSchedule,
+  readHttpApi = getHttpApi,
+  readApiMappings = getApiMappings,
+}) => {
+  const apiRollback = validateInitialApiRollbackEvidenceForWeb({
+    context,
+    apiRecord,
+    apiStack,
+    rollbackEvidence,
+    captureCausality: captureApiCausality,
+  });
+  const postureDependencies = {
+    context,
+    expectedStack: apiStack,
+    readApiPublication,
+    readScheduler,
+    readHttpApi,
+    readMappings: readApiMappings,
+  };
+  captureInitialApiRollbackPosture(postureDependencies);
+  const publication = await transition({ context, suffix: 'web', record });
+  captureInitialApiRollbackPosture(postureDependencies);
+  return { apiRollback, publication };
 };
 
 const captureStackState = (context) =>
@@ -2282,33 +3919,124 @@ const captureApiPublication = (context, outputs) => {
   };
 };
 
-const listWebVersions = (context, bucketName) => {
+const listWebVersions = (context, bucketName, { allLatest = false } = {}) => {
   if (!BUCKET_NAME.test(bucketName ?? '')) fail('E7_WEB_BUCKET_INVALID');
-  const response = awsJson(
-    context,
-    ['s3api', 'list-object-versions', '--bucket', bucketName],
-    'E7_WEB_VERSION_INVENTORY_FAILED',
-  );
   const latest = new Map();
-  for (const entry of response?.Versions ?? []) {
+  const seenEntries = new Set();
+  const seenMarkers = new Set();
+  let keyMarker;
+  let versionIdMarker;
+  for (let page = 0; page < 100; page += 1) {
+    const arguments_ = [
+      's3api',
+      'list-object-versions',
+      '--bucket',
+      bucketName,
+      '--max-keys',
+      '1000',
+      '--no-paginate',
+      ...(keyMarker === undefined ? [] : ['--key-marker', keyMarker]),
+      ...(versionIdMarker === undefined ? [] : ['--version-id-marker', versionIdMarker]),
+    ];
+    const response = awsJson(context, arguments_, 'E7_WEB_VERSION_INVENTORY_FAILED');
     if (
-      entry?.IsLatest !== true ||
-      typeof entry.Key !== 'string' ||
-      (!MUTABLE_WEB_KEYS.has(entry.Key) && !entry.Key.startsWith('legal/'))
+      !Array.isArray(response?.Versions ?? []) ||
+      !Array.isArray(response?.DeleteMarkers ?? []) ||
+      typeof response?.IsTruncated !== 'boolean' ||
+      response?.NextToken !== undefined
     ) {
-      continue;
-    }
-    if (!SAFE_OBJECT_KEY.test(entry.Key) || !VERSION_ID.test(entry.VersionId ?? '')) {
       fail('E7_WEB_VERSION_INVENTORY_INVALID');
     }
-    latest.set(entry.Key, {
-      key: entry.Key,
-      versionId: entry.VersionId,
-      etagSha256: sha256(String(entry.ETag ?? '')),
-      size: Number(entry.Size ?? 0),
-    });
+    for (const [kind, entries] of [
+      ['version', response.Versions ?? []],
+      ['delete', response.DeleteMarkers ?? []],
+    ]) {
+      for (const entry of entries) {
+        if (
+          typeof entry?.Key !== 'string' ||
+          !VERSION_ID.test(entry?.VersionId ?? '') ||
+          typeof entry?.IsLatest !== 'boolean'
+        ) {
+          fail('E7_WEB_VERSION_INVENTORY_INVALID');
+        }
+        const entryIdentity = `${kind}\0${entry.Key}\0${entry.VersionId}`;
+        if (seenEntries.has(entryIdentity) || seenEntries.size >= 100_000) {
+          fail('E7_WEB_VERSION_INVENTORY_INVALID');
+        }
+        seenEntries.add(entryIdentity);
+        if (entry.IsLatest !== true) {
+          continue;
+        }
+        const trackedMutable = MUTABLE_WEB_KEYS.has(entry.Key) || entry.Key.startsWith('legal/');
+        if (!allLatest && !trackedMutable) continue;
+        if (!(allLatest ? SAFE_DEPLOYED_WEB_KEY : SAFE_OBJECT_KEY).test(entry.Key)) {
+          fail('E7_WEB_VERSION_INVENTORY_INVALID');
+        }
+        if (kind === 'delete') {
+          latest.delete(entry.Key);
+          continue;
+        }
+        if (
+          typeof entry.ETag !== 'string' ||
+          entry.ETag === '' ||
+          !Number.isSafeInteger(entry.Size) ||
+          entry.Size < 0
+        ) {
+          fail('E7_WEB_VERSION_INVENTORY_INVALID');
+        }
+        latest.set(entry.Key, {
+          key: entry.Key,
+          versionId: entry.VersionId,
+          etagSha256: sha256(entry.ETag),
+          size: entry.Size,
+        });
+      }
+    }
+    if (response.IsTruncated === false) {
+      if (
+        ![undefined, null, ''].includes(response.NextKeyMarker) ||
+        ![undefined, null, ''].includes(response.NextVersionIdMarker)
+      ) {
+        fail('E7_WEB_VERSION_INVENTORY_INVALID');
+      }
+      return [...latest.values()].toSorted((left, right) => left.key.localeCompare(right.key));
+    }
+    const nextKeyMarker = response.NextKeyMarker;
+    const nextVersionIdMarker = response.NextVersionIdMarker;
+    if (
+      typeof nextKeyMarker !== 'string' ||
+      nextKeyMarker === '' ||
+      nextKeyMarker.length > 1024 ||
+      [...nextKeyMarker].some((character) => {
+        const codePoint = character.codePointAt(0);
+        return codePoint <= 31 || codePoint === 127;
+      }) ||
+      !VERSION_ID.test(nextVersionIdMarker ?? '')
+    ) {
+      fail('E7_WEB_VERSION_INVENTORY_INVALID');
+    }
+    const markerIdentity = `${nextKeyMarker}\0${nextVersionIdMarker}`;
+    if (seenMarkers.has(markerIdentity)) fail('E7_WEB_VERSION_INVENTORY_INVALID');
+    seenMarkers.add(markerIdentity);
+    keyMarker = nextKeyMarker;
+    versionIdMarker = nextVersionIdMarker;
   }
-  return [...latest.values()].toSorted((left, right) => left.key.localeCompare(right.key));
+  fail('E7_WEB_VERSION_INVENTORY_INVALID');
+};
+
+const validateExactWebObjectInventory = (current, expected, code) => {
+  const normalize = (entries) =>
+    entries
+      .map(({ key, versionId, etagSha256, size }) => ({ key, versionId, etagSha256, size }))
+      .toSorted((left, right) => left.key.localeCompare(right.key));
+  if (
+    !Array.isArray(current) ||
+    !Array.isArray(expected) ||
+    JSON.stringify(normalize(current)) !== JSON.stringify(normalize(expected))
+  ) {
+    fail(code);
+  }
+  return current;
 };
 
 const getDistributionConfig = (context, distributionId) => {
@@ -2816,9 +4544,9 @@ const frozenContextArguments = (context) => {
   return Object.entries(values).flatMap(([key, value]) => ['--context', `${key}=${value}`]);
 };
 
-const synthContexts = (context, output) => {
+const synthContextValues = (context) => {
   const config = context.config;
-  const contexts = {
+  return {
     projectName: 'checkout',
     environment: config.environment,
     region: config.aws.region,
@@ -2849,6 +4577,10 @@ const synthContexts = (context, output) => {
       : {}),
     ...Object.fromEntries(domainContexts(config)),
   };
+};
+
+const synthContexts = (context, output) => {
+  const contexts = synthContextValues(context);
   for (const artifact of ['api', 'worker', 'web']) {
     const artifactPath = contexts[`${artifact}ArtifactPath`];
     if (!existsSync(artifactPath) || !statSync(artifactPath).isDirectory()) {
@@ -2858,6 +4590,10 @@ const synthContexts = (context, output) => {
   const arguments_ = [
     'synth',
     ...context.stacks,
+    '--app',
+    [process.execPath, workspaceToolEntrypoint('tsx'), path.join(workspaceRoot, 'infra/bin/app.ts')]
+      .map((value) => `"${value.replaceAll('"', '\\"')}"`)
+      .join(' '),
     '--output',
     output,
     '--asset-metadata',
@@ -2876,13 +4612,19 @@ const synthContexts = (context, output) => {
   return { arguments_ };
 };
 
+const offlineSynthCloudAuthority = () => ({
+  awsIdentity: null,
+  certificates: [],
+  hostedZone: null,
+});
+
 export const synthRelease = async ({
   flags,
   executor = defaultExecutor,
   environmentVariables = process.env,
   now = new Date(),
 }) => {
-  let context = loadOperationContext({
+  const context = loadOperationContext({
     capability: 'read',
     scope: flags.scope,
     flags,
@@ -2913,24 +4655,7 @@ export const synthRelease = async ({
     await updateEvidence(context, 'synth', 'synth', evidence);
     return evidence;
   }
-  let hostedZone = null;
-  let certificates = [];
-  let awsIdentity = null;
-  if (context.config.domain.mode === 'CUSTOM_AUTHORIZED') {
-    context = loadOperationContext({
-      capability: 'read',
-      scope: flags.scope,
-      flags,
-      executor,
-      environmentVariables,
-      now,
-      requireAws: true,
-      allowPlan: true,
-    });
-    awsIdentity = revalidateAwsIdentity(context);
-    hostedZone = validateHostedZoneAws(context);
-    certificates = validateCertificatesAws(context);
-  }
+  const { hostedZone, certificates, awsIdentity } = offlineSynthCloudAuthority();
   const output = resolveInsideWorkspace(flags.output, 'E7_SYNTH_OUTPUT_PATH_INVALID', {
     mustExist: false,
   });
@@ -6117,6 +7842,7 @@ const validateApprovedPlan = (
   assembly,
   suffix,
   hostedZone,
+  certificates,
   currentPrereleaseAccess,
   currentRuntimeSecret,
   previousManifest,
@@ -6175,6 +7901,7 @@ const validateApprovedPlan = (
     diff?.hotswapUsed !== false ||
     diff?.containsRawDiff !== true ||
     jsonSha256(diff?.hostedZone ?? null) !== jsonSha256(hostedZone) ||
+    jsonSha256(diff?.certificates ?? []) !== jsonSha256(certificates) ||
     !validatePrereleaseAccessEvidence(context, diff?.prereleaseAccess) ||
     jsonSha256(diff?.prereleaseAccess ?? null) !== jsonSha256(currentPrereleaseAccess) ||
     !validateRuntimeSecretReferenceEvidence(context, diff?.runtimeSecret) ||
@@ -6260,12 +7987,14 @@ const deployContext = async ({
   const runtimeSecret = validateRuntimeSecretReferenceAws(context);
   const prereleaseAccess = validatePrereleaseAccessAws(context);
   const hostedZone = validateHostedZoneAws(context);
+  const certificates = validateCertificatesAws(context);
   const approvedPlan = validateApprovedPlan(
     context,
     flags.plan,
     assembly,
     suffix,
     hostedZone,
+    certificates,
     prereleaseAccess,
     runtimeSecret,
     previousManifest,
@@ -6423,6 +8152,8 @@ export const deployApi = async ({
     fail('E7_SCHEDULER_PREMATURE_ACTIVATION_DETECTED');
   }
   const publication = captureApiPublication(context, deployed.outputs);
+  const templateSha256 = assemblyTemplateSha256(assembly, stackName);
+  validateOriginalStackTemplate(context, stackName, templateSha256);
   const rollbackBody = {
     createdAtUtc: utc(now),
     releaseMode,
@@ -6437,6 +8168,7 @@ export const deployApi = async ({
           },
     deployed: deployedVersions,
     publication,
+    templateSha256,
     rollbackAvailable: previousManifest !== null,
     initialDisableAvailable: previousManifest === null,
   };
@@ -6664,30 +8396,74 @@ const releaseApiOriginFromOutputs = (context, outputs, code) => {
   ) {
     fail(code);
   }
-  let parsed;
   try {
-    parsed = new URL(outputs.ApiOriginUrl);
+    return validatePrereleaseApiOrigin({ origin: outputs.ApiOriginUrl, config: context.config });
   } catch {
     fail(code);
   }
-  const expectedHost = new RegExp(
-    `^[a-z0-9]{10}\\.execute-api\\.${context.config.aws.region.replaceAll('-', '\\-')}\\.amazonaws\\.com$`,
-    'u',
-  );
+};
+
+const validateDeployedWebOutputs = (context, outputs, code) => {
+  if (context.config.domain.mode !== 'CUSTOM_AUTHORIZED') fail(code);
+  const applicationUrl = `https://${context.config.domain.hostname}`;
   if (
-    parsed.protocol !== 'https:' ||
-    parsed.origin !== outputs.ApiOriginUrl ||
-    parsed.pathname !== '/' ||
-    parsed.username ||
-    parsed.password ||
-    parsed.port ||
-    parsed.search ||
-    parsed.hash ||
-    !expectedHost.test(parsed.hostname)
+    outputs?.CandidateSha !== context.identity.candidateSha ||
+    outputs?.ReleaseId !== context.identity.releaseId ||
+    outputs?.ApplicationUrl !== applicationUrl ||
+    outputs?.ApiUrl !== `${applicationUrl}/api` ||
+    outputs?.ApiDocsUrl !== `${applicationUrl}/api/docs` ||
+    outputs?.HealthUrl !== `${applicationUrl}/api/health/ready` ||
+    outputs?.PublicOriginParameterName !==
+      `/checkout-${context.config.environment}/public-origin` ||
+    !BUCKET_NAME.test(outputs?.WebBucketName ?? '') ||
+    typeof outputs?.DistributionId !== 'string' ||
+    outputs.DistributionId === ''
   ) {
     fail(code);
   }
-  return parsed.origin;
+  return applicationUrl;
+};
+
+const validateActivationLiveBindings = (
+  context,
+  { apiOutputs, webOutputs, apiRecord, webRecord },
+) => {
+  const deployedVersions = apiVersionsFromOutputs(
+    context,
+    apiOutputs,
+    'E7_ACTIVATION_LIVE_BINDING_INVALID',
+  );
+  const apiOrigin = releaseApiOriginFromOutputs(
+    context,
+    apiOutputs,
+    'E7_ACTIVATION_LIVE_BINDING_INVALID',
+  );
+  const publicOriginValue = validateDeployedWebOutputs(
+    context,
+    webOutputs,
+    'E7_ACTIVATION_LIVE_BINDING_INVALID',
+  );
+  const expectedFunctionNames = {
+    api: `checkout-${context.config.environment}-api`,
+    worker: `checkout-${context.config.environment}-worker`,
+  };
+  if (
+    JSON.stringify(deployedVersions) !== JSON.stringify(apiRecord?.deployed) ||
+    deployedVersions.api.functionName !== expectedFunctionNames.api ||
+    deployedVersions.worker.functionName !== expectedFunctionNames.worker ||
+    deployedVersions.api.aliasName !== 'live' ||
+    deployedVersions.worker.aliasName !== 'live' ||
+    apiOutputs.HttpApiId !== apiRecord?.publication?.apiId ||
+    apiOutputs.ApiCustomDomainName !== context.config.domain.apiHostname ||
+    sha256(apiOrigin) !== webRecord?.apiOriginSha256 ||
+    webOutputs.WebBucketName !== webRecord?.bucketName ||
+    webOutputs.DistributionId !== webRecord?.distributionId ||
+    webOutputs.DistributionId !== webRecord?.publication?.distributionId ||
+    sha256(publicOriginValue) !== webRecord?.publicOriginSha256
+  ) {
+    fail('E7_ACTIVATION_LIVE_BINDING_INVALID');
+  }
+  return { apiOriginSha256: sha256(apiOrigin), publicOriginSha256: sha256(publicOriginValue) };
 };
 
 const assertHydratedCheckpointsPreserved = (context, kind, expected) => {
@@ -6819,9 +8595,9 @@ export const deployWeb = async ({
   const deployed = deployStack(context, assembly, 'web', {
     preDeploymentStateSha256: approvedPlan.preDeploymentStateSha256,
   });
-  if (!BUCKET_NAME.test(deployed.outputs.WebBucketName ?? ''))
-    fail('E7_DEPLOYED_WEB_OUTPUT_INVALID');
-  const deployedOrigin = assertExactHttpsOrigin(deployed.outputs.ApplicationUrl);
+  const deployedOrigin = assertExactHttpsOrigin(
+    validateDeployedWebOutputs(context, deployed.outputs, 'E7_DEPLOYED_WEB_OUTPUT_INVALID'),
+  );
   if (deployed.outputs.WebPublicationStatus !== 'DISABLED') {
     fail('E7_WEB_PREMATURE_ACTIVATION_DETECTED');
   }
@@ -6832,10 +8608,14 @@ export const deployWeb = async ({
   ) {
     fail('E7_WEB_ROLLBACK_TARGET_NOT_PRESERVED');
   }
-  const deployedObjects = listWebVersions(context, deployed.outputs.WebBucketName);
+  const deployedObjects = listWebVersions(context, deployed.outputs.WebBucketName, {
+    allLatest: true,
+  });
   if (!deployedObjects.some(({ key }) => key === 'index.html'))
     fail('E7_DEPLOYED_WEB_INDEX_MISSING');
   const publication = captureWebPublication(context, deployed.outputs.DistributionId);
+  const templateSha256 = assemblyTemplateSha256(assembly, stackName);
+  validateOriginalStackTemplate(context, stackName, templateSha256);
   const rollbackBody = {
     createdAtUtc: utc(now),
     releaseMode,
@@ -6847,6 +8627,7 @@ export const deployWeb = async ({
     previous: previousObjects,
     deployed: deployedObjects,
     publication,
+    templateSha256,
     rollbackAvailable: previousManifest !== null,
     initialUnpublishAvailable: previousManifest === null,
   };
@@ -6886,16 +8667,18 @@ const publicOrigin = (context, { requireWeb }) => {
     return { parameterName, source: 'AUTHORIZED_CUSTOM_DOMAIN', value };
   }
   const web = describeStack(context, stackFor(context, 'web'));
-  if (web.outputs.PublicOriginParameterName !== parameterName) {
-    fail('E7_PUBLIC_ORIGIN_PARAMETER_MISMATCH');
-  }
+  const expectedOrigin = validateDeployedWebOutputs(
+    context,
+    web.outputs,
+    'E7_PUBLIC_ORIGIN_PARAMETER_MISMATCH',
+  );
   const response = awsJson(
     context,
     ['ssm', 'get-parameter', '--name', parameterName, '--no-with-decryption'],
     'E7_PUBLIC_ORIGIN_UNAVAILABLE',
   );
   const value = response?.Parameter?.Value;
-  if (typeof value !== 'string' || web.outputs.ApplicationUrl !== value) {
+  if (typeof value !== 'string' || value !== expectedOrigin) {
     fail('E7_PUBLIC_ORIGIN_VALUE_MISMATCH');
   }
   return { parameterName, source: 'SSM_AFTER_WEB', value };
@@ -6919,6 +8702,46 @@ const assertExactHttpsOrigin = (value) => {
   }
 };
 
+const validateSeedRuntimeEnvironment = (context, origin, environment) => {
+  const prereleaseAccessMode =
+    context.scope === 'prerelease' ? 'cloudfront_signed_cookie' : 'origin_gate';
+  const expected = {
+    ALLOWED_ORIGIN: origin,
+    API_BASE_PATH: '/api/v1',
+    APP_ENV: 'assessment',
+    AUTO_SEED_CATALOG: 'false',
+    AWS_REGION: context.config.aws.region,
+    CATALOG_TABLE_NAME: `checkout-${context.config.environment}-catalog`,
+    CANDIDATE_SHA: context.identity.candidateSha,
+    CHECKOUT_TABLE_NAME: `checkout-${context.config.environment}-checkout`,
+    DATA_ADAPTER: 'dynamodb',
+    PAYMENT_ADAPTER: 'sandbox',
+    PAYMENTS_ENABLED: 'true',
+    PRERELEASE_ACCESS_MODE: prereleaseAccessMode,
+    PRODUCT_SEED_ID: 'product-demo-001',
+    PUBLIC_ASSET_ORIGIN: origin,
+    RELEASE_ID: context.identity.releaseId,
+    RUNTIME_SECRET_ARN: runtimeSecretReference(context.config),
+    RUNTIME_SECRET_VERSION_ID: runtimeSecretVersionId(context.config),
+    SANDBOX_AUTHORIZED_UNTIL_UTC: context.config.authorization.expiresAtUtc,
+    TOKENIZATION_MODE: 'direct_jwe',
+  };
+  const expectedKeys = [
+    ...new Set([...Object.keys(context.childEnvironment), ...Object.keys(expected)]),
+  ].toSorted();
+  if (
+    Object.keys(environment).toSorted().join('\0') !== expectedKeys.join('\0') ||
+    Object.entries(expected).some(([key, value]) => environment[key] !== value) ||
+    environment.ALLOWED_ORIGIN_PARAMETER_NAME !== undefined ||
+    environment.DYNAMODB_ENDPOINT !== undefined ||
+    environment.PUBLIC_ASSET_ORIGIN_PARAMETER_NAME !== undefined ||
+    environment.RUNTIME_SECURITY_ROOT_KEY !== undefined
+  ) {
+    fail('E7_SEED_RUNTIME_ENVIRONMENT_INVALID');
+  }
+  return environment;
+};
+
 const seedRuntimeEnvironment = (context, origin) => {
   const sandboxAuthorizedUntilUtc = context.config.authorization.expiresAtUtc;
   const authorizationExpiry = Date.parse(sandboxAuthorizedUntilUtc ?? '');
@@ -6929,24 +8752,34 @@ const seedRuntimeEnvironment = (context, origin) => {
   ) {
     fail('E7_SEED_SANDBOX_AUTHORIZATION_INVALID');
   }
-  return {
-    ...context.environmentVariables,
+  const environment = {
+    ...context.childEnvironment,
     ALLOWED_ORIGIN: origin,
     API_BASE_PATH: '/api/v1',
     APP_ENV: 'assessment',
     AUTO_SEED_CATALOG: 'false',
     AWS_REGION: context.config.aws.region,
     CATALOG_TABLE_NAME: `checkout-${context.config.environment}-catalog`,
+    CANDIDATE_SHA: context.identity.candidateSha,
     CHECKOUT_TABLE_NAME: `checkout-${context.config.environment}-checkout`,
     DATA_ADAPTER: 'dynamodb',
     PAYMENT_ADAPTER: 'sandbox',
     PAYMENTS_ENABLED: 'true',
+    PRERELEASE_ACCESS_MODE:
+      context.scope === 'prerelease' ? 'cloudfront_signed_cookie' : 'origin_gate',
     PRODUCT_SEED_ID: 'product-demo-001',
     PUBLIC_ASSET_ORIGIN: origin,
+    RELEASE_ID: context.identity.releaseId,
     RUNTIME_SECRET_ARN: runtimeSecretReference(context.config),
+    RUNTIME_SECRET_VERSION_ID: runtimeSecretVersionId(context.config),
     SANDBOX_AUTHORIZED_UNTIL_UTC: sandboxAuthorizedUntilUtc,
     TOKENIZATION_MODE: 'direct_jwe',
   };
+  delete environment.ALLOWED_ORIGIN_PARAMETER_NAME;
+  delete environment.DYNAMODB_ENDPOINT;
+  delete environment.PUBLIC_ASSET_ORIGIN_PARAMETER_NAME;
+  delete environment.RUNTIME_SECURITY_ROOT_KEY;
+  return validateSeedRuntimeEnvironment(context, origin, environment);
 };
 
 export const seedRelease = async ({
@@ -7005,19 +8838,19 @@ export const seedRelease = async ({
   const origin = publicOrigin(context, { requireWeb: context.scope === 'prerelease' });
   assertExactHttpsOrigin(origin.value);
   const seedEnvironment = seedRuntimeEnvironment(context, origin.value);
-  delete seedEnvironment.ALLOWED_ORIGIN_PARAMETER_NAME;
-  delete seedEnvironment.DYNAMODB_ENDPOINT;
-  delete seedEnvironment.PUBLIC_ASSET_ORIGIN_PARAMETER_NAME;
-  delete seedEnvironment.RUNTIME_SECURITY_ROOT_KEY;
+  const seedArguments = [
+    workspaceToolEntrypoint('tsx'),
+    path.join(workspaceRoot, 'apps/api/src/infrastructure/persistence/seed.cli.ts'),
+  ];
   const first = parseSeedStatus(
-    run(context.executor, context.pnpmCommand, ['--filter', '@checkout/api', 'seed'], {
+    run(context.executor, process.execPath, seedArguments, {
       code: 'E7_SEED_FIRST_EXECUTION_FAILED',
       env: seedEnvironment,
     }),
     'E7_SEED_FIRST_RESULT_INVALID',
   );
   const second = parseSeedStatus(
-    run(context.executor, context.pnpmCommand, ['--filter', '@checkout/api', 'seed'], {
+    run(context.executor, process.execPath, seedArguments, {
       code: 'E7_SEED_SECOND_EXECUTION_FAILED',
       env: seedEnvironment,
     }),
@@ -7066,8 +8899,7 @@ const getSchedule = (context) => {
   return schedule;
 };
 
-const validateScheduleTarget = (context, apiOutputs) => {
-  const schedule = getSchedule(context);
+const validateScheduleTarget = (context, apiOutputs, schedule = getSchedule(context)) => {
   const input = strictJson(schedule.Target.Input ?? '', 'E7_SCHEDULE_INPUT_INVALID');
   if (
     schedule.ScheduleExpression !== 'rate(1 minute)' ||
@@ -7091,6 +8923,37 @@ const validateScheduleTarget = (context, apiOutputs) => {
       input,
     }),
   );
+};
+
+const validateActivatedApiPosture = (context, apiRecord, apiOutputs) => {
+  const api = getHttpApi(context, apiRecord.publication.apiId);
+  const customDomain = context.config.domain.mode === 'CUSTOM_AUTHORIZED';
+  const mappings = customDomain ? getApiMappings(context, context.config.domain.apiHostname) : [];
+  const target = apiRecord.publication.mapping;
+  const schedule = getSchedule(context);
+  const apiAlias = assertAliasWithoutWeightedRouting(getAlias(context, apiRecord.deployed.api));
+  const workerAlias = assertAliasWithoutWeightedRouting(
+    getAlias(context, apiRecord.deployed.worker),
+  );
+  if (
+    api.ApiId !== apiRecord.publication.apiId ||
+    sha256(api.ApiEndpoint ?? '') !== apiRecord.publication.apiEndpointSha256 ||
+    api.DisableExecuteApiEndpoint !== customDomain ||
+    schedule.State !== 'ENABLED' ||
+    apiAlias.FunctionVersion !== apiRecord.deployed.api.version ||
+    workerAlias.FunctionVersion !== apiRecord.deployed.worker.version ||
+    (customDomain &&
+      (mappings.length !== 1 ||
+        mappings[0]?.ApiId !== target?.apiId ||
+        mappings[0]?.Stage !== target?.stage ||
+        (mappings[0]?.ApiMappingKey ?? '') !== target?.apiMappingKey ||
+        !API_MAPPING_ID.test(mappings[0]?.ApiMappingId ?? ''))) ||
+    (!customDomain && mappings.length !== 0)
+  ) {
+    fail('E7_ACTIVATION_API_POSTURE_INVALID');
+  }
+  validateScheduleTarget(context, apiOutputs, schedule);
+  return { api, apiAlias, mappings, schedule, workerAlias };
 };
 
 const getAlias = (context, target) => {
@@ -7201,7 +9064,12 @@ const initialPublicationState = (context, apiPublication, webPublication) => {
   };
 };
 
-const restoreInitialPublicationBaseline = (context, apiPublication, webPublication) => {
+const restoreInitialPublicationBaseline = (
+  context,
+  apiPublication,
+  webPublication,
+  { apiRecord, webRecord },
+) => {
   const recoveryFailures = [];
   const recover = (callback) => {
     try {
@@ -7210,8 +9078,34 @@ const restoreInitialPublicationBaseline = (context, apiPublication, webPublicati
       recoveryFailures.push(true);
     }
   };
-  recover(() => updatePublicationStack(context, 'web', 'DISABLED'));
-  recover(() => updatePublicationStack(context, 'api', 'DISABLED'));
+  const recoverStack = (suffix, record) => {
+    const current = publicationStateForStack(context, suffix);
+    if (
+      canonicalJson(current.state.tags) !== canonicalJson(expectedReleaseStackTags(context)) ||
+      (suffix === 'api' &&
+        (JSON.stringify(
+          apiVersionsFromOutputs(
+            context,
+            current.state.outputs,
+            'E7_ACTIVATION_COMPENSATION_BINDING_INVALID',
+          ),
+        ) !== JSON.stringify(record.deployed) ||
+          current.state.outputs.HttpApiId !== record.publication.apiId)) ||
+      (suffix === 'web' &&
+        (current.state.outputs.WebBucketName !== record.bucketName ||
+          current.state.outputs.DistributionId !== record.distributionId ||
+          current.state.outputs.DistributionId !== record.publication.distributionId))
+    ) {
+      fail('E7_ACTIVATION_COMPENSATION_BINDING_INVALID');
+    }
+    validateOriginalStackTemplate(context, current.stackName, record.templateSha256);
+    return updatePublicationStack(context, suffix, 'DISABLED', {
+      expectedBeforeStateSha256: stackStateFingerprint(current.stackName, current.state),
+      expectedTemplateSha256: record.templateSha256,
+    });
+  };
+  recover(() => recoverStack('web', webRecord));
+  recover(() => recoverStack('api', apiRecord));
   if (recoveryFailures.length !== 0) fail('E7_ACTIVATION_COMPENSATION_FAILED');
   try {
     const restored = initialPublicationState(context, apiPublication, webPublication);
@@ -7403,6 +9297,18 @@ export const activateRelease = async ({
     fail('E7_ACTIVATION_EVIDENCE_ALREADY_EXISTS');
   }
   const assembly = validateAssemblyIdentity(context, flags.app, flags.manifest);
+  const expectedTemplateSha256BySuffix = new Map(
+    STACK_SUFFIXES.map((suffix) => [
+      suffix,
+      assemblyTemplateSha256(assembly, stackFor(context, suffix)),
+    ]),
+  );
+  if (
+    apiRecord.templateSha256 !== expectedTemplateSha256BySuffix.get('api') ||
+    webRecord.templateSha256 !== expectedTemplateSha256BySuffix.get('web')
+  ) {
+    fail('E7_ACTIVATION_RECORD_TEMPLATE_BINDING_INVALID');
+  }
   if (context.scope !== 'prerelease') {
     validateProtectedApproval(
       context,
@@ -7416,6 +9322,7 @@ export const activateRelease = async ({
   }
   revalidateAwsIdentity(context);
   const prereleaseAccess = validatePrereleaseAccessAws(context);
+  const activationStackStates = new Map();
   let apiOutputs;
   let webOutputs;
   for (const suffix of STACK_SUFFIXES) {
@@ -7424,11 +9331,18 @@ export const activateRelease = async ({
       !/^(?:CREATE|UPDATE)_COMPLETE$/u.test(state.stackStatus) ||
       state.terminationProtection !== (context.scope !== 'prerelease') ||
       state.outputs.CandidateSha !== context.identity.candidateSha ||
-      state.outputs.ReleaseId !== context.identity.releaseId
+      state.outputs.ReleaseId !== context.identity.releaseId ||
+      canonicalJson(state.tags) !== canonicalJson(expectedReleaseStackTags(context))
     )
       fail('E7_ACTIVATION_STACK_NOT_READY');
     if (suffix === 'api') apiOutputs = state.outputs;
     if (suffix === 'web') webOutputs = state.outputs;
+    activationStackStates.set(suffix, state);
+    validateOriginalStackTemplate(
+      context,
+      stackFor(context, suffix),
+      expectedTemplateSha256BySuffix.get(suffix),
+    );
   }
   if (
     webOutputs.PrereleaseAccessBindingSha256 !==
@@ -7440,8 +9354,10 @@ export const activateRelease = async ({
   assertExactHttpsOrigin(origin.value);
   const seedEvidenceSha256 = validateSeedEvidence(context, flags['seed-evidence']);
   const scheduleTargetSha256 = validateScheduleTarget(context, apiOutputs);
-  const apiCurrent = getAlias(context, apiRecord.deployed.api);
-  const workerCurrent = getAlias(context, apiRecord.deployed.worker);
+  const apiCurrent = assertAliasWithoutWeightedRouting(getAlias(context, apiRecord.deployed.api));
+  const workerCurrent = assertAliasWithoutWeightedRouting(
+    getAlias(context, apiRecord.deployed.worker),
+  );
   if (
     apiCurrent.FunctionVersion !== apiRecord.deployed.api.version ||
     workerCurrent.FunctionVersion !== apiRecord.deployed.worker.version
@@ -7450,13 +9366,47 @@ export const activateRelease = async ({
   }
   const apiPromotion = { changed: false, version: apiRecord.deployed.api.version };
   const workerPromotion = { changed: false, version: apiRecord.deployed.worker.version };
-  const currentWeb = listWebVersions(context, webRecord.bucketName);
-  const currentByKey = new Map(currentWeb.map((entry) => [entry.key, entry]));
-  const alreadyPromoted = webRecord.deployed.every(
-    (entry) => currentByKey.get(entry.key)?.etagSha256 === entry.etagSha256,
-  );
-  if (!alreadyPromoted) fail('E7_WEB_OBJECT_DRIFT_DETECTED');
+  const currentWeb = listWebVersions(context, webRecord.bucketName, { allLatest: true });
+  validateExactWebObjectInventory(currentWeb, webRecord.deployed, 'E7_WEB_OBJECT_DRIFT_DETECTED');
   const webPromotion = { invalidatedPaths: [], restoredObjects: 0 };
+  const immediatelyBeforeActivationStates = new Map();
+  for (const suffix of STACK_SUFFIXES) {
+    const stackName = stackFor(context, suffix);
+    const state = describeStack(context, stackName);
+    const initialState = activationStackStates.get(suffix);
+    if (
+      !/^(?:CREATE|UPDATE)_COMPLETE$/u.test(state.stackStatus) ||
+      state.terminationProtection !== (context.scope !== 'prerelease') ||
+      state.outputs.CandidateSha !== context.identity.candidateSha ||
+      state.outputs.ReleaseId !== context.identity.releaseId ||
+      canonicalJson(state.tags) !== canonicalJson(expectedReleaseStackTags(context)) ||
+      state.stackId !== initialState.stackId ||
+      stackStateFingerprint(stackName, state) !== stackStateFingerprint(stackName, initialState)
+    ) {
+      fail('E7_ACTIVATION_STACK_NOT_READY');
+    }
+    validateOriginalStackTemplate(context, stackName, expectedTemplateSha256BySuffix.get(suffix));
+    immediatelyBeforeActivationStates.set(suffix, state);
+  }
+  const activationApiState = immediatelyBeforeActivationStates.get('api');
+  const activationWebState = immediatelyBeforeActivationStates.get('web');
+  validateActivationLiveBindings(context, {
+    apiOutputs: activationApiState.outputs,
+    webOutputs: activationWebState.outputs,
+    apiRecord,
+    webRecord,
+  });
+  validateOriginalStackTemplate(context, stackFor(context, 'api'), apiRecord.templateSha256);
+  validateOriginalStackTemplate(context, stackFor(context, 'web'), webRecord.templateSha256);
+  validateHostedZoneAws(context);
+  validateCertificatesAws(context);
+  await Promise.all(
+    STACK_SUFFIXES.map((suffix) =>
+      detectStackDrift(context, stackFor(context, suffix), {
+        expectedStackId: immediatelyBeforeActivationStates.get(suffix).stackId,
+      }),
+    ),
+  );
   const publicationState = initialPublicationState(
     context,
     apiRecord.publication,
@@ -7466,8 +9416,67 @@ export const activateRelease = async ({
   let apiPublication;
   let webPublication;
   try {
-    apiPublication = updatePublicationStack(context, 'api', 'ENABLED');
-    webPublication = updatePublicationStack(context, 'web', 'ENABLED');
+    apiPublication = updatePublicationStack(context, 'api', 'ENABLED', {
+      expectedBeforeStateSha256: stackStateFingerprint(
+        stackFor(context, 'api'),
+        activationApiState,
+      ),
+      expectedTemplateSha256: apiRecord.templateSha256,
+    });
+    const immediatelyBeforeWebApi = publicationStateForStack(context, 'api');
+    const immediatelyBeforeWeb = publicationStateForStack(context, 'web');
+    if (
+      immediatelyBeforeWebApi.publicationState !== 'ENABLED' ||
+      immediatelyBeforeWeb.publicationState !== 'DISABLED' ||
+      immediatelyBeforeWebApi.state.stackId !== activationApiState.stackId ||
+      immediatelyBeforeWeb.state.stackId !== activationWebState.stackId ||
+      stackStateFingerprint(immediatelyBeforeWeb.stackName, immediatelyBeforeWeb.state) !==
+        stackStateFingerprint(stackFor(context, 'web'), activationWebState)
+    ) {
+      fail('E7_ACTIVATION_WEB_PRECONDITION_INVALID');
+    }
+    validateActivationLiveBindings(context, {
+      apiOutputs: immediatelyBeforeWebApi.state.outputs,
+      webOutputs: immediatelyBeforeWeb.state.outputs,
+      apiRecord,
+      webRecord,
+    });
+    validateOriginalStackTemplate(
+      context,
+      immediatelyBeforeWebApi.stackName,
+      apiRecord.templateSha256,
+    );
+    validateOriginalStackTemplate(
+      context,
+      immediatelyBeforeWeb.stackName,
+      webRecord.templateSha256,
+    );
+    validateExactWebObjectInventory(
+      listWebVersions(context, webRecord.bucketName, { allLatest: true }),
+      webRecord.deployed,
+      'E7_WEB_OBJECT_DRIFT_DETECTED',
+    );
+    await Promise.all([
+      detectStackDrift(context, immediatelyBeforeWebApi.stackName, {
+        expectedStackId: immediatelyBeforeWebApi.state.stackId,
+      }),
+      detectStackDrift(context, immediatelyBeforeWeb.stackName, {
+        expectedStackId: immediatelyBeforeWeb.state.stackId,
+      }),
+    ]);
+    validateActivatedApiPosture(context, apiRecord, immediatelyBeforeWebApi.state.outputs);
+    webPublication = updatePublicationStack(context, 'web', 'ENABLED', {
+      expectedBeforeStateSha256: stackStateFingerprint(
+        immediatelyBeforeWeb.stackName,
+        immediatelyBeforeWeb.state,
+      ),
+      expectedTemplateSha256: webRecord.templateSha256,
+    });
+    validateActivatedApiPosture(
+      context,
+      apiRecord,
+      publicationStateForStack(context, 'api').state.outputs,
+    );
     const activated = initialPublicationState(
       context,
       apiRecord.publication,
@@ -7475,7 +9484,10 @@ export const activateRelease = async ({
     );
     if (!activated.activated) fail('E7_ACTIVATION_STATE_NOT_APPLIED');
   } catch (error) {
-    restoreInitialPublicationBaseline(context, apiRecord.publication, webRecord.publication);
+    restoreInitialPublicationBaseline(context, apiRecord.publication, webRecord.publication, {
+      apiRecord,
+      webRecord,
+    });
     throw error;
   }
   const scheduler = {
@@ -7551,10 +9563,14 @@ export const activateRelease = async ({
   /* c8 ignore stop */
 };
 
-const detectStackDrift = async (context, stackName) => {
+const detectStackDrift = async (context, stackName, { expectedStackId } = {}) => {
+  const boundStackId = expectedStackId ?? describeStack(context, stackName).stackId;
+  if (typeof boundStackId !== 'string' || !boundStackId.includes(`:stack/${stackName}/`)) {
+    fail('E7_DRIFT_DETECTION_STACK_ID_INVALID');
+  }
   const started = awsJson(
     context,
-    ['cloudformation', 'detect-stack-drift', '--stack-name', stackName],
+    ['cloudformation', 'detect-stack-drift', '--stack-name', boundStackId],
     'E7_DRIFT_DETECTION_START_FAILED',
   );
   const detectionId = started?.StackDriftDetectionId;
@@ -7574,8 +9590,7 @@ const detectStackDrift = async (context, stackName) => {
     );
     if (
       status?.StackDriftDetectionId !== detectionId ||
-      typeof status?.StackId !== 'string' ||
-      status.StackId === '' ||
+      status?.StackId !== boundStackId ||
       !['DETECTION_IN_PROGRESS', 'DETECTION_COMPLETE', 'DETECTION_FAILED'].includes(
         status?.DetectionStatus,
       )
@@ -7672,8 +9687,9 @@ export const verifyDrift = async ({
       fail('E7_DRIFT_VERIFICATION_REQUIRES_ACTIVE_RELEASE');
     }
   }
-  const results = [];
-  for (const stackName of context.stacks) results.push(await detectStackDrift(context, stackName));
+  const results = await Promise.all(
+    context.stacks.map((stackName) => detectStackDrift(context, stackName)),
+  );
   const checkpoint = {
     decision: 'PASS',
     releaseMode: 'VERSIONED_UPDATE',
@@ -7717,7 +9733,12 @@ export const rollbackApi = async ({
     if (!record.initialDisableAvailable || record.previous !== null) {
       fail('E7_INITIAL_API_ROLLBACK_RECORD_INVALID');
     }
-    const publication = updatePublicationStack(context, 'api', 'DISABLED');
+    validateOriginalStackTemplate(context, stackFor(context, 'api'), record.templateSha256);
+    const publication = await transitionInitialRollbackPublication({
+      context,
+      suffix: 'api',
+      record,
+    });
     const apiStack = publicationStateForStack(context, 'api');
     const api = getHttpApi(context, apiStack.state.outputs.HttpApiId);
     const schedule = getSchedule(context);
@@ -7764,43 +9785,37 @@ export const rollbackWeb = async ({
     requireAws: true,
   });
   const record = readRecord(context, 'rollback-web', flags.record);
+  const apiRecord = readRecord(context, 'rollback-api');
   const initialRelease = rollbackReleaseMode(flags, record, 'to-unpublished') === 'INITIAL';
   revalidateAwsIdentity(context);
   if (initialRelease) {
     if (
       !record.initialUnpublishAvailable ||
       !Array.isArray(record.previous) ||
-      record.previous.length !== 0
+      record.previous.length !== 0 ||
+      !apiRecord.initialDisableAvailable ||
+      apiRecord.previous !== null ||
+      apiRecord.releaseMode !== 'INITIAL'
     ) {
       fail('E7_INITIAL_WEB_ROLLBACK_RECORD_INVALID');
     }
+    validateOriginalStackTemplate(context, stackFor(context, 'api'), apiRecord.templateSha256);
+    validateOriginalStackTemplate(context, stackFor(context, 'web'), record.templateSha256);
     const apiStack = publicationStateForStack(context, 'api');
     if (apiStack.publicationState !== 'DISABLED' || getSchedule(context).State !== 'DISABLED') {
       fail('E7_INITIAL_API_ROLLBACK_REQUIRED');
     }
-    const publication = updatePublicationStack(context, 'web', 'DISABLED');
+    const rollbackEvidence = rollbackEvidenceSource(context);
+    const { apiRollback, publication } = await transitionInitialWebRollback({
+      context,
+      record,
+      apiRecord,
+      apiStack,
+      rollbackEvidence,
+    });
     const distribution = getDistributionConfig(context, record.publication.distributionId);
     if (distribution.DistributionConfig.Enabled !== false) {
       fail('E7_INITIAL_WEB_ROLLBACK_STATE_NOT_APPLIED');
-    }
-    const rollbackEvidence = readJson(
-      evidenceTarget(context, 'rollback'),
-      'E7_INITIAL_API_ROLLBACK_EVIDENCE_MISSING',
-    );
-    const apiRollback = rollbackEvidence?.checkpoints?.apiRollback;
-    if (
-      apiRollback?.decision !== 'INITIAL_RELEASE_DISABLED_REQUIRES_UNAVAILABLE_SMOKE' ||
-      apiRollback?.releaseMode !== 'INITIAL' ||
-      apiRollback?.aliasesChanged !== false ||
-      apiRollback?.dataFactsChanged !== false ||
-      apiRollback?.stacksDeleted !== 0 ||
-      apiRollback?.publication?.changed !== true ||
-      apiRollback?.publication?.previousState !== 'ENABLED' ||
-      apiRollback?.publication?.state !== 'DISABLED' ||
-      apiRollback?.publication?.stackName !== stackFor(context, 'api') ||
-      !SHA256.test(apiRollback?.publication?.stackIdSha256 ?? '')
-    ) {
-      fail('E7_INITIAL_API_ROLLBACK_EVIDENCE_INVALID');
     }
     const rollbackInfrastructure = {
       decision: 'INITIAL_RELEASE_DISABLED_AND_UNPUBLISHED_REQUIRES_SMOKE',
@@ -7891,15 +9906,87 @@ const residualResources = (context) => {
 const cloudFormationExecutionRoleArn = (config) =>
   `arn:aws:iam::${config.aws.accountId}:role/cdk-hnb659fds-cfn-exec-role-${config.aws.accountId}-${config.aws.region}`;
 
-const destroyStack = (context, suffix) => {
+const expectedReleaseStackTags = (context) => ({
+  Project: 'checkout',
+  ManagedBy: 'cdk',
+  Environment: context.config.environment,
+  CandidateSha: context.identity.candidateSha,
+  ReleaseId: context.identity.releaseId,
+  ExpiresOn: context.config.cleanup.expiresAtUtc.slice(0, 10),
+  CleanupExpiresAtUtc: context.config.cleanup.expiresAtUtc,
+  CostCenter: 'technical-assessment',
+  DataClass: 'synthetic-only',
+  Owner: context.config.authorization.ownerAlias,
+  PaymentMode: 'sandbox',
+});
+
+const validateCleanupStackState = (context, suffix, state, { expectedFingerprint } = {}) => {
   const stackName = stackFor(context, suffix);
+  if (!state?.exists) return null;
+  const fingerprint = stackStateFingerprint(stackName, state);
+  if (
+    !/^(?:CREATE|UPDATE)_COMPLETE$/u.test(state.stackStatus ?? '') ||
+    state.terminationProtection !== false ||
+    typeof state.stackId !== 'string' ||
+    !state.stackId.includes(`:stack/${stackName}/`) ||
+    state.outputs?.CandidateSha !== context.identity.candidateSha ||
+    state.outputs?.ReleaseId !== context.identity.releaseId ||
+    JSON.stringify(
+      Object.entries(state.tags ?? {}).toSorted(([left], [right]) => left.localeCompare(right)),
+    ) !==
+      JSON.stringify(
+        Object.entries(expectedReleaseStackTags(context)).toSorted(([left], [right]) =>
+          left.localeCompare(right),
+        ),
+      ) ||
+    (expectedFingerprint !== undefined && fingerprint !== expectedFingerprint)
+  ) {
+    fail('E7_CLEANUP_STACK_IDENTITY_INVALID');
+  }
+  return { fingerprint, stackId: state.stackId, stackName };
+};
+
+const refreshCleanupStackState = (
+  context,
+  suffix,
+  state,
+  initial,
+  { validateTemplate = validateOriginalStackTemplate } = {},
+) => {
+  const validated = validateCleanupStackState(context, suffix, state);
+  if (validated?.stackId !== initial?.stackId) fail('E7_CLEANUP_STACK_IDENTITY_INVALID');
+  validateTemplate(context, initial.stackId, initial.templateSha256);
+  return {
+    ...validated,
+    stackId: initial.stackId,
+    templateSha256: initial.templateSha256,
+  };
+};
+
+const destroyCleanupStackSet = (context, states, validatedStates, destroy = destroyStack) =>
+  [...STACK_SUFFIXES]
+    .reverse()
+    .map((suffix) =>
+      states.get(suffix)?.exists
+        ? destroy(context, suffix, validatedStates.get(suffix))
+        : stackFor(context, suffix),
+    );
+
+const destroyStack = (context, suffix, expected) => {
+  const stackName = stackFor(context, suffix);
+  const current = describeStack(context, stackName, { allowMissing: true });
+  const validated = validateCleanupStackState(context, suffix, current, {
+    expectedFingerprint: expected.fingerprint,
+  });
+  if (validated?.stackId !== expected.stackId) fail('E7_CLEANUP_STACK_IDENTITY_INVALID');
+  validateOriginalStackTemplate(context, expected.stackId, expected.templateSha256);
   aws(
     context,
     [
       'cloudformation',
       'delete-stack',
       '--stack-name',
-      stackName,
+      expected.stackId,
       '--role-arn',
       cloudFormationExecutionRoleArn(context.config),
     ],
@@ -7907,7 +9994,7 @@ const destroyStack = (context, suffix) => {
   );
   aws(
     context,
-    ['cloudformation', 'wait', 'stack-delete-complete', '--stack-name', stackName],
+    ['cloudformation', 'wait', 'stack-delete-complete', '--stack-name', expected.stackId],
     `E7_CLOUDFORMATION_DELETE_WAIT_${suffix.toUpperCase()}_FAILED`,
   );
   const state = describeStack(context, stackName, { allowMissing: true });
@@ -8038,19 +10125,41 @@ export const cleanupRelease = async ({
         describeStack(context, stackFor(context, suffix), { allowMissing: true }),
       ]),
     );
-    if (
-      [...states.values()].some((state) => state.exists && state.terminationProtection !== false)
-    ) {
-      fail('E7_EPHEMERAL_TERMINATION_PROTECTION_INVALID');
+    const validatedStates = new Map(
+      STACK_SUFFIXES.map((suffix) => [
+        suffix,
+        validateCleanupStackState(context, suffix, states.get(suffix)),
+      ]),
+    );
+    for (const suffix of STACK_SUFFIXES) {
+      const validated = validatedStates.get(suffix);
+      if (validated !== null) {
+        const templateSha256 = assemblyTemplateSha256(assembly, validated.stackName);
+        validateOriginalStackTemplate(context, validated.stackName, templateSha256);
+        validatedStates.set(suffix, { ...validated, templateSha256 });
+      }
     }
     const web = states.get('web');
-    if (web.exists) updatePublicationStack(context, 'web', 'DISABLED');
-    const api = states.get('api');
-    if (api.exists) updatePublicationStack(context, 'api', 'DISABLED');
-    for (const suffix of [...STACK_SUFFIXES].reverse()) {
-      const state = states.get(suffix);
-      if (state.exists) destroyedStacks.push(destroyStack(context, suffix));
+    if (web.exists) {
+      const initial = validatedStates.get('web');
+      updatePublicationStack(context, 'web', 'DISABLED', {
+        expectedBeforeStateSha256: initial.fingerprint,
+        expectedTemplateSha256: initial.templateSha256,
+      });
+      const state = describeStack(context, stackFor(context, 'web'));
+      validatedStates.set('web', refreshCleanupStackState(context, 'web', state, initial));
     }
+    const api = states.get('api');
+    if (api.exists) {
+      const initial = validatedStates.get('api');
+      updatePublicationStack(context, 'api', 'DISABLED', {
+        expectedBeforeStateSha256: initial.fingerprint,
+        expectedTemplateSha256: initial.templateSha256,
+      });
+      const state = describeStack(context, stackFor(context, 'api'));
+      validatedStates.set('api', refreshCleanupStackState(context, 'api', state, initial));
+    }
+    destroyedStacks.push(...destroyCleanupStackSet(context, states, validatedStates));
     const residual = residualResources(context);
     const checkpoint = {
       decision: residual.count === 0 ? 'PASS' : 'FAIL_RESIDUAL_RESOURCES',
@@ -8166,13 +10275,15 @@ const selfTestConfig = (now) => {
         alertDestinationSha256: sha256(destination),
       },
       domain: {
-        mode: 'AWS_MANAGED',
-        hostname: null,
-        apiHostname: null,
-        hostedZoneId: null,
-        webCertificateArn: null,
-        apiCertificateArn: null,
-        dnsIncluded: false,
+        mode: 'CUSTOM_AUTHORIZED',
+        hostname: 'preview.example.test',
+        apiHostname: 'api-preview.example.test',
+        hostedZoneId: 'Z1234567890ABC',
+        webCertificateArn:
+          'arn:aws:acm:us-east-1:123456789012:certificate/11111111-1111-1111-1111-111111111111',
+        apiCertificateArn:
+          'arn:aws:acm:us-east-1:123456789012:certificate/22222222-2222-2222-2222-222222222222',
+        dnsIncluded: true,
       },
       cleanup: {
         ownerAlias: 'cleanup-owner',
@@ -8201,6 +10312,548 @@ const selfTestConfig = (now) => {
       containsSensitiveData: false,
     },
     destination,
+  };
+};
+
+const selfTestInitialDataPublicationTemplate = (config) => {
+  const catalogExportName = `checkout-${config.environment}-data:catalog-table-name`;
+  const checkoutExportName = `checkout-${config.environment}-data:checkout-table-name`;
+  return {
+    Resources: {
+      CatalogTable: {
+        Type: 'AWS::DynamoDB::Table',
+        Properties: { TableName: `checkout-${config.environment}-catalog` },
+      },
+      CheckoutTable: {
+        Type: 'AWS::DynamoDB::Table',
+        Properties: { TableName: `checkout-${config.environment}-checkout` },
+      },
+    },
+    Outputs: {
+      CatalogTableName: { Value: { Ref: 'CatalogTable' } },
+      CheckoutTableName: { Value: { Ref: 'CheckoutTable' } },
+      CatalogTableExport: {
+        Value: { Ref: 'CatalogTable' },
+        Export: { Name: catalogExportName },
+      },
+      CheckoutTableExport: {
+        Value: { Ref: 'CheckoutTable' },
+        Export: { Name: checkoutExportName },
+      },
+    },
+  };
+};
+
+const selfTestInitialWebPublicationTemplate = (context) => {
+  const { config } = context;
+  const customDomain = config.domain.mode === 'CUSTOM_AUTHORIZED';
+  const distributionLogicalId = 'WebDistribution';
+  const bucketLogicalId = 'WebBucket';
+  const apiOriginDomain = customDomain
+    ? config.domain.apiHostname
+    : {
+        'Fn::Join': [
+          '',
+          [{ Ref: 'HttpApi' }, `.execute-api.${config.aws.region}.`, { Ref: 'AWS::URLSuffix' }],
+        ],
+      };
+  const baseUrl = customDomain
+    ? `https://${config.domain.hostname}`
+    : {
+        'Fn::Join': ['', ['https://', { 'Fn::GetAtt': [distributionLogicalId, 'DomainName'] }]],
+      };
+  const outputUrl = (suffix) =>
+    customDomain
+      ? `${baseUrl}${suffix}`
+      : {
+          'Fn::Join': [
+            '',
+            [
+              'https://',
+              { 'Fn::GetAtt': [distributionLogicalId, 'DomainName'] },
+              ...(suffix === '' ? [] : [suffix]),
+            ],
+          ],
+        };
+  const keyGroups = [config.prereleaseAccess.keyGroupId];
+  const webOriginId = 'WebOrigin';
+  const apiOriginId = 'ApiOrigin';
+  const aliasTarget = {
+    DNSName: { 'Fn::GetAtt': [distributionLogicalId, 'DomainName'] },
+    HostedZoneId: {
+      'Fn::FindInMap': [
+        'AWSCloudFrontPartitionHostedZoneIdMap',
+        { Ref: 'AWS::Partition' },
+        'zoneId',
+      ],
+    },
+  };
+  const resources = {
+    [bucketLogicalId]: {
+      Type: 'AWS::S3::Bucket',
+      Properties: {
+        BucketEncryption: {
+          ServerSideEncryptionConfiguration: [
+            { ServerSideEncryptionByDefault: { SSEAlgorithm: 'AES256' } },
+          ],
+        },
+        OwnershipControls: { Rules: [{ ObjectOwnership: 'BucketOwnerEnforced' }] },
+        PublicAccessBlockConfiguration: {
+          BlockPublicAcls: true,
+          BlockPublicPolicy: true,
+          IgnorePublicAcls: true,
+          RestrictPublicBuckets: true,
+        },
+        VersioningConfiguration: { Status: 'Enabled' },
+      },
+    },
+    WebBucketPolicy: {
+      Type: 'AWS::S3::BucketPolicy',
+      Properties: {
+        Bucket: { Ref: bucketLogicalId },
+        PolicyDocument: {
+          Statement: [
+            {
+              Action: 's3:*',
+              Condition: { Bool: { 'aws:SecureTransport': 'false' } },
+              Effect: 'Deny',
+              Principal: { AWS: '*' },
+              Resource: [
+                { 'Fn::GetAtt': [bucketLogicalId, 'Arn'] },
+                { 'Fn::Join': ['', [{ 'Fn::GetAtt': [bucketLogicalId, 'Arn'] }, '/*']] },
+              ],
+            },
+            {
+              Action: ['s3:PutBucketPolicy', 's3:GetBucket*', 's3:List*', 's3:DeleteObject*'],
+              Effect: 'Allow',
+              Principal: { AWS: { 'Fn::GetAtt': ['AutoDeleteRole', 'Arn'] } },
+              Resource: [
+                { 'Fn::GetAtt': [bucketLogicalId, 'Arn'] },
+                { 'Fn::Join': ['', [{ 'Fn::GetAtt': [bucketLogicalId, 'Arn'] }, '/*']] },
+              ],
+            },
+            {
+              Action: 's3:GetObject',
+              Condition: {
+                StringEquals: {
+                  'AWS:SourceArn': {
+                    'Fn::Join': [
+                      '',
+                      [
+                        'arn:',
+                        { Ref: 'AWS::Partition' },
+                        ':cloudfront::',
+                        { Ref: 'AWS::AccountId' },
+                        ':distribution/',
+                        { Ref: distributionLogicalId },
+                      ],
+                    ],
+                  },
+                },
+              },
+              Effect: 'Allow',
+              Principal: { Service: 'cloudfront.amazonaws.com' },
+              Resource: {
+                'Fn::Join': ['', [{ 'Fn::GetAtt': [bucketLogicalId, 'Arn'] }, '/*']],
+              },
+            },
+          ],
+          Version: '2012-10-17',
+        },
+      },
+    },
+    AutoDeleteRole: { Type: 'AWS::IAM::Role', Properties: {} },
+    WebOriginAccessControl: {
+      Type: 'AWS::CloudFront::OriginAccessControl',
+      Properties: {
+        OriginAccessControlConfig: {
+          OriginAccessControlOriginType: 's3',
+          SigningBehavior: 'always',
+          SigningProtocol: 'sigv4',
+        },
+      },
+    },
+    SpaRewrite: { Type: 'AWS::CloudFront::Function', Properties: {} },
+    DocumentHeaders: { Type: 'AWS::CloudFront::ResponseHeadersPolicy', Properties: {} },
+    SecurityHeaders: { Type: 'AWS::CloudFront::ResponseHeadersPolicy', Properties: {} },
+    ApiHeaders: { Type: 'AWS::CloudFront::ResponseHeadersPolicy', Properties: {} },
+    [distributionLogicalId]: {
+      Type: 'AWS::CloudFront::Distribution',
+      Properties: {
+        DistributionConfig: {
+          ...(customDomain ? { Aliases: [config.domain.hostname] } : {}),
+          CacheBehaviors: [
+            {
+              AllowedMethods: ['GET', 'HEAD', 'OPTIONS'],
+              CachePolicyId: '658327ea-f89d-4fab-a63d-7e88639e58f6',
+              Compress: true,
+              PathPattern: 'assets/*',
+              ResponseHeadersPolicyId: { Ref: 'SecurityHeaders' },
+              TargetOriginId: webOriginId,
+              TrustedKeyGroups: keyGroups,
+              ViewerProtocolPolicy: 'redirect-to-https',
+            },
+            {
+              AllowedMethods: ['GET', 'HEAD', 'OPTIONS', 'PUT', 'PATCH', 'POST', 'DELETE'],
+              CachePolicyId: '4135ea2d-6df8-44a3-9df3-4b5a84be39ad',
+              Compress: true,
+              OriginRequestPolicyId: 'b689b0a8-53d0-40ab-baf2-68738e2966ac',
+              PathPattern: 'api/*',
+              ResponseHeadersPolicyId: { Ref: 'ApiHeaders' },
+              TargetOriginId: apiOriginId,
+              TrustedKeyGroups: keyGroups,
+              ViewerProtocolPolicy: 'redirect-to-https',
+            },
+          ],
+          DefaultCacheBehavior: {
+            CachePolicyId: '4135ea2d-6df8-44a3-9df3-4b5a84be39ad',
+            Compress: true,
+            FunctionAssociations: [
+              {
+                EventType: 'viewer-request',
+                FunctionARN: { 'Fn::GetAtt': ['SpaRewrite', 'FunctionARN'] },
+              },
+            ],
+            ResponseHeadersPolicyId: { Ref: 'DocumentHeaders' },
+            TargetOriginId: webOriginId,
+            TrustedKeyGroups: keyGroups,
+            ViewerProtocolPolicy: 'redirect-to-https',
+          },
+          DefaultRootObject: 'index.html',
+          Enabled: { 'Fn::If': ['PublicationEnabled', true, false] },
+          HttpVersion: 'http2and3',
+          Origins: [
+            {
+              DomainName: { 'Fn::GetAtt': [bucketLogicalId, 'RegionalDomainName'] },
+              Id: webOriginId,
+              OriginAccessControlId: { 'Fn::GetAtt': ['WebOriginAccessControl', 'Id'] },
+              S3OriginConfig: { OriginAccessIdentity: '' },
+            },
+            {
+              CustomOriginConfig: {
+                OriginProtocolPolicy: 'https-only',
+                OriginSSLProtocols: ['TLSv1.2'],
+              },
+              DomainName: apiOriginDomain,
+              Id: apiOriginId,
+              OriginCustomHeaders: [
+                {
+                  HeaderName: 'x-stage7-origin-verify',
+                  HeaderValue: `{{resolve:secretsmanager:${runtimeSecretReference(config)}:SecretString:prereleaseOriginToken::${config.prereleaseAccess.originTokenSecretVersionId}}}`,
+                },
+              ],
+            },
+          ],
+          PriceClass: 'PriceClass_100',
+          ViewerCertificate: customDomain
+            ? {
+                AcmCertificateArn: config.domain.webCertificateArn,
+                MinimumProtocolVersion: 'TLSv1.2_2021',
+                SslSupportMethod: 'sni-only',
+              }
+            : { CloudFrontDefaultCertificate: true },
+        },
+      },
+    },
+    PublicOriginParameter: {
+      Type: 'AWS::SSM::Parameter',
+      Properties: {
+        Name: `/checkout-${config.environment}/public-origin`,
+        Type: 'String',
+        Value: structuredClone(baseUrl),
+      },
+    },
+  };
+  if (customDomain) {
+    resources.WebAliasA = {
+      Type: 'AWS::Route53::RecordSet',
+      Properties: {
+        AliasTarget: structuredClone(aliasTarget),
+        HostedZoneId: config.domain.hostedZoneId,
+        Name: `${config.domain.hostname}.`,
+        Type: 'A',
+      },
+    };
+    resources.WebAliasAAAA = {
+      Type: 'AWS::Route53::RecordSet',
+      Properties: {
+        AliasTarget: structuredClone(aliasTarget),
+        HostedZoneId: config.domain.hostedZoneId,
+        Name: `${config.domain.hostname}.`,
+        Type: 'AAAA',
+      },
+    };
+  }
+  return {
+    Parameters: {
+      PublicationState: {
+        Type: 'String',
+        Default: 'DISABLED',
+        AllowedValues: ['DISABLED', 'ENABLED'],
+        Description:
+          'CloudFormation-managed publication state; changed only by audited activation/rollback',
+      },
+    },
+    Conditions: {
+      PublicationEnabled: { 'Fn::Equals': [{ Ref: 'PublicationState' }, 'ENABLED'] },
+    },
+    Resources: resources,
+    Outputs: {
+      ApplicationUrl: { Value: outputUrl('') },
+      ApiUrl: { Value: outputUrl('/api') },
+      ApiDocsUrl: { Value: outputUrl('/api/docs') },
+      HealthUrl: { Value: outputUrl('/api/health/ready') },
+      WebBucketName: { Value: { Ref: bucketLogicalId } },
+      DistributionId: { Value: { Ref: distributionLogicalId } },
+      PublicOriginParameterName: {
+        Value: `/checkout-${config.environment}/public-origin`,
+      },
+      WebPublicationStatus: {
+        Value: { 'Fn::If': ['PublicationEnabled', 'ENABLED', 'DISABLED'] },
+      },
+    },
+  };
+};
+
+const selfTestInitialApiPublicationTemplate = (context) => {
+  const { config, identity } = context;
+  const dataTemplate = selfTestInitialDataPublicationTemplate(config);
+  const catalogImport = {
+    'Fn::ImportValue': dataTemplate.Outputs.CatalogTableExport.Export.Name,
+  };
+  const checkoutImport = {
+    'Fn::ImportValue': dataTemplate.Outputs.CheckoutTableExport.Export.Name,
+  };
+  const domainLogicalId = 'ApiCustomDomain';
+  const aliasTarget = {
+    DNSName: { 'Fn::GetAtt': [domainLogicalId, 'RegionalDomainName'] },
+    HostedZoneId: { 'Fn::GetAtt': [domainLogicalId, 'RegionalHostedZoneId'] },
+  };
+  const runtimeFunction = (id) => ({
+    Type: 'AWS::Lambda::Function',
+    Properties: {
+      Architectures: ['arm64'],
+      FunctionName: id,
+      Handler: 'index.handler',
+      Runtime: 'nodejs24.x',
+      Environment: {
+        Variables: {
+          ALLOWED_ORIGIN_PARAMETER_NAME: `/checkout-${config.environment}/public-origin`,
+          APP_ENV: 'assessment',
+          AUTO_SEED_CATALOG: 'false',
+          PAYMENT_ADAPTER: 'sandbox',
+          DATA_ADAPTER: 'dynamodb',
+          CANDIDATE_SHA: identity.candidateSha,
+          CATALOG_TABLE_NAME: structuredClone(catalogImport),
+          CHECKOUT_TABLE_NAME: structuredClone(checkoutImport),
+          PAYMENTS_ENABLED: 'true',
+          RELEASE_ID: identity.releaseId,
+          PUBLIC_ASSET_ORIGIN_PARAMETER_NAME: `/checkout-${config.environment}/public-origin`,
+          RUNTIME_SECRET_ARN: runtimeSecretReference(config),
+          RUNTIME_SECRET_VERSION_ID: runtimeSecretVersionId(config),
+          SANDBOX_AUTHORIZED_UNTIL_UTC: config.authorization.expiresAtUtc,
+          PRERELEASE_ACCESS_MODE: 'cloudfront_signed_cookie',
+          TOKENIZATION_MODE: 'direct_jwe',
+        },
+      },
+    },
+  });
+  return {
+    Parameters: {
+      PublicationState: {
+        Type: 'String',
+        Default: 'DISABLED',
+        AllowedValues: ['DISABLED', 'ENABLED'],
+        Description:
+          'CloudFormation-managed publication state; changed only by audited activation/rollback',
+      },
+    },
+    Conditions: {
+      PublicationEnabled: { 'Fn::Equals': [{ Ref: 'PublicationState' }, 'ENABLED'] },
+    },
+    Resources: {
+      ReconcileSchedule: {
+        Type: 'AWS::Scheduler::Schedule',
+        Properties: {
+          FlexibleTimeWindow: { Mode: 'OFF' },
+          Name: `checkout-${config.environment}-reconcile`,
+          ScheduleExpression: 'rate(1 minute)',
+          State: { 'Fn::If': ['PublicationEnabled', 'ENABLED', 'DISABLED'] },
+          Target: {
+            Arn: { Ref: 'WorkerAlias' },
+            Input: '{"action":"reconcile","mode":"sandbox"}',
+            RetryPolicy: { MaximumEventAgeInSeconds: 300, MaximumRetryAttempts: 2 },
+            RoleArn: { 'Fn::GetAtt': ['SchedulerRole', 'Arn'] },
+          },
+        },
+      },
+      HttpApi: {
+        Type: 'AWS::ApiGatewayV2::Api',
+        Properties: {
+          DisableExecuteApiEndpoint: { 'Fn::If': ['PublicationEnabled', true, true] },
+          ProtocolType: 'HTTP',
+        },
+      },
+      ApiIntegration: {
+        Type: 'AWS::ApiGatewayV2::Integration',
+        Properties: {
+          ApiId: { Ref: 'HttpApi' },
+          IntegrationType: 'AWS_PROXY',
+          IntegrationUri: { Ref: 'ApiAlias' },
+          PayloadFormatVersion: '2.0',
+        },
+      },
+      ApiRoute: {
+        Type: 'AWS::ApiGatewayV2::Route',
+        Properties: {
+          ApiId: { Ref: 'HttpApi' },
+          AuthorizationType: 'NONE',
+          RouteKey: 'ANY /{proxy+}',
+          Target: { 'Fn::Join': ['', ['integrations/', { Ref: 'ApiIntegration' }]] },
+        },
+      },
+      ApiIntegrationPermission: {
+        Type: 'AWS::Lambda::Permission',
+        Properties: {
+          Action: 'lambda:InvokeFunction',
+          FunctionName: { Ref: 'ApiAlias' },
+          Principal: 'apigateway.amazonaws.com',
+          SourceArn: {
+            'Fn::Join': [
+              '',
+              [
+                'arn:',
+                { Ref: 'AWS::Partition' },
+                `:execute-api:${config.aws.region}:`,
+                { Ref: 'AWS::AccountId' },
+                ':',
+                { Ref: 'HttpApi' },
+                '/*/*/{proxy+}',
+              ],
+            ],
+          },
+        },
+      },
+      HttpApiDefaultStage: {
+        Type: 'AWS::ApiGatewayV2::Stage',
+        Properties: { ApiId: { Ref: 'HttpApi' }, AutoDeploy: true, StageName: '$default' },
+      },
+      [domainLogicalId]: {
+        Type: 'AWS::ApiGatewayV2::DomainName',
+        Properties: {
+          DomainName: config.domain.apiHostname,
+          DomainNameConfigurations: [
+            {
+              CertificateArn: config.domain.apiCertificateArn,
+              EndpointType: 'REGIONAL',
+              SecurityPolicy: 'TLS_1_2',
+            },
+          ],
+        },
+      },
+      ApiDefaultMapping: {
+        Type: 'AWS::ApiGatewayV2::ApiMapping',
+        Condition: 'PublicationEnabled',
+        Properties: {
+          ApiId: { Ref: 'HttpApi' },
+          DomainName: { Ref: domainLogicalId },
+          Stage: '$default',
+        },
+      },
+      ApiAliasA: {
+        Type: 'AWS::Route53::RecordSet',
+        Properties: {
+          Name: config.domain.apiHostname,
+          Type: 'A',
+          HostedZoneId: config.domain.hostedZoneId,
+          AliasTarget: structuredClone(aliasTarget),
+        },
+      },
+      ApiAliasAAAA: {
+        Type: 'AWS::Route53::RecordSet',
+        Properties: {
+          Name: `${config.domain.apiHostname}.`,
+          Type: 'AAAA',
+          HostedZoneId: config.domain.hostedZoneId,
+          AliasTarget: structuredClone(aliasTarget),
+        },
+      },
+      ApiRuntime: runtimeFunction('api'),
+      WorkerRuntime: runtimeFunction('worker'),
+      ApiVersion: {
+        Type: 'AWS::Lambda::Version',
+        Properties: { FunctionName: { Ref: 'ApiRuntime' } },
+      },
+      WorkerVersion: {
+        Type: 'AWS::Lambda::Version',
+        Properties: { FunctionName: { Ref: 'WorkerRuntime' } },
+      },
+      ApiAlias: {
+        Type: 'AWS::Lambda::Alias',
+        Properties: {
+          FunctionName: { Ref: 'ApiRuntime' },
+          FunctionVersion: { 'Fn::GetAtt': ['ApiVersion', 'Version'] },
+          Name: 'live',
+        },
+      },
+      WorkerAlias: {
+        Type: 'AWS::Lambda::Alias',
+        Properties: {
+          FunctionName: { Ref: 'WorkerRuntime' },
+          FunctionVersion: { 'Fn::GetAtt': ['WorkerVersion', 'Version'] },
+          Name: 'live',
+        },
+      },
+      SchedulerRole: {
+        Type: 'AWS::IAM::Role',
+        Properties: {
+          AssumeRolePolicyDocument: {
+            Statement: [
+              {
+                Action: 'sts:AssumeRole',
+                Effect: 'Allow',
+                Principal: { Service: 'scheduler.amazonaws.com' },
+              },
+            ],
+            Version: '2012-10-17',
+          },
+        },
+      },
+      SchedulerRolePolicy: {
+        Type: 'AWS::IAM::Policy',
+        Properties: {
+          PolicyDocument: {
+            Statement: [
+              {
+                Action: 'lambda:InvokeFunction',
+                Effect: 'Allow',
+                Resource: { Ref: 'WorkerAlias' },
+                Sid: 'InvokeWorkerAlias',
+              },
+            ],
+            Version: '2012-10-17',
+          },
+          PolicyName: 'SchedulerRolePolicy',
+          Roles: [{ Ref: 'SchedulerRole' }],
+        },
+      },
+    },
+    Outputs: {
+      ApiAliasArn: { Value: { Ref: 'ApiAlias' } },
+      ApiFunctionVersion: { Value: { 'Fn::GetAtt': ['ApiVersion', 'Version'] } },
+      ApiCustomDomainName: { Value: config.domain.apiHostname },
+      ApiOriginUrl: { Value: `https://${config.domain.apiHostname}` },
+      HttpApiId: { Value: { Ref: 'HttpApi' } },
+      ScheduleName: { Value: `checkout-${config.environment}-reconcile` },
+      SchedulerStatus: {
+        Value: { 'Fn::If': ['PublicationEnabled', 'ENABLED', 'DISABLED'] },
+      },
+      WorkerAliasArn: { Value: { Ref: 'WorkerAlias' } },
+      WorkerFunctionVersion: { Value: { 'Fn::GetAtt': ['WorkerVersion', 'Version'] } },
+      ApiPublicationStatus: {
+        Value: { 'Fn::If': ['PublicationEnabled', 'ENABLED', 'DISABLED'] },
+      },
+    },
   };
 };
 
@@ -8443,6 +11096,8 @@ const selfTestVersionedRollbackAwsLayer = async () => {
     }
     if (operation === 's3api:list-object-versions') {
       return success({
+        DeleteMarkers: [],
+        IsTruncated: false,
         Versions: VERSIONED_ROLLBACK_WEB_KEYS.map((key) => {
           const versionId = active.get(key);
           const body = contents.get(versionId);
@@ -9155,7 +11810,741 @@ const selfTestReleaseSuccessorGuardBoundary = async () => {
   return { canaries: 7, mutations: 0, simulatedAwsReads: calls.length };
 };
 
+const selfTestInitialRollbackResumption = async (config) => {
+  const context = {
+    config,
+    now: new Date('2026-08-17T11:58:00.000Z'),
+    identity: {
+      candidateSha: 'a'.repeat(40),
+      releaseId: 'rel-20260817-1200-aaaaaaa',
+    },
+    stacks: config.authorization.stacks,
+  };
+  const stackState = (suffix, publicationState) => {
+    const stackName = stackFor(context, suffix);
+    const apiFunctionName = `checkout-${config.environment}-api`;
+    const workerFunctionName = `checkout-${config.environment}-worker`;
+    const applicationUrl = `https://${config.domain.hostname}`;
+    return {
+      publicationState,
+      stackName,
+      state: {
+        exists: true,
+        outputs: {
+          CandidateSha: context.identity.candidateSha,
+          ...(suffix === 'api'
+            ? {
+                ApiAliasArn: `arn:aws:lambda:${config.aws.region}:${config.aws.accountId}:function:${apiFunctionName}:live`,
+                ApiCustomDomainName: config.domain.apiHostname,
+                ApiFunctionVersion: '1',
+                ApiOriginUrl: `https://${config.domain.apiHostname}`,
+                HttpApiId: 'a1b2c3d4e5',
+                WorkerAliasArn: `arn:aws:lambda:${config.aws.region}:${config.aws.accountId}:function:${workerFunctionName}:live`,
+                WorkerFunctionVersion: '2',
+              }
+            : {
+                ApiDocsUrl: `${applicationUrl}/api/docs`,
+                ApiUrl: `${applicationUrl}/api`,
+                ApplicationUrl: applicationUrl,
+                DistributionId: 'E1234567890ABC',
+                HealthUrl: `${applicationUrl}/api/health/ready`,
+                PublicOriginParameterName: `/checkout-${config.environment}/public-origin`,
+                WebBucketName: `checkout-${config.environment}-web-canary`,
+              }),
+          ReleaseId: context.identity.releaseId,
+          [suffix === 'api' ? 'ApiPublicationStatus' : 'WebPublicationStatus']: publicationState,
+        },
+        parameters: { PublicationState: publicationState },
+        tags: expectedReleaseStackTags(context),
+        stackStatus: 'UPDATE_COMPLETE',
+        stackId: `arn:aws:cloudformation:${config.aws.region}:${config.aws.accountId}:stack/${stackName}/12345678-1234-4123-8123-123456789012`,
+        creationTime: '2026-08-17T11:00:00.000Z',
+        lastUpdatedTime:
+          publicationState === 'ENABLED' ? '2026-08-17T11:30:00.000Z' : '2026-08-17T12:00:00.000Z',
+        terminationProtection: true,
+      },
+    };
+  };
+  const live = {
+    api: stackState('api', 'ENABLED'),
+    web: stackState('web', 'ENABLED'),
+  };
+  const records = {
+    api: {
+      deployed: {
+        api: {
+          aliasName: 'live',
+          functionName: `checkout-${config.environment}-api`,
+          version: '1',
+        },
+        worker: {
+          aliasName: 'live',
+          functionName: `checkout-${config.environment}-worker`,
+          version: '2',
+        },
+      },
+      publication: { apiId: 'a1b2c3d4e5' },
+      recordSha256: 'd'.repeat(64),
+      templateSha256: '1'.repeat(64),
+    },
+    web: {
+      bucketName: `checkout-${config.environment}-web-canary`,
+      distributionId: 'E1234567890ABC',
+      publication: { distributionId: 'E1234567890ABC' },
+      publicOriginSha256: sha256(`https://${config.domain.hostname}`),
+      recordSha256: 'e'.repeat(64),
+      templateSha256: '2'.repeat(64),
+    },
+  };
+  const ledger = { checkpoints: {} };
+  let applyCalls = 0;
+  const causalProof = ({ clientRequestToken, suffix }) => ({
+    provider: 'CLOUDFORMATION_STACK_EVENT',
+    requestTokenSha256: sha256(clientRequestToken),
+    updateStartedEventIdSha256: sha256(`${suffix}-started`),
+    updateCompletedEventIdSha256: sha256(`${suffix}-completed`),
+    updateStartedAtUtc: '2026-08-17T11:59:00.000Z',
+    updateCompletedAtUtc: '2026-08-17T12:00:00.000Z',
+    transition: 'UPDATE_IN_PROGRESS_TO_UPDATE_COMPLETE',
+  });
+  const dependencies = {
+    readPublication: (_context, suffix) => live[suffix],
+    readEvidence: () => ledger,
+    persistIntent: async ({ context: current, suffix, record, observed }) => {
+      const intent = createInitialRollbackIntent({
+        context: current,
+        suffix,
+        record,
+        observed,
+      });
+      ledger.checkpoints[initialRollbackIntentCheckpoint(suffix)] = intent;
+      return intent;
+    },
+    applyUpdate: (_context, suffix, targetState, options) => {
+      applyCalls += 1;
+      const before = live[suffix];
+      assert.equal(targetState, 'DISABLED');
+      assert.equal(
+        options.expectedBeforeStateSha256,
+        stackStateFingerprint(before.stackName, before.state),
+      );
+      assert.equal(
+        options.clientRequestToken,
+        initialRollbackClientRequestToken({
+          context,
+          suffix,
+          record: records[suffix],
+          observed: before,
+        }),
+      );
+      assert.equal(options.expectedTemplateSha256, records[suffix].templateSha256);
+      const result = {
+        changed: true,
+        previousState: 'ENABLED',
+        state: 'DISABLED',
+        stackIdSha256: sha256(before.state.stackId),
+        stackName: before.stackName,
+      };
+      live[suffix] = stackState(suffix, 'DISABLED');
+      return result;
+    },
+    captureCausality: ({ suffix, clientRequestToken }) =>
+      causalProof({ suffix, clientRequestToken }),
+    validateTemplate: (_context, stackId, expectedSha256) => {
+      const suffix = stackId.includes(`:stack/${stackFor(context, 'api')}/`) ? 'api' : 'web';
+      assert.equal(expectedSha256, records[suffix].templateSha256);
+      return expectedSha256;
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      transitionInitialRollbackPublication({
+        context,
+        suffix: 'api',
+        record: { ...records.api, templateSha256: 'invalid' },
+        dependencies,
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_RECORD_TEMPLATE_INVALID',
+  );
+  await assert.rejects(
+    () =>
+      transitionInitialRollbackPublication({
+        context,
+        suffix: 'api',
+        record: records.api,
+        dependencies: {
+          ...dependencies,
+          validateTemplate: () => fail('E7_CLOUDFORMATION_ORIGINAL_TEMPLATE_DRIFT'),
+        },
+      }),
+    (error) => error?.code === 'E7_CLOUDFORMATION_ORIGINAL_TEMPLATE_DRIFT',
+  );
+  await assert.rejects(
+    () =>
+      transitionInitialRollbackPublication({
+        context,
+        suffix: 'api',
+        record: { ...records.api, publication: { apiId: 'f9e8d7c6b5' } },
+        dependencies,
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_LIVE_BINDING_INVALID',
+  );
+  await assert.rejects(
+    () =>
+      transitionInitialRollbackPublication({
+        context,
+        suffix: 'web',
+        record: { ...records.web, distributionId: 'EFOREIGN123456' },
+        dependencies,
+      }),
+    (error) => error?.code === 'E7_INITIAL_WEB_ROLLBACK_LIVE_BINDING_INVALID',
+  );
+  assert.equal(applyCalls, 0);
+
+  const apiApplied = await transitionInitialRollbackPublication({
+    context,
+    suffix: 'api',
+    record: records.api,
+    dependencies,
+  });
+  assert.equal(apiApplied.changed, true);
+  assert.equal(apiApplied.intent.mode, 'APPLIED_AFTER_LOCAL_INTENT');
+  assert.equal(applyCalls, 1);
+
+  const apiRecoveredAfterCut = await transitionInitialRollbackPublication({
+    context,
+    suffix: 'api',
+    record: records.api,
+    dependencies,
+  });
+  assert.equal(apiRecoveredAfterCut.changed, true);
+  assert.equal(apiRecoveredAfterCut.intent.mode, 'RECOVERED_AFTER_CLOUDFORMATION_EVENT');
+  assert.equal(applyCalls, 1);
+
+  const apiIntent = ledger.checkpoints.apiRollbackIntent;
+  delete ledger.checkpoints.apiRollbackIntent;
+  await assert.rejects(
+    () =>
+      transitionInitialRollbackPublication({
+        context,
+        suffix: 'api',
+        record: records.api,
+        dependencies,
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_RESUME_INTENT_MISSING',
+  );
+  assert.equal(applyCalls, 1);
+  ledger.checkpoints.apiRollbackIntent = apiIntent;
+
+  ledger.checkpoints.apiRollback = {
+    decision: 'INITIAL_RELEASE_DISABLED_REQUIRES_UNAVAILABLE_SMOKE',
+    releaseMode: 'INITIAL',
+    aliasesChanged: false,
+    dataFactsChanged: false,
+    stacksDeleted: 0,
+    publication: apiRecoveredAfterCut,
+  };
+  const apiCompleted = await transitionInitialRollbackPublication({
+    context,
+    suffix: 'api',
+    record: records.api,
+    dependencies,
+  });
+  assert.deepEqual(apiCompleted, apiRecoveredAfterCut);
+  assert.equal(applyCalls, 1);
+  live.api = stackState('api', 'ENABLED');
+  await assert.rejects(
+    () =>
+      transitionInitialRollbackPublication({
+        context,
+        suffix: 'api',
+        record: records.api,
+        dependencies,
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_COMPLETED_TRANSITION_DRIFT',
+  );
+  live.api = stackState('api', 'DISABLED');
+
+  const webApplied = await transitionInitialRollbackPublication({
+    context,
+    suffix: 'web',
+    record: records.web,
+    dependencies,
+  });
+  assert.equal(webApplied.intent.mode, 'APPLIED_AFTER_LOCAL_INTENT');
+  assert.equal(applyCalls, 2);
+  const webRecoveredAfterCut = await transitionInitialRollbackPublication({
+    context,
+    suffix: 'web',
+    record: records.web,
+    dependencies,
+  });
+  assert.equal(webRecoveredAfterCut.intent.mode, 'RECOVERED_AFTER_CLOUDFORMATION_EVENT');
+  assert.equal(applyCalls, 2);
+  ledger.checkpoints.rollbackInfrastructure = {
+    publication: { webStack: webRecoveredAfterCut },
+  };
+  const webCompleted = await transitionInitialRollbackPublication({
+    context,
+    suffix: 'web',
+    record: records.web,
+    dependencies,
+  });
+  assert.deepEqual(webCompleted, webRecoveredAfterCut);
+  assert.equal(applyCalls, 2);
+
+  const rollbackCheckpoint = {
+    decision: 'INITIAL_RELEASE_DISABLED_AND_UNPUBLISHED_REQUIRES_SMOKE',
+    releaseMode: 'INITIAL',
+    updateReleaseSupported: false,
+    publication: {
+      managedByCloudFormation: true,
+      apiStack: apiRecoveredAfterCut,
+      webStack: webRecoveredAfterCut,
+      scheduler: {
+        controlledBy: 'PublicationState',
+        stackName: stackFor(context, 'api'),
+        state: 'DISABLED',
+      },
+    },
+    aliasesChanged: false,
+    objectsChanged: false,
+    dataFactsChanged: false,
+    stacksDeleted: 0,
+    secretDeleted: false,
+  };
+  validateStage7InitialRollbackCheckpoint(rollbackCheckpoint, { config });
+
+  const missingEventDependencies = {
+    ...dependencies,
+    captureCausality: () => fail('E7_INITIAL_WEB_ROLLBACK_STACK_EVENT_CAUSALITY_INVALID'),
+  };
+  delete ledger.checkpoints.rollbackInfrastructure;
+  delete ledger.checkpoints.webRollbackIntent;
+  await assert.rejects(
+    () =>
+      transitionInitialRollbackPublication({
+        context,
+        suffix: 'web',
+        record: records.web,
+        dependencies: missingEventDependencies,
+      }),
+    (error) => error?.code === 'E7_INITIAL_WEB_ROLLBACK_RESUME_INTENT_MISSING',
+  );
+  ledger.checkpoints.webRollbackIntent = createInitialRollbackIntent({
+    context,
+    suffix: 'web',
+    record: records.web,
+    observed: stackState('web', 'ENABLED'),
+  });
+  await assert.rejects(
+    () =>
+      transitionInitialRollbackPublication({
+        context,
+        suffix: 'web',
+        record: records.web,
+        dependencies: missingEventDependencies,
+      }),
+    (error) => error?.code === 'E7_INITIAL_WEB_ROLLBACK_STACK_EVENT_CAUSALITY_INVALID',
+  );
+  ledger.checkpoints.webRollbackIntent.rollbackRecordSha256 = 'f'.repeat(64);
+  await assert.rejects(
+    () =>
+      transitionInitialRollbackPublication({
+        context,
+        suffix: 'web',
+        record: records.web,
+        dependencies,
+      }),
+    (error) => error?.code === 'E7_INITIAL_WEB_ROLLBACK_RESUME_INTENT_INVALID',
+  );
+  ledger.checkpoints.webRollbackIntent = createInitialRollbackIntent({
+    context,
+    suffix: 'web',
+    record: records.web,
+    observed: stackState('web', 'ENABLED'),
+  });
+  ledger.checkpoints.webRollbackIntent.stackName = stackFor(context, 'api');
+  await assert.rejects(
+    () =>
+      transitionInitialRollbackPublication({
+        context,
+        suffix: 'web',
+        record: records.web,
+        dependencies,
+      }),
+    (error) => error?.code === 'E7_INITIAL_WEB_ROLLBACK_RESUME_INTENT_INVALID',
+  );
+  delete ledger.checkpoints.webRollbackIntent;
+
+  const apiRollbackRequestId = initialRollbackClientRequestToken({
+    context,
+    suffix: 'api',
+    record: records.api,
+    observed: live.api,
+  });
+  assert.match(apiRollbackRequestId, /^e7-initial-api-[0-9a-f]{64}$/u);
+  const stackEvent = (status, eventId, timestamp, token = apiRollbackRequestId) => ({
+    EventId: eventId,
+    StackId: live.api.state.stackId,
+    StackName: live.api.stackName,
+    LogicalResourceId: live.api.stackName,
+    PhysicalResourceId: live.api.state.stackId,
+    ResourceType: 'AWS::CloudFormation::Stack',
+    ResourceStatus: status,
+    ClientRequestToken: token,
+    Timestamp: timestamp,
+  });
+  const startedEvent = stackEvent('UPDATE_IN_PROGRESS', 'api-started', '2026-08-17T11:59:00Z');
+  const completedEvent = stackEvent('UPDATE_COMPLETE', 'api-completed', '2026-08-17T12:00:00Z');
+  const pages = [];
+  const pagedCausality = captureInitialRollbackCausality({
+    context,
+    suffix: 'api',
+    observed: live.api,
+    intent: apiIntent,
+    clientRequestToken: apiRollbackRequestId,
+    readPage: ({ nextToken }) => {
+      pages.push(nextToken ?? null);
+      return nextToken === undefined
+        ? { StackEvents: [startedEvent], NextToken: 'opaque.page:2' }
+        : { StackEvents: [startedEvent, completedEvent] };
+    },
+  });
+  assert.deepEqual(pages, [null, 'opaque.page:2']);
+  assert.equal(pagedCausality.transition, 'UPDATE_IN_PROGRESS_TO_UPDATE_COMPLETE');
+  assert.equal(pagedCausality.requestTokenSha256, sha256(apiRollbackRequestId));
+  assert.throws(
+    () =>
+      captureInitialRollbackCausality({
+        context,
+        suffix: 'api',
+        observed: {
+          ...live.api,
+          state: { ...live.api.state, lastUpdatedTime: '2026-08-17T12:10:00.000Z' },
+        },
+        intent: apiIntent,
+        clientRequestToken: apiRollbackRequestId,
+        readPage: () => ({ StackEvents: [startedEvent, completedEvent] }),
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_STACK_EVENT_CAUSALITY_INVALID',
+  );
+  assert.throws(
+    () =>
+      captureInitialRollbackCausality({
+        context,
+        suffix: 'api',
+        observed: live.api,
+        intent: { ...apiIntent, persistedAtUtc: '2026-08-17T12:02:00.000Z' },
+        clientRequestToken: apiRollbackRequestId,
+        readPage: () => ({ StackEvents: [startedEvent, completedEvent] }),
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_STACK_EVENT_CAUSALITY_INVALID',
+  );
+  const stackEventCliCalls = [];
+  readInitialRollbackStackEventsPage({
+    context: {
+      ...context,
+      awsCommand: 'aws',
+      environmentVariables: {},
+      executor: (invocation) => {
+        stackEventCliCalls.push(invocation);
+        return { status: 0, stdout: JSON.stringify({ StackEvents: [] }), stderr: '' };
+      },
+    },
+    suffix: 'api',
+    observed: live.api,
+    nextToken: 'opaque.page:2',
+  });
+  assert.deepEqual(stackEventCliCalls[0].args, [
+    'cloudformation',
+    'describe-stack-events',
+    '--stack-name',
+    live.api.stackName,
+    '--no-paginate',
+    '--next-token',
+    'opaque.page:2',
+    '--output',
+    'json',
+    '--region',
+    config.aws.region,
+    '--no-cli-pager',
+  ]);
+  assert.throws(
+    () =>
+      captureInitialRollbackCausality({
+        context,
+        suffix: 'api',
+        observed: live.api,
+        intent: apiIntent,
+        clientRequestToken: apiRollbackRequestId,
+        readPage: () => ({ StackEvents: [startedEvent], NextToken: 'loop' }),
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_STACK_EVENTS_PAGINATION_INVALID',
+  );
+  assert.throws(
+    () =>
+      captureInitialRollbackCausality({
+        context,
+        suffix: 'api',
+        observed: live.api,
+        intent: apiIntent,
+        clientRequestToken: apiRollbackRequestId,
+        readPage: () => ({
+          StackEvents: [startedEvent, { ...startedEvent, ResourceStatus: 'UPDATE_COMPLETE' }],
+        }),
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_STACK_EVENT_ID_COLLISION',
+  );
+  assert.throws(
+    () =>
+      captureInitialRollbackCausality({
+        context,
+        suffix: 'api',
+        observed: live.api,
+        intent: apiIntent,
+        clientRequestToken: apiRollbackRequestId,
+        readPage: () => ({
+          StackEvents: [
+            stackEvent('UPDATE_IN_PROGRESS', 'foreign-start', '2026-08-17T11:59:00Z', 'foreign'),
+            stackEvent('UPDATE_COMPLETE', 'foreign-complete', '2026-08-17T12:00:00Z', 'foreign'),
+          ],
+        }),
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_STACK_EVENT_CAUSALITY_INVALID',
+  );
+  for (const [status, eventId] of [
+    ['UPDATE_IN_PROGRESS', 'later-foreign-update-root'],
+    ['UPDATE_ROLLBACK_COMPLETE', 'later-foreign-rollback-root'],
+  ]) {
+    assert.throws(
+      () =>
+        captureInitialRollbackCausality({
+          context,
+          suffix: 'api',
+          observed: live.api,
+          intent: apiIntent,
+          clientRequestToken: apiRollbackRequestId,
+          readPage: () => ({
+            StackEvents: [
+              startedEvent,
+              completedEvent,
+              stackEvent(status, eventId, '2026-08-17T12:01:00Z', 'foreign'),
+            ],
+          }),
+        }),
+      (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_STACK_EVENT_CAUSALITY_INVALID',
+    );
+  }
+
+  let webTransitions = 0;
+  let schedulerPublicationState = 'DISABLED';
+  let executeApiEndpointDisabled = true;
+  let apiMappings = [];
+  const postCausalityReaders = {
+    readApiPublication: () => live.api,
+    readScheduler: () => ({ State: schedulerPublicationState }),
+    readHttpApi: (_context, apiId) => ({
+      ApiId: apiId,
+      DisableExecuteApiEndpoint: executeApiEndpointDisabled,
+    }),
+    readApiMappings: () => apiMappings,
+  };
+  const validWebTransition = await transitionInitialWebRollback({
+    context,
+    record: records.web,
+    apiRecord: records.api,
+    apiStack: live.api,
+    rollbackEvidence: ledger,
+    captureApiCausality: ({ suffix, clientRequestToken }) =>
+      causalProof({ suffix, clientRequestToken }),
+    ...postCausalityReaders,
+    transition: async () => {
+      webTransitions += 1;
+      return webRecoveredAfterCut;
+    },
+  });
+  assert.deepEqual(validWebTransition.publication, webRecoveredAfterCut);
+  assert.equal(webTransitions, 1);
+  webTransitions = 0;
+  const invalidApiEvidence = structuredClone(ledger);
+  invalidApiEvidence.checkpoints.apiRollback.publication.causality.requestTokenSha256 = 'invalid';
+  await assert.rejects(
+    () =>
+      transitionInitialWebRollback({
+        context,
+        record: records.web,
+        apiRecord: records.api,
+        apiStack: live.api,
+        rollbackEvidence: invalidApiEvidence,
+        captureApiCausality: ({ suffix, clientRequestToken }) =>
+          causalProof({ suffix, clientRequestToken }),
+        ...postCausalityReaders,
+        transition: async () => {
+          webTransitions += 1;
+          return webRecoveredAfterCut;
+        },
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_EVIDENCE_INVALID',
+  );
+  assert.equal(webTransitions, 0);
+  await assert.rejects(
+    () =>
+      transitionInitialWebRollback({
+        context,
+        record: records.web,
+        apiRecord: { recordSha256: 'f'.repeat(64) },
+        apiStack: live.api,
+        rollbackEvidence: ledger,
+        captureApiCausality: ({ suffix, clientRequestToken }) =>
+          causalProof({ suffix, clientRequestToken }),
+        ...postCausalityReaders,
+        transition: async () => {
+          webTransitions += 1;
+          return webRecoveredAfterCut;
+        },
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_EVIDENCE_INVALID',
+  );
+  assert.equal(webTransitions, 0);
+  await assert.rejects(
+    () =>
+      transitionInitialWebRollback({
+        context,
+        record: records.web,
+        apiRecord: records.api,
+        apiStack: live.api,
+        rollbackEvidence: ledger,
+        captureApiCausality: ({ suffix, clientRequestToken }) => ({
+          ...causalProof({ suffix, clientRequestToken }),
+          updateCompletedEventIdSha256: sha256('foreign-completed-event'),
+        }),
+        ...postCausalityReaders,
+        transition: async () => {
+          webTransitions += 1;
+          return webRecoveredAfterCut;
+        },
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_EVIDENCE_INVALID',
+  );
+  assert.equal(webTransitions, 0);
+  const stableApiStack = live.api;
+  await assert.rejects(
+    () =>
+      transitionInitialWebRollback({
+        context,
+        record: records.web,
+        apiRecord: records.api,
+        apiStack: stableApiStack,
+        rollbackEvidence: ledger,
+        captureApiCausality: ({ suffix, clientRequestToken }) => {
+          live.api = stackState('api', 'ENABLED');
+          return causalProof({ suffix, clientRequestToken });
+        },
+        ...postCausalityReaders,
+        transition: async () => {
+          webTransitions += 1;
+          return webRecoveredAfterCut;
+        },
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_POST_CAUSALITY_DRIFT',
+  );
+  assert.equal(webTransitions, 0);
+  live.api = stableApiStack;
+  await assert.rejects(
+    () =>
+      transitionInitialWebRollback({
+        context,
+        record: records.web,
+        apiRecord: records.api,
+        apiStack: stableApiStack,
+        rollbackEvidence: ledger,
+        captureApiCausality: ({ suffix, clientRequestToken }) => {
+          schedulerPublicationState = 'ENABLED';
+          return causalProof({ suffix, clientRequestToken });
+        },
+        ...postCausalityReaders,
+        transition: async () => {
+          webTransitions += 1;
+          return webRecoveredAfterCut;
+        },
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_POST_CAUSALITY_DRIFT',
+  );
+  assert.equal(webTransitions, 0);
+  schedulerPublicationState = 'DISABLED';
+  executeApiEndpointDisabled = false;
+  await assert.rejects(
+    () =>
+      transitionInitialWebRollback({
+        context,
+        record: records.web,
+        apiRecord: records.api,
+        apiStack: stableApiStack,
+        rollbackEvidence: ledger,
+        captureApiCausality: ({ suffix, clientRequestToken }) =>
+          causalProof({ suffix, clientRequestToken }),
+        ...postCausalityReaders,
+        transition: async () => {
+          webTransitions += 1;
+          return webRecoveredAfterCut;
+        },
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_POST_CAUSALITY_DRIFT',
+  );
+  assert.equal(webTransitions, 0);
+  executeApiEndpointDisabled = true;
+  apiMappings = [{ ApiMappingId: 'foreign' }];
+  await assert.rejects(
+    () =>
+      transitionInitialWebRollback({
+        context,
+        record: records.web,
+        apiRecord: records.api,
+        apiStack: stableApiStack,
+        rollbackEvidence: ledger,
+        captureApiCausality: ({ suffix, clientRequestToken }) =>
+          causalProof({ suffix, clientRequestToken }),
+        ...postCausalityReaders,
+        transition: async () => {
+          webTransitions += 1;
+          return webRecoveredAfterCut;
+        },
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_POST_CAUSALITY_DRIFT',
+  );
+  assert.equal(webTransitions, 0);
+  apiMappings = [];
+  await assert.rejects(
+    () =>
+      transitionInitialWebRollback({
+        context,
+        record: records.web,
+        apiRecord: records.api,
+        apiStack: stableApiStack,
+        rollbackEvidence: ledger,
+        captureApiCausality: ({ suffix, clientRequestToken }) =>
+          causalProof({ suffix, clientRequestToken }),
+        ...postCausalityReaders,
+        transition: async () => {
+          webTransitions += 1;
+          executeApiEndpointDisabled = false;
+          return webRecoveredAfterCut;
+        },
+      }),
+    (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_POST_CAUSALITY_DRIFT',
+  );
+  assert.equal(webTransitions, 1);
+  executeApiEndpointDisabled = true;
+};
+
 export const selfTestAwsOperations = async () => {
+  for (const tool of ['cdk', 'tsx']) {
+    const entrypoint = workspaceToolEntrypoint(tool);
+    assert.equal(path.isAbsolute(entrypoint), true);
+    assert.equal(path.relative(workspaceRoot, entrypoint).startsWith('..'), false);
+  }
   assert.equal(
     RELEASE_RECONCILIATION_RECOVERY_FILE_BINDINGS.find(([flag]) => flag === 'approved-plan')?.[1],
     'approvedDiff',
@@ -9246,33 +12635,681 @@ export const selfTestAwsOperations = async () => {
   const now = new Date('2026-08-17T12:00:00.000Z');
   const { config } = selfTestConfig(now);
   validateStage7Config(config, { now });
+  await selfTestInitialRollbackResumption(config);
+  validateOperationScope(config, 'prerelease');
+  const apiPublicationContext = {
+    config,
+    scope: 'prerelease',
+    identity: {
+      candidateSha: 'a'.repeat(40),
+      releaseId: 'rel-20260817-1200-aaaaaaa',
+    },
+  };
+  const activationApiOutputs = {
+    CandidateSha: apiPublicationContext.identity.candidateSha,
+    ReleaseId: apiPublicationContext.identity.releaseId,
+    ApiAliasArn: `arn:aws:lambda:${config.aws.region}:${config.aws.accountId}:function:checkout-${config.environment}-api:live`,
+    WorkerAliasArn: `arn:aws:lambda:${config.aws.region}:${config.aws.accountId}:function:checkout-${config.environment}-worker:live`,
+    ApiFunctionVersion: '7',
+    WorkerFunctionVersion: '8',
+    HttpApiId: 'abc123def4',
+    ApiCustomDomainName: config.domain.apiHostname,
+    ApiOriginUrl: `https://${config.domain.apiHostname}`,
+  };
+  const activationWebOutputs = {
+    CandidateSha: apiPublicationContext.identity.candidateSha,
+    ReleaseId: apiPublicationContext.identity.releaseId,
+    ApplicationUrl: `https://${config.domain.hostname}`,
+    ApiUrl: `https://${config.domain.hostname}/api`,
+    ApiDocsUrl: `https://${config.domain.hostname}/api/docs`,
+    HealthUrl: `https://${config.domain.hostname}/api/health/ready`,
+    PublicOriginParameterName: `/checkout-${config.environment}/public-origin`,
+    WebBucketName: `checkout-${config.environment}-web-assets`,
+    DistributionId: 'E123456789ABC',
+  };
+  const activationApiRecord = {
+    deployed: apiVersionsFromOutputs(
+      apiPublicationContext,
+      activationApiOutputs,
+      'E7_SELF_TEST_INVALID',
+    ),
+    publication: { apiId: activationApiOutputs.HttpApiId },
+  };
+  const activationWebRecord = {
+    bucketName: activationWebOutputs.WebBucketName,
+    distributionId: activationWebOutputs.DistributionId,
+    publicOriginSha256: sha256(activationWebOutputs.ApplicationUrl),
+    apiOriginSha256: sha256(activationApiOutputs.ApiOriginUrl),
+    publication: { distributionId: activationWebOutputs.DistributionId },
+  };
+  validateActivationLiveBindings(apiPublicationContext, {
+    apiOutputs: activationApiOutputs,
+    webOutputs: activationWebOutputs,
+    apiRecord: activationApiRecord,
+    webRecord: activationWebRecord,
+  });
+  for (const mutate of [
+    ({ apiOutputs }) => {
+      apiOutputs.ApiAliasArn = apiOutputs.ApiAliasArn.replace('-api:live', '-foreign:live');
+    },
+    ({ apiOutputs }) => {
+      apiOutputs.WorkerAliasArn = apiOutputs.WorkerAliasArn.replace(
+        '-worker:live',
+        '-foreign:live',
+      );
+    },
+    ({ apiOutputs }) => {
+      apiOutputs.HttpApiId = 'foreign1234';
+    },
+    ({ apiOutputs }) => {
+      apiOutputs.ApiOriginUrl = 'https://api-foreign.example.test';
+    },
+    ({ webOutputs }) => {
+      webOutputs.WebBucketName = 'checkout-foreign-web-assets';
+    },
+    ({ webOutputs }) => {
+      webOutputs.DistributionId = 'EFOREIGN1234';
+    },
+    ({ webOutputs }) => {
+      webOutputs.ApplicationUrl = 'https://foreign.example.test';
+    },
+  ]) {
+    const candidate = {
+      apiOutputs: structuredClone(activationApiOutputs),
+      webOutputs: structuredClone(activationWebOutputs),
+      apiRecord: structuredClone(activationApiRecord),
+      webRecord: structuredClone(activationWebRecord),
+    };
+    mutate(candidate);
+    expectCode(
+      () => validateActivationLiveBindings(apiPublicationContext, candidate),
+      'E7_ACTIVATION_LIVE_BINDING_INVALID',
+    );
+  }
+  const originalTemplate = { Resources: { BoundResource: { Type: 'AWS::SSM::Parameter' } } };
+  const originalTemplateCalls = [];
+  const originalTemplateContext = {
+    ...apiPublicationContext,
+    awsCommand: 'aws',
+    environmentVariables: {},
+    stacks: config.authorization.stacks,
+    executor: ({ args }) => {
+      originalTemplateCalls.push(args);
+      return {
+        status: 0,
+        stdout: JSON.stringify({ TemplateBody: originalTemplate }),
+        stderr: '',
+      };
+    },
+  };
+  validateOriginalStackTemplate(
+    originalTemplateContext,
+    stackFor(originalTemplateContext, 'api'),
+    objectSha256(originalTemplate),
+  );
+  expectCode(
+    () =>
+      validateOriginalStackTemplate(
+        originalTemplateContext,
+        stackFor(originalTemplateContext, 'api'),
+        objectSha256({ Resources: {} }),
+      ),
+    'E7_CLOUDFORMATION_ORIGINAL_TEMPLATE_DRIFT',
+  );
+  assert.equal(originalTemplateCalls.length, 2);
+  assert.equal(
+    originalTemplateCalls.some((args) => args.includes('update-stack')),
+    false,
+  );
+  for (const args of originalTemplateCalls) {
+    assert.deepEqual(args.slice(0, 7), [
+      'cloudformation',
+      'get-template',
+      '--stack-name',
+      stackFor(originalTemplateContext, 'api'),
+      '--template-stage',
+      'Original',
+      '--output',
+    ]);
+  }
+  const dataPublicationTemplate = selfTestInitialDataPublicationTemplate(config);
+  const apiPublicationTemplate = selfTestInitialApiPublicationTemplate(apiPublicationContext);
+  validateInitialApiPublicationContract(
+    apiPublicationContext,
+    apiPublicationTemplate,
+    dataPublicationTemplate,
+  );
+  const managedApiPublicationContext = {
+    ...apiPublicationContext,
+    config: {
+      ...config,
+      authorization: { ...config.authorization, scope: 'NON_MUTATING_PLAN' },
+      domain: {
+        mode: 'AWS_MANAGED',
+        hostname: null,
+        apiHostname: null,
+        hostedZoneId: null,
+        webCertificateArn: null,
+        apiCertificateArn: null,
+        dnsIncluded: false,
+      },
+    },
+  };
+  const managedApiPublicationTemplate = structuredClone(apiPublicationTemplate);
+  for (const logicalId of ['ApiCustomDomain', 'ApiDefaultMapping', 'ApiAliasA', 'ApiAliasAAAA']) {
+    delete managedApiPublicationTemplate.Resources[logicalId];
+  }
+  managedApiPublicationTemplate.Resources.HttpApi.Properties.DisableExecuteApiEndpoint = {
+    'Fn::If': ['PublicationEnabled', false, true],
+  };
+  managedApiPublicationTemplate.Outputs.ApiCustomDomainName.Value = 'NONE_MANAGED_PRERELEASE';
+  managedApiPublicationTemplate.Outputs.ApiOriginUrl.Value = {
+    'Fn::Join': [
+      '',
+      ['https://', { Ref: 'HttpApi' }, '.execute-api.us-east-1.', { Ref: 'AWS::URLSuffix' }],
+    ],
+  };
+  validateInitialApiPublicationContract(
+    managedApiPublicationContext,
+    managedApiPublicationTemplate,
+    dataPublicationTemplate,
+  );
+  for (const mutate of [
+    (template) => delete template.Resources.ApiCustomDomain,
+    (template) => delete template.Resources.ApiDefaultMapping,
+    (template) => {
+      template.Resources.ExtraApiDomain = structuredClone(template.Resources.ApiCustomDomain);
+    },
+    (template) => {
+      template.Resources.ExtraApiMapping = structuredClone(template.Resources.ApiDefaultMapping);
+    },
+    (template) => delete template.Resources.ApiDefaultMapping.Condition,
+    (template) => {
+      template.Resources.ApiDefaultMapping.Properties.ApiId = { Ref: 'ForeignApi' };
+    },
+    (template) => {
+      template.Resources.ApiDefaultMapping.Properties.Stage = { Ref: 'ForeignStage' };
+    },
+    (template) => {
+      template.Resources.ExtraStage = structuredClone(template.Resources.HttpApiDefaultStage);
+    },
+    (template) => {
+      template.Resources.ApiCustomDomain.Properties.DomainName = 'api-foreign.example.test';
+    },
+    (template) => delete template.Resources.ApiAliasAAAA,
+    (template) => {
+      template.Resources.ApiAliasA.Properties.Name = 'api-foreign.example.test';
+    },
+    (template) => {
+      template.Outputs.ApiOriginUrl.Value = 'https://api-foreign.example.test';
+    },
+    (template) => {
+      delete template.Resources.ApiRuntime.Properties.Environment.Variables.RUNTIME_SECRET_ARN;
+    },
+    (template) => {
+      template.Resources.WorkerRuntime.Properties.Environment.Variables.RELEASE_ID =
+        'rel-20260817-1200-bbbbbbb';
+    },
+    (template) => {
+      template.Resources.ApiRuntime.Properties.Environment.Variables.CANDIDATE_SHA = 'b'.repeat(40);
+    },
+    (template) => {
+      template.Resources.WorkerRuntime.Properties.Environment.Variables.RUNTIME_SECRET_VERSION_ID =
+        'b'.repeat(32);
+    },
+    (template) => {
+      template.Resources.ExtraRuntime = structuredClone(template.Resources.ApiRuntime);
+    },
+    (template) => {
+      template.Resources.ApiRuntime.Properties.Environment.Variables.PAYMENTS_ENABLED = 'false';
+    },
+    (template) => {
+      template.Resources.WorkerRuntime.Properties.Environment.Variables.TOKENIZATION_MODE = 'fake';
+    },
+    (template) => {
+      template.Resources.ApiRuntime.Properties.Environment.Variables.APP_ENV = 'preview';
+    },
+    (template) => {
+      template.Resources.WorkerRuntime.Properties.Environment.Variables.AUTO_SEED_CATALOG = 'true';
+    },
+    (template) => {
+      template.Resources.WorkerRuntime.Properties.Environment.Variables.DATA_ADAPTER = 'memory';
+    },
+    (template) => {
+      template.Resources.ApiRuntime.Properties.Environment.Variables.ALLOWED_ORIGIN_PARAMETER_NAME =
+        '/checkout-foreign/public-origin';
+    },
+    (template) => {
+      template.Resources.WorkerRuntime.Properties.Environment.Variables.PUBLIC_ASSET_ORIGIN_PARAMETER_NAME =
+        '/checkout-foreign/public-origin';
+    },
+    (template) => {
+      template.Resources.ApiRuntime.Properties.Environment.Variables.CATALOG_TABLE_NAME =
+        'checkout-foreign-catalog';
+    },
+    (template) => {
+      template.Resources.WorkerRuntime.Properties.Environment.Variables.CHECKOUT_TABLE_NAME =
+        structuredClone(
+          template.Resources.WorkerRuntime.Properties.Environment.Variables.CATALOG_TABLE_NAME,
+        );
+    },
+    (template) => {
+      template.Resources.ApiIntegration.Properties.IntegrationUri = { Ref: 'WorkerAlias' };
+    },
+    (template) => {
+      template.Resources.ApiRoute.Properties.Target = {
+        'Fn::Join': ['', ['integrations/', { Ref: 'ForeignIntegration' }]],
+      };
+    },
+    (template) => {
+      template.Resources.ReconcileSchedule.Properties.Target.Arn = { Ref: 'ApiAlias' };
+    },
+    (template) => {
+      template.Outputs.ApiAliasArn.Value = { Ref: 'WorkerAlias' };
+    },
+    (template) => {
+      template.Outputs.WorkerFunctionVersion.Value = {
+        'Fn::GetAtt': ['ApiVersion', 'Version'],
+      };
+    },
+    (template) => {
+      template.Resources.ApiAlias.Properties.FunctionName = { Ref: 'WorkerRuntime' };
+    },
+    (template) => {
+      template.Resources.ApiIntegrationPermission.Properties.FunctionName = {
+        Ref: 'WorkerAlias',
+      };
+    },
+    (template) => {
+      template.Resources.ApiIntegrationPermission.Properties.SourceArn['Fn::Join'][1][5] = {
+        Ref: 'ForeignApi',
+      };
+    },
+    (template) => {
+      template.Resources.SchedulerRolePolicy.Properties.PolicyDocument.Statement[0].Resource = {
+        Ref: 'ApiAlias',
+      };
+    },
+    (template) => {
+      template.Resources.ExtraConditionalBucket = {
+        Type: 'AWS::S3::Bucket',
+        Condition: 'PublicationEnabled',
+        Properties: {},
+      };
+    },
+    (template) => {
+      template.Resources.ApiRuntime.Properties.Metadata = {
+        'Fn::If': ['PublicationEnabled', 'enabled', 'disabled'],
+      };
+    },
+    (template) => {
+      template.Resources.ApiRuntime.Properties.Tags = [
+        { Key: 'hidden-publication-control', Value: { 'Fn::Sub': '${PublicationState}' } },
+      ];
+    },
+  ]) {
+    const invalidTemplate = structuredClone(apiPublicationTemplate);
+    mutate(invalidTemplate);
+    expectCode(
+      () =>
+        validateInitialApiPublicationContract(
+          apiPublicationContext,
+          invalidTemplate,
+          dataPublicationTemplate,
+        ),
+      'E7_CLOUD_ASSEMBLY_INITIAL_API_PUBLICATION_INVALID',
+    );
+  }
+  for (const mutate of [
+    (template) => {
+      template.Resources.CatalogTable.Properties.TableName = 'checkout-foreign-catalog';
+    },
+    (template) => {
+      template.Outputs.CheckoutTableName.Value = { Ref: 'CatalogTable' };
+    },
+    (template) => {
+      template.Outputs.CatalogTableExport.Export.Name =
+        template.Outputs.CheckoutTableExport.Export.Name;
+    },
+    (template) => {
+      template.Resources.ExtraTable = structuredClone(template.Resources.CatalogTable);
+    },
+  ]) {
+    const invalidDataTemplate = structuredClone(dataPublicationTemplate);
+    mutate(invalidDataTemplate);
+    expectCode(
+      () =>
+        validateInitialApiPublicationContract(
+          apiPublicationContext,
+          apiPublicationTemplate,
+          invalidDataTemplate,
+        ),
+      'E7_CLOUD_ASSEMBLY_INITIAL_API_PUBLICATION_INVALID',
+    );
+  }
+  const webDistributionConfig = {
+    Origins: [
+      {
+        Id: 'ApiOrigin',
+        DomainName: config.domain.apiHostname,
+        CustomOriginConfig: {
+          OriginProtocolPolicy: 'https-only',
+          OriginSSLProtocols: ['TLSv1.2'],
+        },
+      },
+    ],
+    CacheBehaviors: [{ PathPattern: 'api/*', TargetOriginId: 'ApiOrigin' }],
+  };
+  validateWebApiOriginContract(apiPublicationContext, webDistributionConfig);
+  for (const invalidApiOrigin of [
+    'api-foreign.example.test',
+    'abc123def4.execute-api.us-east-1.amazonaws.com',
+  ]) {
+    const invalidDistribution = structuredClone(webDistributionConfig);
+    invalidDistribution.Origins[0].DomainName = invalidApiOrigin;
+    expectCode(
+      () => validateWebApiOriginContract(apiPublicationContext, invalidDistribution),
+      'E7_CLOUD_ASSEMBLY_INITIAL_WEB_PUBLICATION_INVALID',
+    );
+  }
+  const webPublicationTemplate = selfTestInitialWebPublicationTemplate(apiPublicationContext);
+  validateInitialWebPublicationContract(apiPublicationContext, webPublicationTemplate);
+  const managedWebPublicationTemplate = selfTestInitialWebPublicationTemplate(
+    managedApiPublicationContext,
+  );
+  validateInitialWebPublicationContract(
+    managedApiPublicationContext,
+    managedWebPublicationTemplate,
+  );
+  for (const mutate of [
+    (template) => {
+      template.Resources.WebDistribution.Properties.DistributionConfig.Origins.push({
+        Id: 'ForeignOrigin',
+        DomainName: 'foreign.example.test',
+        CustomOriginConfig: {
+          OriginProtocolPolicy: 'https-only',
+          OriginSSLProtocols: ['TLSv1.2'],
+        },
+      });
+      template.Resources.WebDistribution.Properties.DistributionConfig.CacheBehaviors.push({
+        PathPattern: 'api/private/*',
+        TargetOriginId: 'ForeignOrigin',
+      });
+    },
+    (template) => {
+      template.Resources.WebDistribution.Properties.DistributionConfig.Origins[1].DomainName =
+        'abc123def4.execute-api.us-east-1.amazonaws.com';
+    },
+    (template) => {
+      delete template.Resources.WebDistribution.Properties.DistributionConfig.Aliases;
+    },
+    (template) => {
+      template.Resources.WebDistribution.Properties.DistributionConfig.ViewerCertificate.AcmCertificateArn =
+        'arn:aws:acm:us-east-1:123456789012:certificate/ffffffff-ffff-4fff-8fff-ffffffffffff';
+    },
+    (template) => delete template.Resources.WebAliasAAAA,
+    (template) => {
+      template.Resources.WebAliasA.Properties.HostedZoneId = 'ZFOREIGN123456';
+    },
+    (template) => {
+      template.Outputs.ApplicationUrl.Value = 'https://foreign.example.test';
+    },
+    (template) => {
+      template.Outputs.ApiUrl.Value = `https://${config.domain.hostname}/foreign`;
+    },
+    (template) => {
+      template.Outputs.ApiDocsUrl.Value = `https://${config.domain.hostname}/api/foreign`;
+    },
+    (template) => {
+      template.Outputs.HealthUrl.Value = `https://${config.domain.hostname}/api/health/live`;
+    },
+    (template) => {
+      template.Resources.PublicOriginParameter.Properties.Value = 'https://foreign.example.test';
+    },
+    (template) => {
+      template.Resources.WebDistribution.Properties.DistributionConfig.CacheBehaviors[1].TargetOriginId =
+        'WebOrigin';
+    },
+    (template) => {
+      template.Resources.WebBucket.Properties.PublicAccessBlockConfiguration.BlockPublicPolicy = false;
+    },
+    (template) => {
+      template.Resources.WebBucketPolicy.Properties.PolicyDocument.Statement[2].Principal = {
+        AWS: '*',
+      };
+    },
+    (template) => {
+      template.Resources.ExtraBucket = {
+        Type: 'AWS::S3::Bucket',
+        Condition: 'PublicationEnabled',
+        Properties: {},
+      };
+    },
+    (template) => {
+      template.Resources.WebBucket.Properties.Metadata = {
+        'Fn::If': ['PublicationEnabled', 'enabled', 'disabled'],
+      };
+    },
+    (template) => {
+      template.Resources.WebBucket.Properties.Tags = [
+        { Key: 'hidden-publication-control', Value: { 'Fn::Sub': '${PublicationEnabled}' } },
+      ];
+    },
+  ]) {
+    const invalidTemplate = structuredClone(webPublicationTemplate);
+    mutate(invalidTemplate);
+    expectCode(
+      () => validateInitialWebPublicationContract(apiPublicationContext, invalidTemplate),
+      'E7_CLOUD_ASSEMBLY_INITIAL_WEB_PUBLICATION_INVALID',
+    );
+  }
+  for (const domain of [
+    {
+      mode: 'AWS_MANAGED',
+      hostname: null,
+      apiHostname: null,
+      hostedZoneId: null,
+      webCertificateArn: null,
+      apiCertificateArn: null,
+      dnsIncluded: false,
+    },
+    null,
+  ]) {
+    expectCode(
+      () => validateOperationScope({ ...config, domain }, 'prerelease'),
+      'E7_PRERELEASE_BOUNDARY_INVALID',
+    );
+  }
   const directCleanupCalls = [];
+  const directCleanupStackName = `checkout-${config.environment}-web`;
+  const directCleanupStackId = `arn:aws:cloudformation:${config.aws.region}:${config.aws.accountId}:stack/${directCleanupStackName}/12345678-1234-4123-8123-123456789012`;
+  const directCleanupTags = {
+    Project: 'checkout',
+    ManagedBy: 'cdk',
+    Environment: config.environment,
+    CandidateSha: apiPublicationContext.identity.candidateSha,
+    ReleaseId: apiPublicationContext.identity.releaseId,
+    ExpiresOn: config.cleanup.expiresAtUtc.slice(0, 10),
+    CleanupExpiresAtUtc: config.cleanup.expiresAtUtc,
+    CostCenter: 'technical-assessment',
+    DataClass: 'synthetic-only',
+    Owner: config.authorization.ownerAlias,
+    PaymentMode: 'sandbox',
+  };
+  const directCleanupState = {
+    exists: true,
+    outputs: {
+      CandidateSha: apiPublicationContext.identity.candidateSha,
+      ReleaseId: apiPublicationContext.identity.releaseId,
+    },
+    parameters: {},
+    tags: directCleanupTags,
+    stackStatus: 'UPDATE_COMPLETE',
+    stackId: directCleanupStackId,
+    creationTime: '2026-08-17T11:00:00.000Z',
+    lastUpdatedTime: '2026-08-17T12:00:00.000Z',
+    terminationProtection: false,
+  };
+  let directCleanupDescribeCalls = 0;
+  const directCleanupTemplate = { Resources: { WebBucket: { Type: 'AWS::S3::Bucket' } } };
   const directCleanupContext = {
     config,
+    identity: apiPublicationContext.identity,
     stacks: config.authorization.stacks,
     awsCommand: 'aws',
+    childEnvironment: {},
     environmentVariables: {},
     executor: ({ command, args }) => {
       directCleanupCalls.push({ command, args });
       assert.equal(command, 'aws');
       if (args.includes('describe-stacks')) {
         const stackName = args[args.indexOf('--stack-name') + 1];
+        directCleanupDescribeCalls += 1;
+        if (directCleanupDescribeCalls === 1) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              Stacks: [
+                {
+                  StackName: directCleanupStackName,
+                  StackId: directCleanupStackId,
+                  StackStatus: 'UPDATE_COMPLETE',
+                  CreationTime: directCleanupState.creationTime,
+                  LastUpdatedTime: directCleanupState.lastUpdatedTime,
+                  EnableTerminationProtection: false,
+                  Outputs: Object.entries(directCleanupState.outputs).map(
+                    ([OutputKey, OutputValue]) => ({ OutputKey, OutputValue }),
+                  ),
+                  Tags: Object.entries(directCleanupTags).map(([Key, Value]) => ({ Key, Value })),
+                },
+              ],
+            }),
+            stderr: '',
+          };
+        }
         return {
           status: 255,
           stdout: '',
           stderr: `ValidationError: Stack with id ${stackName} does not exist`,
         };
       }
+      if (args.includes('get-template')) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ TemplateBody: directCleanupTemplate }),
+          stderr: '',
+        };
+      }
       return { status: 0, stdout: '', stderr: '' };
     },
   };
-  assert.equal(destroyStack(directCleanupContext, 'web'), `checkout-${config.environment}-web`);
-  assert.equal(directCleanupCalls.length, 3);
+  const directCleanupExpected = validateCleanupStackState(
+    directCleanupContext,
+    'web',
+    directCleanupState,
+  );
+  directCleanupExpected.templateSha256 = objectSha256(directCleanupTemplate);
+  assert.equal(
+    refreshCleanupStackState(
+      directCleanupContext,
+      'web',
+      directCleanupState,
+      directCleanupExpected,
+      {
+        validateTemplate: (_context, stackId, expectedSha256) => {
+          assert.equal(stackId, directCleanupStackId);
+          assert.equal(expectedSha256, directCleanupExpected.templateSha256);
+        },
+      },
+    ).stackId,
+    directCleanupStackId,
+  );
+  const replacementCleanupState = {
+    ...directCleanupState,
+    stackId: directCleanupStackId.replace(
+      '12345678-1234-4123-8123-123456789012',
+      'fedcba98-dcba-4cba-8cba-fedcba987654',
+    ),
+  };
+  expectCode(
+    () =>
+      refreshCleanupStackState(
+        directCleanupContext,
+        'web',
+        replacementCleanupState,
+        directCleanupExpected,
+        { validateTemplate: () => undefined },
+      ),
+    'E7_CLEANUP_STACK_IDENTITY_INVALID',
+  );
+  const partialCleanupStates = new Map(
+    STACK_SUFFIXES.map((suffix) => [suffix, { exists: suffix !== 'web' }]),
+  );
+  const partialCleanupValidated = new Map(
+    STACK_SUFFIXES.map((suffix) => [suffix, { stackName: stackFor(directCleanupContext, suffix) }]),
+  );
+  const deletedNow = [];
+  assert.deepEqual(
+    destroyCleanupStackSet(
+      directCleanupContext,
+      partialCleanupStates,
+      partialCleanupValidated,
+      (_context, suffix) => {
+        deletedNow.push(suffix);
+        return stackFor(directCleanupContext, suffix);
+      },
+    ),
+    [...STACK_SUFFIXES].reverse().map((suffix) => stackFor(directCleanupContext, suffix)),
+  );
+  assert.deepEqual(deletedNow, ['observability', 'api', 'data']);
+  assert.equal(validateCleanupStackState(directCleanupContext, 'data', { exists: false }), null);
+  for (const mutate of [
+    (state) => {
+      state.outputs.CandidateSha = 'b'.repeat(40);
+    },
+    (state) => {
+      state.tags.ManagedBy = 'foreign';
+    },
+    (state) => {
+      state.tags.Owner = 'foreign-owner';
+    },
+    (state) => {
+      state.tags.ForeignOwnership = 'true';
+    },
+    (state) => {
+      state.stackId = state.stackId.replace(directCleanupStackName, 'checkout-foreign-web');
+    },
+    (state) => {
+      state.terminationProtection = true;
+    },
+  ]) {
+    const invalidState = structuredClone(directCleanupState);
+    mutate(invalidState);
+    expectCode(
+      () => validateCleanupStackState(directCleanupContext, 'web', invalidState),
+      'E7_CLEANUP_STACK_IDENTITY_INVALID',
+    );
+  }
+  const racedState = structuredClone(directCleanupState);
+  racedState.lastUpdatedTime = '2026-08-17T12:01:00.000Z';
+  expectCode(
+    () =>
+      validateCleanupStackState(directCleanupContext, 'web', racedState, {
+        expectedFingerprint: directCleanupExpected.fingerprint,
+      }),
+    'E7_CLEANUP_STACK_IDENTITY_INVALID',
+  );
+  assert.equal(
+    destroyStack(directCleanupContext, 'web', directCleanupExpected),
+    directCleanupStackName,
+  );
+  assert.equal(directCleanupCalls.length, 5);
   assert.equal(
     directCleanupCalls.some(({ command, args }) => command !== 'aws' || args.includes('destroy')),
     false,
   );
   const deleteCall = directCleanupCalls.find(({ args }) => args.includes('delete-stack'));
+  assert.equal(deleteCall.args[deleteCall.args.indexOf('--stack-name') + 1], directCleanupStackId);
   assert.equal(
     deleteCall.args[deleteCall.args.indexOf('--role-arn') + 1],
     cloudFormationExecutionRoleArn(config),
@@ -9280,6 +13317,49 @@ export const selfTestAwsOperations = async () => {
   assert.equal(
     directCleanupCalls.some(({ args }) => args.includes('stack-delete-complete')),
     true,
+  );
+  const driftDetectionCalls = [];
+  const driftDetectionId = '12345678-1234-4123-8123-123456789012';
+  const driftContext = {
+    ...directCleanupContext,
+    executor: ({ command, args }) => {
+      driftDetectionCalls.push({ command, args });
+      if (args.includes('detect-stack-drift')) {
+        assert.equal(args[args.indexOf('--stack-name') + 1], directCleanupStackId);
+        return {
+          status: 0,
+          stdout: JSON.stringify({ StackDriftDetectionId: driftDetectionId }),
+          stderr: '',
+        };
+      }
+      if (args.includes('describe-stack-drift-detection-status')) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            StackDriftDetectionId: driftDetectionId,
+            StackId: replacementCleanupState.stackId,
+            DetectionStatus: 'DETECTION_COMPLETE',
+            StackDriftStatus: 'IN_SYNC',
+            DriftedStackResourceCount: 0,
+          }),
+          stderr: '',
+        };
+      }
+      throw new Error(`unexpected drift canary operation ${args.slice(0, 2).join(':')}`);
+    },
+  };
+  await assert.rejects(
+    () =>
+      detectStackDrift(driftContext, directCleanupStackName, {
+        expectedStackId: directCleanupStackId,
+      }),
+    (error) => error?.code === 'E7_DRIFT_DETECTION_STATUS_INVALID',
+  );
+  assert.equal(
+    driftDetectionCalls.some(({ args }) =>
+      ['update-stack', 'delete-stack'].some((operation) => args.includes(operation)),
+    ),
+    false,
   );
   const directory = mkdtempSync(path.join(tmpdir(), 'checkout-stage7-aws-ops-selftest-'));
   const configPath = path.join(directory, 'config.json');
@@ -9300,7 +13380,7 @@ export const selfTestAwsOperations = async () => {
   let fakeCalls = 0;
   const fakeExecutor = ({ command, args }) => {
     fakeCalls += 1;
-    assert.equal(command, 'aws');
+    assert.equal(command, commandName('aws'));
     assert.deepEqual(args.slice(0, 2), ['sts', 'get-caller-identity']);
     return {
       status: 0,
@@ -9333,8 +13413,108 @@ export const selfTestAwsOperations = async () => {
     CONFIRM_DEPLOY: 'true',
     STAGE7_PROTECTED_ENVIRONMENT: 'assessment-prerelease',
     STAGE7_PRERELEASE_CLEANUP_WATCHDOG_ROLE_ARN: `arn:aws:iam::${config.aws.accountId}:role/checkout/cleanup-watchdog`,
-    STAGE7_AWS_COMMAND: 'aws',
   };
+  for (const [key, value, code] of [
+    ['NODE_OPTIONS', '--import=foreign.mjs', 'E7_CHILD_PROCESS_ENVIRONMENT_INVALID'],
+    ['AWS_ENDPOINT_URL', 'https://foreign.example.test', 'E7_CHILD_PROCESS_ENVIRONMENT_INVALID'],
+    ['HTTPS_PROXY', 'https://foreign.example.test', 'E7_CHILD_PROCESS_ENVIRONMENT_INVALID'],
+    ['STAGE7_AWS_COMMAND', 'foreign-aws.exe', 'E7_PROTECTED_TOOL_COMMAND_INVALID'],
+    ['STAGE7_PNPM_COMMAND', 'foreign-pnpm.exe', 'E7_PROTECTED_TOOL_COMMAND_INVALID'],
+  ]) {
+    expectCode(
+      () =>
+        loadOperationContext({
+          capability: 'read',
+          scope: 'prerelease',
+          executor: fakeExecutor,
+          environmentVariables: { ...baseEnvironment, [key]: value },
+          now,
+          requireAws: true,
+        }),
+      code,
+    );
+  }
+  expectCode(
+    () =>
+      loadOperationContext({
+        capability: 'read',
+        scope: 'prerelease',
+        executor: fakeExecutor,
+        environmentVariables: { ...baseEnvironment, aws_region: config.aws.region },
+        now,
+        requireAws: true,
+      }),
+    'E7_CHILD_PROCESS_ENVIRONMENT_INVALID',
+  );
+  const sanitizedEnvironmentContext = loadOperationContext({
+    capability: 'read',
+    scope: 'prerelease',
+    executor: fakeExecutor,
+    environmentVariables: {
+      ...baseEnvironment,
+      INIT_CWD: 'C:\\foreign',
+      PNPM_HOME: 'C:\\foreign-pnpm',
+      npm_config_script_shell: 'foreign-shell',
+    },
+    now,
+    requireAws: true,
+  });
+  assert.equal(sanitizedEnvironmentContext.childEnvironment.INIT_CWD, undefined);
+  assert.equal(sanitizedEnvironmentContext.childEnvironment.PNPM_HOME, undefined);
+  assert.equal(sanitizedEnvironmentContext.childEnvironment.npm_config_script_shell, undefined);
+  assert.deepEqual(Object.keys(sanitizedEnvironmentContext.childEnvironment).toSorted(), [
+    'AWS_ACCESS_KEY_ID',
+    'AWS_DEFAULT_REGION',
+    'AWS_EC2_METADATA_DISABLED',
+    'AWS_REGION',
+    'AWS_SECRET_ACCESS_KEY',
+    'AWS_SESSION_TOKEN',
+    'CI',
+  ]);
+  assert.equal(fakeCalls, 0, 'child environment canaries must fail before executor invocation');
+  let offlineSynthAwsCalls = 0;
+  const offlineSynthContext = loadOperationContext({
+    capability: 'read',
+    scope: 'prerelease',
+    flags: { scope: 'prerelease', initial: true },
+    executor: () => {
+      offlineSynthAwsCalls += 1;
+      throw new Error('offline synth must not invoke AWS');
+    },
+    environmentVariables: baseEnvironment,
+    now,
+    requireAws: false,
+    allowPlan: true,
+  });
+  assert.equal(offlineSynthContext.config.domain.mode, 'CUSTOM_AUTHORIZED');
+  assert.deepEqual(offlineSynthCloudAuthority(), {
+    awsIdentity: null,
+    certificates: [],
+    hostedZone: null,
+  });
+  assert.deepEqual(Object.keys(offlineSynthContext.childEnvironment).toSorted(), [
+    'AWS_EC2_METADATA_DISABLED',
+    'CI',
+  ]);
+  assert.equal(
+    Object.keys(offlineSynthContext.childEnvironment).some((key) =>
+      /^(?:AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|AWS_REGION|AWS_DEFAULT_REGION)$/u.test(
+        key,
+      ),
+    ),
+    false,
+  );
+  const emittedSynthContextKeys = Object.keys(synthContextValues(offlineSynthContext)).toSorted();
+  const infraAppSource = readFileSync(path.join(workspaceRoot, 'infra/bin/app.ts'), 'utf8');
+  const consumedSynthContextKeys = [...infraAppSource.matchAll(/tryGetContext\('([^']+)'\)/gu)]
+    .map(([, key]) => key)
+    .toSorted();
+  assert.deepEqual(
+    emittedSynthContextKeys,
+    consumedSynthContextKeys,
+    'offline synth and the CDK entrypoint must share the exact context-key contract',
+  );
+  assert.equal(offlineSynthAwsCalls, 0, 'custom-domain synth preflight must remain AWS-offline');
   try {
     for (const invoke of [
       () =>
@@ -9584,6 +13764,36 @@ export const selfTestAwsOperations = async () => {
     assert.deepEqual(certificateRegions, ['us-east-1']);
     const seedEnvironment = seedRuntimeEnvironment(context, 'https://prerelease.example.invalid');
     assert.equal(seedEnvironment.SANDBOX_AUTHORIZED_UNTIL_UTC, config.authorization.expiresAtUtc);
+    assert.deepEqual(
+      {
+        CANDIDATE_SHA: seedEnvironment.CANDIDATE_SHA,
+        RELEASE_ID: seedEnvironment.RELEASE_ID,
+        RUNTIME_SECRET_VERSION_ID: seedEnvironment.RUNTIME_SECRET_VERSION_ID,
+        PRERELEASE_ACCESS_MODE: seedEnvironment.PRERELEASE_ACCESS_MODE,
+      },
+      {
+        CANDIDATE_SHA: context.identity.candidateSha,
+        RELEASE_ID: context.identity.releaseId,
+        RUNTIME_SECRET_VERSION_ID: config.prereleaseAccess.originTokenSecretVersionId,
+        PRERELEASE_ACCESS_MODE: 'cloudfront_signed_cookie',
+      },
+    );
+    for (const key of [
+      'CANDIDATE_SHA',
+      'RELEASE_ID',
+      'RUNTIME_SECRET_VERSION_ID',
+      'PRERELEASE_ACCESS_MODE',
+      'DATA_ADAPTER',
+    ]) {
+      expectCode(
+        () =>
+          validateSeedRuntimeEnvironment(context, 'https://prerelease.example.invalid', {
+            ...seedEnvironment,
+            [key]: 'tampered',
+          }),
+        'E7_SEED_RUNTIME_ENVIRONMENT_INVALID',
+      );
+    }
     expectCode(
       () =>
         seedRuntimeEnvironment(
@@ -9912,8 +14122,8 @@ export const selfTestAwsOperations = async () => {
       domain: {
         ...config.domain,
         mode: 'CUSTOM_AUTHORIZED',
-        hostname: 'checkout.release.example.invalid',
-        apiHostname: 'api.release.example.invalid',
+        hostname: 'preview.release.example.invalid',
+        apiHostname: 'api-preview.release.example.invalid',
         hostedZoneId: 'Z1234567890ABC',
       },
     };
@@ -9950,7 +14160,7 @@ export const selfTestAwsOperations = async () => {
       'E7_HOSTED_ZONE_MISMATCH',
     );
     const ownedOriginSha256 = sha256('https://prerelease.example.invalid');
-    const apiOriginSha256 = sha256('https://abc123def4.execute-api.us-east-1.amazonaws.com');
+    const apiOriginSha256 = sha256(`https://${config.domain.apiHostname}`);
     const externalFilename = path.join(directory, 'external-authorizations.json');
     const authorization = (id, scope, approvedTargetSha256, minimumRequests) => ({
       id,
@@ -9992,7 +14202,7 @@ export const selfTestAwsOperations = async () => {
           'AUTH-E6-03',
           'PASSIVE_BASELINE_OWNED_QA_ONLY',
           ownedOriginSha256,
-          6,
+          12,
         ),
       },
       containsSensitiveData: false,
@@ -10070,7 +14280,7 @@ export const selfTestAwsOperations = async () => {
       },
       domain: {
         mode: 'CUSTOM_AUTHORIZED',
-        hostname: 'checkout.release.example.invalid',
+        hostname: 'app.release.example.invalid',
         apiHostname: 'api.release.example.invalid',
         hostedZoneId: 'Z1234567890ABC',
         webCertificateArn: `arn:aws:acm:us-east-1:${config.aws.accountId}:certificate/11111111-1111-1111-1111-111111111111`,
@@ -10087,7 +14297,7 @@ export const selfTestAwsOperations = async () => {
       },
     };
     validateStage7Config(fullConfig, { now });
-    const fullOriginSha256 = sha256('https://checkout.release.example.invalid');
+    const fullOriginSha256 = sha256('https://app.release.example.invalid');
     const fullBundle = {
       ...externalBundle,
       stage7ConfigSha256: objectSha256(fullConfig),

@@ -22,7 +22,9 @@ Los alcances válidos son plan no mutante, prerelease efímera y release complet
 Los dos últimos requieren sandbox autorizado y al menos una referencia de
 credencial. Una release completa requiere que la entrada de Etapa 6 sea `PASS`;
 dominio propio autorizado con TLS 1.2, y una entrada condicional solo habilita la
-prerelease no pública autorizada sobre dominio administrado por AWS.
+prerelease no pública sobre su dominio `CUSTOM_AUTHORIZED` exacto de Route 53 y
+certificados ACM. `EPHEMERAL_PRERELEASE` rechaza `AWS_MANAGED`, dominio nulo y
+credenciales de zona o certificado pertenecientes a otro target.
 
 ## Interlock de seguridad vigente
 
@@ -32,6 +34,13 @@ credenciales AWS mientras falte alguno de estos contratos verificables:
 - la release completa necesita un manifiesto inmutable de una versión anterior
   aprobada y un rehearsal real frontend/API `nuevo → anterior → nuevo`; apagar
   y volver a encender el mismo candidato no cuenta como rollback;
+- el rollback inicial persiste primero un intent local, usa un
+  `client-request-token` determinístico y exige los eventos root exactos
+  `UPDATE_IN_PROGRESS → UPDATE_COMPLETE` de CloudFormation antes de certificar la
+  transición. Web vuelve a validar esa causalidad API antes de cualquier mutación.
+  Si otro runner no conserva el registro privado `rollback-api`, la recuperación
+  falla cerrada y requiere el procedimiento operacional; no reconstruye evidencia
+  ni supone una transición por observar el stack deshabilitado;
 - la prerelease necesita un control técnico de acceso que rechace usuarios
   anónimos y cierre el acceso directo al origen API;
 - la prerelease necesita una recuperación de expiración durable e idempotente,

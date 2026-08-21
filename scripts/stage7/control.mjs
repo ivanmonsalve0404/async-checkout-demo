@@ -95,6 +95,7 @@ import {
   readCloudFrontSignedCookieFile,
   validatePrereleaseApiOrigin,
 } from './cloudfront-access.mjs';
+import { normalizePnpmScriptArguments } from './cli-arguments.mjs';
 import {
   GithubEnvironmentApprovalError,
   validateGithubEnvironmentApproval,
@@ -682,7 +683,7 @@ export const validateExternalAuthorizations = ({
     try {
       apiOrigin = validatePrereleaseApiOrigin({
         origin: deployedApiOrigin,
-        region: config.aws.region,
+        config,
       });
       apiOriginSha256 = digest(apiOrigin);
     } catch {
@@ -691,6 +692,12 @@ export const validateExternalAuthorizations = ({
   }
   const sandboxHostSha256 = digest('sandbox.wompi.co');
   const fullRelease = config.authorization.scope === 'FULL_RELEASE_VERSIONED_UPDATE';
+  const requirementByKey = Object.fromEntries(
+    externalAuthorizationRequirements(fullRelease ? 'full' : 'prerelease').map((requirement) => [
+      requirement.key,
+      requirement,
+    ]),
+  );
   const expectedTargetKeys = fullRelease
     ? ['ownedOriginSha256', 'sandboxHostSha256']
     : ['ownedOriginSha256', 'apiOriginSha256', 'sandboxHostSha256'];
@@ -725,35 +732,19 @@ export const validateExternalAuthorizations = ({
   const authorizations = {
     ownedTarget: externalAuthorization(
       value.authorizations.ownedTarget,
-      {
-        id: fullRelease ? 'AUTH-E7-EXT-01' : 'AUTH-E6-01',
-        scope: fullRelease
-          ? 'OWNED_FINAL_RELEASE_HTTPS_VERIFICATION'
-          : 'OWNED_EPHEMERAL_QA_HTTPS_VERIFICATION',
-        minimumRequests: fullRelease ? 3 : 9,
-      },
+      requirementByKey.ownedTarget,
       originSha256,
       now,
     ),
     sandboxSmoke: externalAuthorization(
       value.authorizations.sandboxSmoke,
-      {
-        id: fullRelease ? 'AUTH-E7-EXT-02' : 'AUTH-E6-02',
-        scope: 'AUTHORIZED_PROVIDER_SANDBOX_SMOKE',
-        minimumRequests: fullRelease ? 64 : 8,
-      },
+      requirementByKey.sandboxSmoke,
       sandboxHostSha256,
       now,
     ),
     passiveSecurity: externalAuthorization(
       value.authorizations.passiveSecurity,
-      {
-        id: fullRelease ? 'AUTH-E7-EXT-03' : 'AUTH-E6-03',
-        scope: fullRelease
-          ? 'PASSIVE_BASELINE_OWNED_RELEASE_ONLY'
-          : 'PASSIVE_BASELINE_OWNED_QA_ONLY',
-        minimumRequests: 6,
-      },
+      requirementByKey.passiveSecurity,
       originSha256,
       now,
     ),
@@ -805,13 +796,20 @@ const externalAuthorizationFile = () => {
   return value;
 };
 
-const readExternalAuthorizations = ({ config, identity, deployedOrigin, now = new Date() }) => {
+const readExternalAuthorizations = ({
+  config,
+  identity,
+  deployedOrigin,
+  deployedApiOrigin,
+  now = new Date(),
+}) => {
   return validateExternalAuthorizations({
     value: externalAuthorizationFile(),
     config,
     candidateSha: identity.candidateSha,
     releaseId: identity.releaseId,
     deployedOrigin,
+    deployedApiOrigin,
     now,
   });
 };
@@ -3368,6 +3366,18 @@ const webTarget = (config, identity) => {
   ) {
     fail('E7_DEPLOYED_WEB_OUTPUTS_INVALID');
   }
+  const expectedApplicationUrl =
+    config.domain.mode === 'CUSTOM_AUTHORIZED' ? `https://${config.domain.hostname}` : null;
+  if (
+    expectedApplicationUrl === null ||
+    outputs.ApplicationUrl !== expectedApplicationUrl ||
+    outputs.ApiUrl !== `${expectedApplicationUrl}/api` ||
+    outputs.ApiDocsUrl !== `${expectedApplicationUrl}/api/docs` ||
+    outputs.HealthUrl !== `${expectedApplicationUrl}/api/health/ready` ||
+    outputs.PublicOriginParameterName !== `/checkout-${config.environment}/public-origin`
+  ) {
+    fail('E7_DEPLOYED_DOMAIN_MISMATCH');
+  }
   let application;
   for (const [name, value] of Object.entries({
     application: outputs.ApplicationUrl,
@@ -3386,10 +3396,7 @@ const webTarget = (config, identity) => {
       fail('E7_DEPLOYED_URL_INVALID');
     }
   }
-  if (
-    config.domain.mode === 'CUSTOM_AUTHORIZED' &&
-    application.hostname !== config.domain.hostname
-  ) {
+  if (application.origin !== expectedApplicationUrl) {
     fail('E7_DEPLOYED_DOMAIN_MISMATCH');
   }
   return { stackName, outputs, applicationOrigin: application.origin };
@@ -3415,7 +3422,7 @@ const apiTarget = (config, identity) => {
   try {
     apiOrigin = validatePrereleaseApiOrigin({
       origin: outputs.ApiOriginUrl,
-      region: config.aws.region,
+      config,
     });
   } catch {
     fail('E7_DEPLOYED_API_OUTPUTS_INVALID');
@@ -3445,7 +3452,7 @@ const deploymentTarget = (directory, config, identity) => {
     origin = parsed.origin;
     apiOrigin = validatePrereleaseApiOrigin({
       origin: apiOriginUrl,
-      region: config.aws.region,
+      config,
     });
   } catch (error) {
     if (error instanceof Stage7ControlError) throw error;
@@ -4282,13 +4289,13 @@ const prereleaseOriginGatePassed = (facts) =>
 const runAvailableSmoke = async ({
   origin,
   apiOrigin: requestedApiOrigin,
-  region,
+  config,
   publicKeyId,
   maxCookieExpiresAtUtc,
 }) => {
   const apiOrigin = validatePrereleaseApiOrigin({
     origin: requestedApiOrigin,
-    region,
+    config,
   });
   let ownedOriginRequests = 0;
   let directApiOriginRequests = 0;
@@ -4735,7 +4742,7 @@ const smokeRelease = async (flags) => {
           : await runAvailableSmoke({
               origin: target.applicationOrigin,
               apiOrigin: deployedApi.apiOrigin,
-              region: config.aws.region,
+              config,
               publicKeyId: config.prereleaseAccess.publicKeyId,
               maxCookieExpiresAtUtc: prereleaseCookieMaxExpiresAtUtc(config),
             });
@@ -12753,7 +12760,7 @@ const controlConfigFixture = ({ scope = 'prerelease' } = {}) => {
     domain: full
       ? {
           mode: 'CUSTOM_AUTHORIZED',
-          hostname: 'checkout.example.test',
+          hostname: 'app.example.test',
           apiHostname: 'api.example.test',
           hostedZoneId: 'Z1234567890ABC',
           webCertificateArn:
@@ -12763,13 +12770,15 @@ const controlConfigFixture = ({ scope = 'prerelease' } = {}) => {
           dnsIncluded: true,
         }
       : {
-          mode: 'AWS_MANAGED',
-          hostname: null,
-          apiHostname: null,
-          hostedZoneId: null,
-          webCertificateArn: null,
-          apiCertificateArn: null,
-          dnsIncluded: false,
+          mode: 'CUSTOM_AUTHORIZED',
+          hostname: 'preview.example.test',
+          apiHostname: 'api-preview.example.test',
+          hostedZoneId: 'Z1234567890ABC',
+          webCertificateArn:
+            'arn:aws:acm:us-east-1:123456789012:certificate/33333333-3333-3333-3333-333333333333',
+          apiCertificateArn:
+            'arn:aws:acm:us-east-1:123456789012:certificate/44444444-4444-4444-4444-444444444444',
+          dnsIncluded: true,
         },
     cleanup: {
       ownerAlias: 'cleanup-owner',
@@ -12841,9 +12850,7 @@ const authorizationFixture = ({ config, candidateSha, releaseId, origin, apiOrig
       ownedOriginSha256: digest(origin),
       ...(scope === 'prerelease'
         ? {
-            apiOriginSha256: digest(
-              apiOrigin ?? 'https://abc123def4.execute-api.us-east-1.amazonaws.com',
-            ),
+            apiOriginSha256: digest(apiOrigin ?? `https://${config.domain.apiHostname}`),
           }
         : {}),
       sandboxHostSha256: digest('sandbox.wompi.co'),
@@ -13190,7 +13197,7 @@ export const selfTestStage7Control = async () => {
   const candidateSha = 'a'.repeat(40);
   const releaseId = 'rel-20260817-1200-aaaaaaa';
   const origin = 'https://owned-qa.example.test';
-  const apiOrigin = 'https://abc123def4.execute-api.us-east-1.amazonaws.com';
+  const apiOrigin = `https://${config.domain.apiHostname}`;
   const authorization = authorizationFixture({
     config,
     candidateSha,
@@ -13207,6 +13214,49 @@ export const selfTestStage7Control = async () => {
     deployedApiOrigin: apiOrigin,
     now,
   });
+  const insufficientPrereleasePassive = structuredClone(authorization);
+  insufficientPrereleasePassive.authorizations.passiveSecurity.maxRequests = 11;
+  assert.throws(
+    () =>
+      validateExternalAuthorizations({
+        value: insufficientPrereleasePassive,
+        config,
+        candidateSha,
+        releaseId,
+        deployedOrigin: origin,
+        deployedApiOrigin: apiOrigin,
+        now,
+      }),
+    (error) => error.code === 'E7_EXTERNAL_AUTHORIZATION_INVALID',
+  );
+  const exactPrereleasePassive = structuredClone(authorization);
+  exactPrereleasePassive.authorizations.passiveSecurity.maxRequests = 12;
+  validateExternalAuthorizations({
+    value: exactPrereleasePassive,
+    config,
+    candidateSha,
+    releaseId,
+    deployedOrigin: origin,
+    deployedApiOrigin: apiOrigin,
+    now,
+  });
+  assert.throws(
+    () =>
+      validateExternalAuthorizations({
+        value: authorization,
+        config,
+        candidateSha,
+        releaseId,
+        deployedOrigin: origin,
+        deployedApiOrigin: 'https://api-foreign.example.test',
+        now,
+      }),
+    (error) =>
+      [
+        'E7_EXTERNAL_AUTHORIZATION_API_ORIGIN_INVALID',
+        'E7_EXTERNAL_AUTHORIZATION_ENVELOPE_INVALID',
+      ].includes(error.code),
+  );
   const fullConfig = controlConfigFixture({ scope: 'full' });
   validateStage7Config(fullConfig, { now });
   const baselineConfig = createBaselineConfigSelfTestFixture();
@@ -13214,7 +13264,7 @@ export const selfTestStage7Control = async () => {
   const baselineFreeze = createBaselineFreezeSelfTestFixture(baselineConfig);
   assert.equal(validateBaselineFreeze(baselineFreeze), baselineFreeze);
   assert.throws(() => validateFreezeManifest(baselineFreeze), Stage7Error);
-  const fullOrigin = 'https://checkout.example.test';
+  const fullOrigin = 'https://app.example.test';
   const fullAuthorization = authorizationFixture({
     config: fullConfig,
     candidateSha,
@@ -13223,6 +13273,16 @@ export const selfTestStage7Control = async () => {
   });
   const validatedFullAuthorization = validateExternalAuthorizations({
     value: fullAuthorization,
+    config: fullConfig,
+    candidateSha,
+    releaseId,
+    deployedOrigin: fullOrigin,
+    now,
+  });
+  const exactFullPassive = structuredClone(fullAuthorization);
+  exactFullPassive.authorizations.passiveSecurity.maxRequests = 6;
+  validateExternalAuthorizations({
+    value: exactFullPassive,
     config: fullConfig,
     candidateSha,
     releaseId,
@@ -13766,6 +13826,28 @@ export const selfTestStage7Control = async () => {
     stackIdSha256: '8'.repeat(64),
     stackName,
   });
+  const initialRollbackTransitionState = (stackName, { resumed = false } = {}) => ({
+    changed: true,
+    previousState: 'ENABLED',
+    state: 'DISABLED',
+    stackIdSha256: '8'.repeat(64),
+    stackName,
+    intent: {
+      mode: resumed ? 'RECOVERED_AFTER_CLOUDFORMATION_EVENT' : 'APPLIED_AFTER_LOCAL_INTENT',
+      sha256: '9'.repeat(64),
+      previousState: 'ENABLED',
+      targetState: 'DISABLED',
+    },
+    causality: {
+      provider: 'CLOUDFORMATION_STACK_EVENT',
+      requestTokenSha256: 'a'.repeat(64),
+      updateStartedEventIdSha256: 'b'.repeat(64),
+      updateCompletedEventIdSha256: 'c'.repeat(64),
+      updateStartedAtUtc: '2026-08-17T11:59:00.000Z',
+      updateCompletedAtUtc: '2026-08-17T12:00:00.000Z',
+      transition: 'UPDATE_IN_PROGRESS_TO_UPDATE_COMPLETE',
+    },
+  });
   const schedulerState = (state) => ({
     controlledBy: 'PublicationState',
     stackName: apiStackName,
@@ -13880,8 +13962,8 @@ export const selfTestStage7Control = async () => {
     updateReleaseSupported: false,
     publication: {
       managedByCloudFormation: true,
-      apiStack: transitionState(apiStackName, 'DISABLED'),
-      webStack: transitionState(webStackName, 'DISABLED'),
+      apiStack: initialRollbackTransitionState(apiStackName),
+      webStack: initialRollbackTransitionState(webStackName),
       scheduler: schedulerState('DISABLED'),
     },
     aliasesChanged: false,
@@ -13891,6 +13973,36 @@ export const selfTestStage7Control = async () => {
     secretDeleted: false,
   };
   validateStage7InitialRollbackCheckpoint(rollbackCheckpointFixture, { config: fullConfig });
+  const resumedRollbackCheckpoint = structuredClone(rollbackCheckpointFixture);
+  resumedRollbackCheckpoint.publication.apiStack = initialRollbackTransitionState(apiStackName, {
+    resumed: true,
+  });
+  resumedRollbackCheckpoint.publication.webStack = initialRollbackTransitionState(webStackName, {
+    resumed: true,
+  });
+  validateStage7InitialRollbackCheckpoint(resumedRollbackCheckpoint, { config: fullConfig });
+  for (const mutate of [
+    (value) => delete value.publication.apiStack.intent,
+    (value) => {
+      value.publication.apiStack.intent.sha256 = 'invalid';
+    },
+    (value) => {
+      value.publication.webStack.intent.mode = 'NOOP';
+    },
+    (value) => {
+      value.publication.webStack.causality.updateCompletedEventIdSha256 = 'invalid';
+    },
+    (value) => {
+      value.publication.webStack.stackName = apiStackName;
+    },
+  ]) {
+    const invalidRollback = structuredClone(resumedRollbackCheckpoint);
+    mutate(invalidRollback);
+    assert.throws(
+      () => validateStage7InitialRollbackCheckpoint(invalidRollback, { config: fullConfig }),
+      (error) => error.code === 'E7_INITIAL_ROLLBACK_PUBLICATION_INVALID',
+    );
+  }
   assert.throws(
     () =>
       validateStage7InitialRollbackCheckpoint(
@@ -14048,10 +14160,10 @@ export const selfTestStage7Control = async () => {
     releaseTag: 'v0.1.0-rc.1',
   };
   const readmeUrlsFixture = {
-    application: 'https://checkout.example.test',
-    api: 'https://checkout.example.test/api',
-    docs: 'https://checkout.example.test/api/docs',
-    health: 'https://checkout.example.test/api/health/ready',
+    application: 'https://app.example.test',
+    api: 'https://app.example.test/api',
+    docs: 'https://app.example.test/api/docs',
+    health: 'https://app.example.test/api/health/ready',
     repository: 'https://github.com/ivanmonsalve0404/async-checkout-demo',
   };
   const preparedReadmeFixture = releaseReadme(
@@ -14065,10 +14177,10 @@ export const selfTestStage7Control = async () => {
     '',
     '## Entorno desplegado',
     '',
-    '- Aplicación: https://checkout.example.test',
-    '- API: https://checkout.example.test/api',
-    '- OpenAPI: https://checkout.example.test/api/docs',
-    '- Salud: https://checkout.example.test/api/health/ready',
+    '- Aplicación: https://app.example.test',
+    '- API: https://app.example.test/api',
+    '- OpenAPI: https://app.example.test/api/docs',
+    '- Salud: https://app.example.test/api/health/ready',
     '- Repositorio: https://github.com/ivanmonsalve0404/async-checkout-demo',
     '',
     '<!-- STAGE7_URLS_END -->',
@@ -14100,10 +14212,10 @@ export const selfTestStage7Control = async () => {
     branch: 'master',
     readmeGitBlobSha: 'b'.repeat(40),
     urls: {
-      application: 'https://checkout.example.test',
-      api: 'https://checkout.example.test/api',
-      docs: 'https://checkout.example.test/api/docs',
-      health: 'https://checkout.example.test/api/health/ready',
+      application: 'https://app.example.test',
+      api: 'https://app.example.test/api',
+      docs: 'https://app.example.test/api/docs',
+      health: 'https://app.example.test/api/health/ready',
       repository: 'https://github.com/ivanmonsalve0404/async-checkout-demo',
     },
     files: {
@@ -14148,7 +14260,7 @@ export const selfTestStage7Control = async () => {
       ),
     (error) => error.code === 'E7_PUBLICATION_PLAN_INVALID',
   );
-  for (const api of ['https://api.example.test/api', 'https://checkout.example.test/api/v1']) {
+  for (const api of ['https://api.example.test/api', 'https://app.example.test/api/v1']) {
     assert.throws(
       () =>
         validatePublicationPlan(
@@ -14167,9 +14279,9 @@ export const selfTestStage7Control = async () => {
     };
   });
   assert.deepEqual(publicationProbeRequests, [
-    'https://checkout.example.test/',
-    'https://checkout.example.test/api/docs',
-    'https://checkout.example.test/api/health/ready',
+    'https://app.example.test/',
+    'https://app.example.test/api/docs',
+    'https://app.example.test/api/health/ready',
   ]);
   assert.ok(publicationProbeRequests.every((request) => new URL(request).pathname !== '/api'));
   const unhealthyPublicationProbeRequests = [];
@@ -15988,14 +16100,16 @@ export const selfTestStage7Control = async () => {
 };
 
 const main = async () => {
-  const command = process.argv[2];
+  const [command, ...arguments_] = normalizePnpmScriptArguments(process.argv.slice(2), {
+    separatorIndex: 1,
+  });
   if (command === 'self-test') {
-    if (process.argv.length !== 3) fail('E7_CONTROL_ARGUMENT_SET_INVALID');
+    if (arguments_.length !== 0) fail('E7_CONTROL_ARGUMENT_SET_INVALID');
     await selfTestStage7Control();
     return;
   }
   assertNode24();
-  const flags = parseFlags(process.argv.slice(3));
+  const flags = parseFlags(arguments_);
   if (command === 'preflight') await dispatchPreflight(flags);
   else if (command === 'verify-journal-authority') verifyLiveJournalRoleAuthority(flags);
   else if (command === 'verify-successor-fence') verifyReleaseSuccessorFenceCheckpoint(flags);

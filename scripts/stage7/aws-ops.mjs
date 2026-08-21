@@ -36,6 +36,7 @@ import {
   RELEASE_SUCCESSOR_ROLLBACK_PREPARATION_ONLY_CLI_FLAGS,
   RELEASE_SUCCESSOR_ROLLBACK_PREPARED_CLI_FLAGS,
 } from './release-successor-rollback-authority.mjs';
+import { normalizePnpmScriptArguments } from './cli-arguments.mjs';
 
 const fail = (code) => {
   throw new Stage7AwsError(code);
@@ -749,9 +750,11 @@ const assertPrereleaseSafetyCommandContracts = () => {
 };
 
 const main = async () => {
-  const command = process.argv[2];
+  const [command, ...arguments_] = normalizePnpmScriptArguments(process.argv.slice(2), {
+    separatorIndex: 1,
+  });
   if (command === 'self-test') {
-    if (process.argv.length !== 3) fail('E7_AWS_CLI_ARGUMENT_SET_INVALID');
+    if (arguments_.length !== 0) fail('E7_AWS_CLI_ARGUMENT_SET_INVALID');
     assertApprovalBoundCommandContracts();
     assertReleaseReconciliationRecoveryDriftCommandContract();
     assertReleaseSuccessorGuardCommandContract();
@@ -763,7 +766,7 @@ const main = async () => {
   }
   const definition = commandDefinitions[command];
   if (definition === undefined) fail('E7_AWS_CLI_COMMAND_INVALID');
-  const flags = parseAwsFlags(process.argv.slice(3));
+  const flags = parseAwsFlags(arguments_);
   assertAwsFlagSet(flags, definition);
   assertExternalOperationScope(command, flags);
   assertReleaseReconciliationRecoveryDriftFlagSet(command, flags);

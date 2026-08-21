@@ -474,6 +474,16 @@ export const validateStage7Config = (value, { now = new Date() } = {}) => {
   assertAlias(budget.alertChannelAlias, 'E7_BUDGET_CHANNEL_INVALID');
 
   const domain = value.domain;
+  const domainSuffix =
+    typeof domain?.hostname === 'string' ? domain.hostname.split('.').slice(1).join('.') : null;
+  const reservedDomainLabelsValid =
+    domain?.mode !== 'CUSTOM_AUTHORIZED' ||
+    (authorization.scope === 'FULL_RELEASE_VERSIONED_UPDATE'
+      ? domain.hostname === `app.${domainSuffix}` && domain.apiHostname === `api.${domainSuffix}`
+      : authorization.scope === 'EPHEMERAL_PRERELEASE'
+        ? domain.hostname === `preview.${domainSuffix}` &&
+          domain.apiHostname === `api-preview.${domainSuffix}`
+        : false);
   if (
     !exactKeys(domain, [
       'mode',
@@ -514,7 +524,8 @@ export const validateStage7Config = (value, { now = new Date() } = {}) => {
         new RegExp(`^arn:aws:acm:${aws.region}:[0-9]{12}:certificate/[0-9a-f-]{36}$`, 'u').test(
           domain.apiCertificateArn,
         ) &&
-        domain.dnsIncluded)
+        domain.dnsIncluded &&
+        reservedDomainLabelsValid)
     )
   ) {
     fail('E7_DOMAIN_STRATEGY_INVALID');
@@ -614,7 +625,8 @@ export const validateStage7Config = (value, { now = new Date() } = {}) => {
     authorization.scope === 'EPHEMERAL_PRERELEASE' &&
     (!value.environment.startsWith('assessment-prerelease-') ||
       !authorization.sandboxIncluded ||
-      value.credentialReferences.length === 0)
+      value.credentialReferences.length === 0 ||
+      value.domain.mode !== 'CUSTOM_AUTHORIZED')
   ) {
     fail('E7_PRERELEASE_AUTHORIZATION_INCOMPLETE');
   }
@@ -697,6 +709,55 @@ const publicationStackTransition = (value, stackName, previousState, state, code
     value.state !== state ||
     value.stackName !== stackName ||
     !SHA256.test(value.stackIdSha256 ?? '')
+  ) {
+    fail(code);
+  }
+  return value;
+};
+
+export const validateStage7InitialRollbackPublicationTransition = (
+  value,
+  { stackName, code = 'E7_INITIAL_ROLLBACK_PUBLICATION_INVALID' },
+) => {
+  const proof = value?.intent;
+  const causality = value?.causality;
+  if (
+    !exactKeys(value, [
+      'changed',
+      'previousState',
+      'state',
+      'stackIdSha256',
+      'stackName',
+      'intent',
+      'causality',
+    ]) ||
+    !exactKeys(proof, ['mode', 'sha256', 'previousState', 'targetState']) ||
+    !exactKeys(causality, [
+      'provider',
+      'requestTokenSha256',
+      'updateStartedEventIdSha256',
+      'updateCompletedEventIdSha256',
+      'updateStartedAtUtc',
+      'updateCompletedAtUtc',
+      'transition',
+    ]) ||
+    value.changed !== true ||
+    value.previousState !== 'ENABLED' ||
+    !['APPLIED_AFTER_LOCAL_INTENT', 'RECOVERED_AFTER_CLOUDFORMATION_EVENT'].includes(proof.mode) ||
+    value.state !== 'DISABLED' ||
+    value.stackName !== stackName ||
+    !SHA256.test(value.stackIdSha256 ?? '') ||
+    !SHA256.test(proof.sha256 ?? '') ||
+    proof.previousState !== 'ENABLED' ||
+    proof.targetState !== 'DISABLED' ||
+    causality.provider !== 'CLOUDFORMATION_STACK_EVENT' ||
+    !SHA256.test(causality.requestTokenSha256 ?? '') ||
+    !SHA256.test(causality.updateStartedEventIdSha256 ?? '') ||
+    !SHA256.test(causality.updateCompletedEventIdSha256 ?? '') ||
+    !isoUtc(causality.updateStartedAtUtc) ||
+    !isoUtc(causality.updateCompletedAtUtc) ||
+    Date.parse(causality.updateStartedAtUtc) > Date.parse(causality.updateCompletedAtUtc) ||
+    causality.transition !== 'UPDATE_IN_PROGRESS_TO_UPDATE_COMPLETE'
   ) {
     fail(code);
   }
@@ -904,20 +965,14 @@ export const validateStage7InitialRollbackCheckpoint = (value, { config }) => {
   ) {
     fail('E7_INITIAL_ROLLBACK_CHECKPOINT_INVALID');
   }
-  publicationStackTransition(
-    value.publication.apiStack,
-    apiStack,
-    'ENABLED',
-    'DISABLED',
-    'E7_INITIAL_ROLLBACK_PUBLICATION_INVALID',
-  );
-  publicationStackTransition(
-    value.publication.webStack,
-    webStack,
-    'ENABLED',
-    'DISABLED',
-    'E7_INITIAL_ROLLBACK_PUBLICATION_INVALID',
-  );
+  validateStage7InitialRollbackPublicationTransition(value.publication.apiStack, {
+    stackName: apiStack,
+    code: 'E7_INITIAL_ROLLBACK_PUBLICATION_INVALID',
+  });
+  validateStage7InitialRollbackPublicationTransition(value.publication.webStack, {
+    stackName: webStack,
+    code: 'E7_INITIAL_ROLLBACK_PUBLICATION_INVALID',
+  });
   publicationSchedulerState(
     value.publication.scheduler,
     apiStack,
@@ -3077,19 +3132,8 @@ const validConfigFixture = ({ scope = 'FULL_RELEASE_VERSIONED_UPDATE' } = {}) =>
     alertDestinationSha256: '3'.repeat(64),
   },
   domain:
-    scope === 'FULL_RELEASE_VERSIONED_UPDATE'
+    scope === 'NON_MUTATING_PLAN'
       ? {
-          mode: 'CUSTOM_AUTHORIZED',
-          hostname: 'checkout.example.test',
-          apiHostname: 'api.example.test',
-          hostedZoneId: 'Z123456',
-          webCertificateArn:
-            'arn:aws:acm:us-east-1:123456789012:certificate/11111111-1111-1111-1111-111111111111',
-          apiCertificateArn:
-            'arn:aws:acm:us-east-1:123456789012:certificate/22222222-2222-2222-2222-222222222222',
-          dnsIncluded: true,
-        }
-      : {
           mode: 'AWS_MANAGED',
           hostname: null,
           apiHostname: null,
@@ -3097,6 +3141,21 @@ const validConfigFixture = ({ scope = 'FULL_RELEASE_VERSIONED_UPDATE' } = {}) =>
           webCertificateArn: null,
           apiCertificateArn: null,
           dnsIncluded: false,
+        }
+      : {
+          mode: 'CUSTOM_AUTHORIZED',
+          hostname:
+            scope === 'FULL_RELEASE_VERSIONED_UPDATE' ? 'app.example.test' : 'preview.example.test',
+          apiHostname:
+            scope === 'FULL_RELEASE_VERSIONED_UPDATE'
+              ? 'api.example.test'
+              : 'api-preview.example.test',
+          hostedZoneId: 'Z123456',
+          webCertificateArn:
+            'arn:aws:acm:us-east-1:123456789012:certificate/11111111-1111-1111-1111-111111111111',
+          apiCertificateArn:
+            'arn:aws:acm:us-east-1:123456789012:certificate/22222222-2222-2222-2222-222222222222',
+          dnsIncluded: true,
         },
   cleanup: {
     ownerAlias: 'cleanup-owner',
@@ -3195,6 +3254,61 @@ export const selfTestStage7 = () => {
   const now = new Date('2026-08-17T12:00:00.000Z');
   const config = validConfigFixture();
   assert.equal(validateStage7Config(config, { now }), config);
+  const validPrereleaseConfig = validConfigFixture({ scope: 'EPHEMERAL_PRERELEASE' });
+  assert.equal(validateStage7Config(validPrereleaseConfig, { now }), validPrereleaseConfig);
+  assert.throws(
+    () =>
+      validateStage7Config(
+        {
+          ...validPrereleaseConfig,
+          domain: {
+            mode: 'AWS_MANAGED',
+            hostname: null,
+            apiHostname: null,
+            hostedZoneId: null,
+            webCertificateArn: null,
+            apiCertificateArn: null,
+            dnsIncluded: false,
+          },
+        },
+        { now },
+      ),
+    (error) =>
+      error instanceof Stage7Error && error.code === 'E7_PRERELEASE_AUTHORIZATION_INCOMPLETE',
+  );
+  for (const invalidDomain of [
+    { ...validPrereleaseConfig.domain, hostname: null },
+    { ...validPrereleaseConfig.domain, hostedZoneId: null },
+    {
+      ...validPrereleaseConfig.domain,
+      apiCertificateArn:
+        'arn:aws:acm:us-west-2:123456789012:certificate/22222222-2222-2222-2222-222222222222',
+    },
+    {
+      ...validPrereleaseConfig.domain,
+      hostname: 'app.example.test',
+      apiHostname: 'api.example.test',
+    },
+    {
+      ...validPrereleaseConfig.domain,
+      apiHostname: validPrereleaseConfig.domain.hostname,
+    },
+  ]) {
+    assert.throws(
+      () => validateStage7Config({ ...validPrereleaseConfig, domain: invalidDomain }, { now }),
+      (error) => error instanceof Stage7Error && error.code === 'E7_DOMAIN_STRATEGY_INVALID',
+    );
+  }
+  const fullWithPrereleaseDomain = validConfigFixture();
+  fullWithPrereleaseDomain.domain = {
+    ...fullWithPrereleaseDomain.domain,
+    hostname: 'preview.example.test',
+    apiHostname: 'api-preview.example.test',
+  };
+  assert.throws(
+    () => validateStage7Config(fullWithPrereleaseDomain, { now }),
+    (error) => error instanceof Stage7Error && error.code === 'E7_DOMAIN_STRATEGY_INVALID',
+  );
   assert.throws(
     () =>
       validateStage7Config(

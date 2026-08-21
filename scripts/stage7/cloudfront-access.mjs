@@ -151,14 +151,26 @@ export const assertCloudFrontAccessMaterialExcluded = (value, cookies) => {
   return value;
 };
 
-export const validatePrereleaseApiOrigin = ({ origin, region }) => {
+export const validatePrereleaseApiOrigin = ({ origin, config }) => {
   let parsed;
   try {
     parsed = new URL(origin);
   } catch {
     throw new Error('E7_PRERELEASE_API_ORIGIN_INVALID');
   }
+  const region = config?.aws?.region;
+  const domain = config?.domain;
   const escapedRegion = String(region ?? '').replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const customDomain =
+    domain?.mode === 'CUSTOM_AUTHORIZED' &&
+    typeof domain.apiHostname === 'string' &&
+    parsed.hostname === domain.apiHostname;
+  const managedPlan =
+    domain?.mode === 'AWS_MANAGED' &&
+    config?.authorization?.scope === 'NON_MUTATING_PLAN' &&
+    new RegExp(`^[a-z0-9]{10}\\.execute-api\\.${escapedRegion}\\.amazonaws\\.com$`, 'u').test(
+      parsed.hostname,
+    );
   if (
     !/^[a-z]{2}(?:-gov)?-[a-z]+-[1-9]$/u.test(region ?? '') ||
     parsed.protocol !== 'https:' ||
@@ -169,9 +181,7 @@ export const validatePrereleaseApiOrigin = ({ origin, region }) => {
     parsed.port ||
     parsed.search ||
     parsed.hash ||
-    !new RegExp(`^[a-z0-9]{10}\\.execute-api\\.${escapedRegion}\\.amazonaws\\.com$`, 'u').test(
-      parsed.hostname,
-    )
+    (!customDomain && !managedPlan)
   ) {
     throw new Error('E7_PRERELEASE_API_ORIGIN_INVALID');
   }
@@ -295,19 +305,51 @@ export const selfTestCloudFrontAccess = () => {
   );
   assert.equal(
     validatePrereleaseApiOrigin({
+      origin: 'https://api-preview.example.test',
+      config: {
+        authorization: { scope: 'EPHEMERAL_PRERELEASE' },
+        aws: { region: 'us-east-1' },
+        domain: { mode: 'CUSTOM_AUTHORIZED', apiHostname: 'api-preview.example.test' },
+      },
+    }),
+    'https://api-preview.example.test',
+  );
+  const customConfig = {
+    authorization: { scope: 'EPHEMERAL_PRERELEASE' },
+    aws: { region: 'us-east-1' },
+    domain: { mode: 'CUSTOM_AUTHORIZED', apiHostname: 'api-preview.example.test' },
+  };
+  for (const invalidOrigin of [
+    'https://abc123def4.execute-api.us-east-1.amazonaws.com',
+    'https://api-other.example.test',
+    'http://api-preview.example.test',
+    'https://api-preview.example.test:444',
+    'https://api-preview.example.test/path',
+    'https://api-preview.example.test?query=1',
+  ]) {
+    assert.throws(() =>
+      validatePrereleaseApiOrigin({ origin: invalidOrigin, config: customConfig }),
+    );
+  }
+  const managedPlanConfig = {
+    authorization: { scope: 'NON_MUTATING_PLAN' },
+    aws: { region: 'us-east-1' },
+    domain: { mode: 'AWS_MANAGED' },
+  };
+  assert.equal(
+    validatePrereleaseApiOrigin({
       origin: 'https://abc123def4.execute-api.us-east-1.amazonaws.com',
-      region: 'us-east-1',
+      config: managedPlanConfig,
     }),
     'https://abc123def4.execute-api.us-east-1.amazonaws.com',
   );
-  for (const invalidOrigin of [
-    'http://abc123def4.execute-api.us-east-1.amazonaws.com',
-    'https://abc123def4.execute-api.us-west-2.amazonaws.com',
-    'https://abc123def4.execute-api.us-east-1.amazonaws.com/path',
-    'https://execute-api.us-east-1.amazonaws.com',
-  ]) {
-    assert.throws(() =>
-      validatePrereleaseApiOrigin({ origin: invalidOrigin, region: 'us-east-1' }),
-    );
-  }
+  assert.throws(() =>
+    validatePrereleaseApiOrigin({
+      origin: 'https://abc123def4.execute-api.us-east-1.amazonaws.com',
+      config: {
+        ...managedPlanConfig,
+        authorization: { scope: 'EPHEMERAL_PRERELEASE' },
+      },
+    }),
+  );
 };

@@ -39,6 +39,7 @@ import {
   verifyBaselineNotificationAws,
 } from './baseline-establishment.mjs';
 import { currentCandidate, workspaceRoot } from './core.mjs';
+import { normalizePnpmScriptArguments } from './cli-arguments.mjs';
 import {
   createPreviousReleaseProjectionIndex,
   PREVIOUS_RELEASE_PROJECTION_FILENAMES,
@@ -153,8 +154,9 @@ const provenanceFiles = (directory) =>
   );
 
 const main = async () => {
-  const command = process.argv[2];
-  const arguments_ = process.argv.slice(3);
+  const [command, ...arguments_] = normalizePnpmScriptArguments(process.argv.slice(2), {
+    separatorIndex: 0,
+  });
   if (command === 'self-test') {
     if (arguments_.length !== 0) fail('E7_BASELINE_CLI_ARGUMENT_SET_INVALID');
     const result = await selfTestBaselineEstablishment();

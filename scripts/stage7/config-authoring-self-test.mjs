@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -122,7 +123,7 @@ export const buildStage7ConfigAuthoringSelfTestInput = () => ({
   },
   domains: {
     full: {
-      hostname: 'checkout.acme.dev',
+      hostname: 'app.acme.dev',
       apiHostname: 'api.acme.dev',
       hostedZoneId: 'Z09W7Q3M5K8N2P',
       hostedZoneName: 'acme.dev',
@@ -308,6 +309,23 @@ if (direct) {
   } finally {
     if (selfTestCleanupSafe) rmSync(selfTestRoot, { recursive: true, force: true });
   }
+  const processCanary = spawnSync(
+    process.execPath,
+    [
+      path.join(workspaceRoot, 'scripts', 'stage7', 'config-authoring.mjs'),
+      'author',
+      '--',
+      '--input',
+      path.join(selfTestRoot, 'missing-input.json'),
+      '--output-directory',
+      path.join(selfTestRoot, 'missing-output'),
+    ],
+    { cwd: workspaceRoot, encoding: 'utf8', env: process.env },
+  );
+  canaries += 1;
+  assertions += 2;
+  assert.equal(processCanary.status, 1);
+  assert.equal(processCanary.stderr.trim(), 'E7_CONFIG_AUTHORING_PATH_INVALID');
 
   rejects((value) => {
     value.release.authorization.ownerAlias = 'todo';
@@ -333,6 +351,9 @@ if (direct) {
     value.domains.prerelease.hostname = value.domains.full.hostname;
   }, 'E7_CONFIG_AUTHORING_DOMAIN_SEPARATION_INVALID');
   rejects((value) => {
+    value.domains.prerelease = { ...value.domains.full };
+  }, 'E7_CONFIG_AUTHORING_DOMAIN_SEPARATION_INVALID');
+  rejects((value) => {
     value.domains.prerelease.hostname = 'preview.other.dev';
   }, 'E7_CONFIG_AUTHORING_DOMAIN_ZONE_INVALID');
   rejects((value) => {
@@ -341,6 +362,12 @@ if (direct) {
   }, 'E7_CONFIG_AUTHORING_DOMAIN_ZONE_INVALID');
   rejects((value) => {
     value.domains.prerelease.hostedZoneId = 'Z08R6P4N2M7K9Q';
+  }, 'E7_CONFIG_AUTHORING_HOSTED_ZONE_BINDING_INVALID');
+  rejects((value) => {
+    value.domains.prerelease.hostedZoneId = value.domains.full.hostedZoneId;
+    value.domains.prerelease.hostname = 'preview.foreign.dev';
+    value.domains.prerelease.apiHostname = 'api-preview.foreign.dev';
+    value.domains.prerelease.hostedZoneName = 'foreign.dev';
   }, 'E7_CONFIG_AUTHORING_HOSTED_ZONE_BINDING_INVALID');
   rejects((value) => {
     value.aws.targets.prerelease.region = value.aws.targets.full.region;
