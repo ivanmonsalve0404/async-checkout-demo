@@ -137,7 +137,7 @@ const ACTION_RESOURCE_CLASSES: Readonly<Record<ResourceClass, readonly string[]>
     'dynamodb:listtables',
     'ecr:getauthorizationtoken',
     'lambda:getaccountsettings',
-    'resourcegroupstaggingapi:getresources',
+    'tag:getresources',
     's3:getaccountpublicaccessblock',
     'servicequotas:getservicequota',
     'servicequotas:listservicequotas',

@@ -200,6 +200,18 @@ void describe('Stage 7 regional account bootstrap stacks', () => {
       watchdogSubject,
       'repo:ivanmonsalve0404@192544565/async-checkout-demo@1335131225:ref:refs/heads/master',
     );
+    const watchdogActions = (watchdog.Policies as Array<Record<string, unknown>>).flatMap(
+      (policy) =>
+        (
+          (policy.PolicyDocument as Record<string, unknown>).Statement as Array<
+            Record<string, unknown>
+          >
+        ).flatMap((statement) =>
+          Array.isArray(statement.Action) ? statement.Action : [statement.Action],
+        ),
+    );
+    assert.equal(watchdogActions.includes('tag:getresources'), true);
+    assert.equal(watchdogActions.includes('resourcegroupstaggingapi:getresources'), false);
 
     const baseline = roleByName(full, 'stage7-release-baseline');
     const baselineTrust = baseline.AssumeRolePolicyDocument as Record<string, unknown>;
@@ -335,6 +347,24 @@ void describe('Stage 7 regional account bootstrap stacks', () => {
           unknown
         >;
         bucket.PublicAccessBlockConfiguration = { BlockPublicAcls: false };
+      },
+      (template) => {
+        const role = roleByName(template, 'stage7-release-read');
+        const statements = (
+          (role.Policies as Array<Record<string, unknown>>)[0]?.PolicyDocument as Record<
+            string,
+            unknown
+          >
+        ).Statement as Array<Record<string, unknown>>;
+        const statement = statements.find(
+          ({ Action }) => Array.isArray(Action) && Action.includes('tag:getresources'),
+        );
+        if (statement === undefined || !Array.isArray(statement.Action)) {
+          assert.fail('tag:GetResources statement missing');
+        }
+        statement.Action = statement.Action.map((action) =>
+          action === 'tag:getresources' ? 'resourcegroupstaggingapi:getresources' : action,
+        );
       },
     ];
     for (const mutate of mutations) {
