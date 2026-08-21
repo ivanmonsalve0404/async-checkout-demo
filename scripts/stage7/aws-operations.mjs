@@ -12178,13 +12178,14 @@ const selfTestInitialRollbackResumption = async (config) => {
   );
   delete ledger.checkpoints.webRollbackIntent;
 
-  const apiToken = initialRollbackClientRequestToken({
+  const apiRollbackRequestId = initialRollbackClientRequestToken({
     context,
     suffix: 'api',
     record: records.api,
     observed: live.api,
   });
-  const stackEvent = (status, eventId, timestamp, token = apiToken) => ({
+  assert.match(apiRollbackRequestId, /^e7-initial-api-[0-9a-f]{64}$/u);
+  const stackEvent = (status, eventId, timestamp, token = apiRollbackRequestId) => ({
     EventId: eventId,
     StackId: live.api.state.stackId,
     StackName: live.api.stackName,
@@ -12203,7 +12204,7 @@ const selfTestInitialRollbackResumption = async (config) => {
     suffix: 'api',
     observed: live.api,
     intent: apiIntent,
-    clientRequestToken: apiToken,
+    clientRequestToken: apiRollbackRequestId,
     readPage: ({ nextToken }) => {
       pages.push(nextToken ?? null);
       return nextToken === undefined
@@ -12213,6 +12214,7 @@ const selfTestInitialRollbackResumption = async (config) => {
   });
   assert.deepEqual(pages, [null, 'opaque.page:2']);
   assert.equal(pagedCausality.transition, 'UPDATE_IN_PROGRESS_TO_UPDATE_COMPLETE');
+  assert.equal(pagedCausality.requestTokenSha256, sha256(apiRollbackRequestId));
   assert.throws(
     () =>
       captureInitialRollbackCausality({
@@ -12223,7 +12225,7 @@ const selfTestInitialRollbackResumption = async (config) => {
           state: { ...live.api.state, lastUpdatedTime: '2026-08-17T12:10:00.000Z' },
         },
         intent: apiIntent,
-        clientRequestToken: apiToken,
+        clientRequestToken: apiRollbackRequestId,
         readPage: () => ({ StackEvents: [startedEvent, completedEvent] }),
       }),
     (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_STACK_EVENT_CAUSALITY_INVALID',
@@ -12235,7 +12237,7 @@ const selfTestInitialRollbackResumption = async (config) => {
         suffix: 'api',
         observed: live.api,
         intent: { ...apiIntent, persistedAtUtc: '2026-08-17T12:02:00.000Z' },
-        clientRequestToken: apiToken,
+        clientRequestToken: apiRollbackRequestId,
         readPage: () => ({ StackEvents: [startedEvent, completedEvent] }),
       }),
     (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_STACK_EVENT_CAUSALITY_INVALID',
@@ -12276,7 +12278,7 @@ const selfTestInitialRollbackResumption = async (config) => {
         suffix: 'api',
         observed: live.api,
         intent: apiIntent,
-        clientRequestToken: apiToken,
+        clientRequestToken: apiRollbackRequestId,
         readPage: () => ({ StackEvents: [startedEvent], NextToken: 'loop' }),
       }),
     (error) => error?.code === 'E7_INITIAL_API_ROLLBACK_STACK_EVENTS_PAGINATION_INVALID',
@@ -12288,7 +12290,7 @@ const selfTestInitialRollbackResumption = async (config) => {
         suffix: 'api',
         observed: live.api,
         intent: apiIntent,
-        clientRequestToken: apiToken,
+        clientRequestToken: apiRollbackRequestId,
         readPage: () => ({
           StackEvents: [startedEvent, { ...startedEvent, ResourceStatus: 'UPDATE_COMPLETE' }],
         }),
@@ -12302,7 +12304,7 @@ const selfTestInitialRollbackResumption = async (config) => {
         suffix: 'api',
         observed: live.api,
         intent: apiIntent,
-        clientRequestToken: apiToken,
+        clientRequestToken: apiRollbackRequestId,
         readPage: () => ({
           StackEvents: [
             stackEvent('UPDATE_IN_PROGRESS', 'foreign-start', '2026-08-17T11:59:00Z', 'foreign'),
@@ -12323,7 +12325,7 @@ const selfTestInitialRollbackResumption = async (config) => {
           suffix: 'api',
           observed: live.api,
           intent: apiIntent,
-          clientRequestToken: apiToken,
+          clientRequestToken: apiRollbackRequestId,
           readPage: () => ({
             StackEvents: [
               startedEvent,
