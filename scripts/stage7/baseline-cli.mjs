@@ -494,6 +494,7 @@ const main = async () => {
       'source-evidence',
       'target-config',
       'target-freeze',
+      'target-web',
       'output-directory',
     ]);
     const bundle = validatePreviousReleaseBundle({
@@ -503,7 +504,6 @@ const main = async () => {
     });
     const output = safePath(flags['output-directory'], { mustExist: false });
     if (existsSync(output)) fail('E7_BASELINE_CLI_OUTPUT_EXISTS');
-    mkdirSync(output, { recursive: false, mode: 0o700 });
     const captureFilename = path.join(flags['bundle-directory'], BASELINE_FILE_LAYOUT.capture);
     const bound = bindBaselineForTarget({
       capture: bundle.capture,
@@ -514,12 +514,18 @@ const main = async () => {
       sourceProvenance: json(flags['source-evidence']),
       targetConfig: json(flags['target-config']),
       targetFreeze: json(flags['target-freeze']),
-      targetCompatibilityOutput: path.join(output, 'previous-target-compatibility.json'),
+      targetWebDirectory: safePath(flags['target-web'], { directory: true }),
     });
+    mkdirSync(output, { recursive: false, mode: 0o700 });
     writeJson(
       path.join(output, 'previous-release-manifest.json'),
       bound.previousRelease,
       'stage7-previous-release.json',
+    );
+    writeJson(
+      path.join(output, 'previous-target-compatibility.json'),
+      bound.targetCompatibility,
+      'stage7-baseline-target-compatibility.json',
     );
     writeJson(
       path.join(output, 'previous-final-disable-provenance.json'),

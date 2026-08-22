@@ -92,6 +92,7 @@ import {
 } from './prerelease-safety-readiness.mjs';
 import { PrereleaseSafetyContractError } from './prerelease-safety-contract.mjs';
 import { validatePrereleaseApiOrigin } from './cloudfront-access.mjs';
+import { inspectReleaseStackResourceAllowlist } from './cloud-assembly-resource-contract.mjs';
 import {
   PREVIOUS_RELEASE_PROJECTION_FILENAMES,
   validatePreviousReleaseProjection,
@@ -1942,85 +1943,14 @@ const validatePublicationControlUsage = (template, { expectedLiteralPaths }, cod
 };
 
 const validateReleaseStackResourceAllowlist = (context, artifactId, template) => {
-  const suffix = STACK_SUFFIXES.find((value) => artifactId.endsWith(`-${value}`));
-  if (suffix === undefined) fail('E7_CLOUD_ASSEMBLY_RESOURCE_ALLOWLIST_INVALID');
-  const commonMetadata = { 'AWS::CDK::Metadata': 1 };
-  const expectedBySuffix = {
-    data: {
-      ...commonMetadata,
-      'AWS::DynamoDB::Table': 2,
-    },
-    api: {
-      ...commonMetadata,
-      'AWS::ApiGatewayV2::Api': 1,
-      ...(context.config.domain.mode === 'CUSTOM_AUTHORIZED'
-        ? {
-            'AWS::ApiGatewayV2::ApiMapping': 1,
-            'AWS::ApiGatewayV2::DomainName': 1,
-            'AWS::Route53::RecordSet': 2,
-          }
-        : {}),
-      'AWS::ApiGatewayV2::Integration': 1,
-      'AWS::ApiGatewayV2::Route': 1,
-      'AWS::ApiGatewayV2::Stage': 1,
-      'AWS::IAM::Policy': 3,
-      'AWS::IAM::Role': 3,
-      'AWS::Lambda::Alias': 2,
-      'AWS::Lambda::Function': 2,
-      'AWS::Lambda::Permission': 1,
-      'AWS::Lambda::Version': 2,
-      'AWS::Logs::LogGroup': 3,
-      'AWS::Scheduler::Schedule': 1,
-    },
-    observability: {
-      ...commonMetadata,
-      'AWS::Budgets::Budget': 1,
-      'AWS::CloudWatch::Alarm': 15,
-      'AWS::CloudWatch::Dashboard': 1,
-      'AWS::Logs::MetricFilter': 11,
-      'AWS::SNS::Subscription': 1,
-      'AWS::SNS::Topic': 1,
-      'AWS::SNS::TopicPolicy': 1,
-    },
-    web: {
-      ...commonMetadata,
-      'AWS::CloudFront::Distribution': 1,
-      'AWS::CloudFront::Function': 1,
-      'AWS::CloudFront::OriginAccessControl': 1,
-      'AWS::CloudFront::ResponseHeadersPolicy': 3,
-      'AWS::CloudWatch::Alarm': 1,
-      'AWS::CloudWatch::Dashboard': 1,
-      'AWS::IAM::Policy': 1,
-      'AWS::IAM::Role': context.scope === 'prerelease' ? 2 : 1,
-      'AWS::Lambda::Function': context.scope === 'prerelease' ? 2 : 1,
-      'AWS::Lambda::LayerVersion': 2,
-      'AWS::Logs::LogGroup': 1,
-      ...(context.config.domain.mode === 'CUSTOM_AUTHORIZED'
-        ? { 'AWS::Route53::RecordSet': 2 }
-        : {}),
-      'AWS::S3::Bucket': 1,
-      'AWS::S3::BucketPolicy': 1,
-      'AWS::SSM::Parameter': 1,
-      'Custom::CDKBucketDeployment': 2,
-      ...(context.scope === 'prerelease' ? { 'Custom::S3AutoDeleteObjects': 1 } : {}),
-    },
-  };
-  const actual = Object.fromEntries(
-    Object.entries(
-      Object.groupBy(Object.values(template?.Resources ?? {}), (resource) => resource.Type),
-    ).map(([type, resources]) => [type, resources.length]),
-  );
-  if (JSON.stringify(actual) !== JSON.stringify(expectedBySuffix[suffix])) {
-    const sortedActual = Object.fromEntries(
-      Object.entries(actual).toSorted(([a], [b]) => a.localeCompare(b)),
-    );
-    const sortedExpected = Object.fromEntries(
-      Object.entries(expectedBySuffix[suffix]).toSorted(([a], [b]) => a.localeCompare(b)),
-    );
-    if (JSON.stringify(sortedActual) !== JSON.stringify(sortedExpected)) {
-      fail('E7_CLOUD_ASSEMBLY_RESOURCE_ALLOWLIST_INVALID');
-    }
-  }
+  const contract = inspectReleaseStackResourceAllowlist({
+    artifactId,
+    domainMode: context.config.domain.mode,
+    scope: context.scope,
+    template,
+  });
+  if (!contract.valid) fail('E7_CLOUD_ASSEMBLY_RESOURCE_ALLOWLIST_INVALID');
+  const { suffix } = contract;
   if (['data', 'observability'].includes(suffix)) {
     validatePublicationControlUsage(
       template,
@@ -3811,20 +3741,87 @@ const transitionInitialWebRollback = async ({
   return { apiRollback, publication };
 };
 
-const captureStackState = (context) =>
-  Object.fromEntries(
+const captureStackState = (
+  context,
+  { releaseMode, previousManifest = null, readStack = describeStack } = {},
+) => {
+  const expectedIdentity =
+    releaseMode === 'VERSIONED_UPDATE' && previousManifest !== null
+      ? previousManifest.previous
+      : releaseMode === 'INITIAL' && previousManifest === null
+        ? context.identity
+        : null;
+  if (expectedIdentity === null) fail('E7_PRE_DEPLOYMENT_IDENTITY_MODE_INVALID');
+  return Object.fromEntries(
     context.stacks.map((stackName) => {
-      const state = describeStack(context, stackName, { allowMissing: true });
+      const state = readStack(context, stackName, { allowMissing: true });
       if (
         state.exists &&
-        (state.outputs.CandidateSha !== context.identity.candidateSha ||
-          state.outputs.ReleaseId !== context.identity.releaseId)
+        (state.outputs.CandidateSha !== expectedIdentity.candidateSha ||
+          state.outputs.ReleaseId !== expectedIdentity.releaseId)
       ) {
         fail('E7_UPDATE_RELEASE_NOT_SUPPORTED');
       }
       return [stackName, stackStateFingerprint(stackName, state)];
     }),
   );
+};
+
+const selfTestPreDeploymentIdentityCapture = () => {
+  const previous = {
+    candidateSha: 'a'.repeat(40),
+    releaseId: 'rel-20260816-1200-aaaaaaa',
+  };
+  const target = {
+    candidateSha: 'b'.repeat(40),
+    releaseId: 'rel-20260817-1200-bbbbbbb',
+  };
+  const context = {
+    identity: target,
+    stacks: ['data', 'api', 'observability', 'web'].map(
+      (suffix) => `checkout-assessment-release-${suffix}`,
+    ),
+  };
+  const stateFor = (stackName, identity) => ({
+    exists: true,
+    stackStatus: 'UPDATE_COMPLETE',
+    stackId: `arn:aws:cloudformation:us-east-1:123456789012:stack/${stackName}/canary`,
+    creationTime: '2026-08-16T12:00:00.000Z',
+    lastUpdatedTime: '2026-08-16T12:01:00.000Z',
+    terminationProtection: true,
+    parameters: {},
+    outputs: { CandidateSha: identity.candidateSha, ReleaseId: identity.releaseId },
+    tags: {},
+  });
+  const capture = (identities, releaseMode, previousManifest) =>
+    captureStackState(context, {
+      releaseMode,
+      previousManifest,
+      readStack: (_activeContext, stackName) => stateFor(stackName, identities.get(stackName)),
+    });
+  const all = (identity) => new Map(context.stacks.map((stackName) => [stackName, identity]));
+  const previousManifest = { previous };
+  assert.equal(
+    Object.keys(capture(all(previous), 'VERSIONED_UPDATE', previousManifest)).length,
+    context.stacks.length,
+  );
+  for (const identities of [
+    all(target),
+    new Map(context.stacks.map((stackName, index) => [stackName, index === 0 ? target : previous])),
+    all({ candidateSha: 'c'.repeat(40), releaseId: 'rel-20260815-1200-ccccccc' }),
+  ]) {
+    assert.throws(
+      () => capture(identities, 'VERSIONED_UPDATE', previousManifest),
+      (error) =>
+        error instanceof Stage7AwsError && error.code === 'E7_UPDATE_RELEASE_NOT_SUPPORTED',
+    );
+  }
+  assert.equal(Object.keys(capture(all(target), 'INITIAL', null)).length, context.stacks.length);
+  assert.throws(
+    () => capture(all(previous), 'INITIAL', null),
+    (error) => error instanceof Stage7AwsError && error.code === 'E7_UPDATE_RELEASE_NOT_SUPPORTED',
+  );
+};
 
 const parseAliasArn = (context, value, code) => {
   const match =
@@ -4579,6 +4576,27 @@ const synthContextValues = (context) => {
   };
 };
 
+const CDK_APP_PATH = /^[\p{L}\p{N}:\\/._@+\- ]+$/u;
+
+const cdkAppCommand = (values, platform = process.platform) => {
+  if (
+    !Array.isArray(values) ||
+    values.length === 0 ||
+    values.some(
+      (value) =>
+        typeof value !== 'string' ||
+        value === '' ||
+        !CDK_APP_PATH.test(value) ||
+        value.includes('\r') ||
+        value.includes('\n'),
+    )
+  ) {
+    fail('E7_CDK_APP_COMMAND_INVALID');
+  }
+  const command = values.map((value) => (value.includes(' ') ? `"${value}"` : value)).join(' ');
+  return platform === 'win32' && values[0].includes(' ') ? `call ${command}` : command;
+};
+
 const synthContexts = (context, output) => {
   const contexts = synthContextValues(context);
   for (const artifact of ['api', 'worker', 'web']) {
@@ -4591,9 +4609,11 @@ const synthContexts = (context, output) => {
     'synth',
     ...context.stacks,
     '--app',
-    [process.execPath, workspaceToolEntrypoint('tsx'), path.join(workspaceRoot, 'infra/bin/app.ts')]
-      .map((value) => `"${value.replaceAll('"', '\\"')}"`)
-      .join(' '),
+    cdkAppCommand([
+      process.execPath,
+      workspaceToolEntrypoint('tsx'),
+      path.join(workspaceRoot, 'infra/bin/app.ts'),
+    ]),
     '--output',
     output,
     '--asset-metadata',
@@ -4623,6 +4643,7 @@ export const synthRelease = async ({
   executor = defaultExecutor,
   environmentVariables = process.env,
   now = new Date(),
+  writeEvidence = updateEvidence,
 }) => {
   const context = loadOperationContext({
     capability: 'read',
@@ -4652,7 +4673,7 @@ export const synthRelease = async ({
       hostedZone: null,
       awsIdentity: null,
     };
-    await updateEvidence(context, 'synth', 'synth', evidence);
+    await writeEvidence(context, 'synth', 'synth', evidence);
     return evidence;
   }
   const { hostedZone, certificates, awsIdentity } = offlineSynthCloudAuthority();
@@ -4677,7 +4698,7 @@ export const synthRelease = async ({
     lookupsAllowed: false,
     hotswapUsed: false,
   };
-  await updateEvidence(context, 'synth', 'synth', evidence);
+  await writeEvidence(context, 'synth', 'synth', evidence);
   return evidence;
 };
 
@@ -4760,13 +4781,13 @@ export const diffRelease = async ({
   const identity = revalidateAwsIdentity(context);
   if (previousManifest !== null) {
     verifyPreviousVersionedResourcesAws(context, previousManifest);
-    verifyPreviousActiveBaselineAws(context, previousManifest);
+    verifyPreviousPublicationBaselineAws(context, previousManifest);
   }
   const runtimeSecret = validateRuntimeSecretReferenceAws(context);
   const prereleaseAccess = validatePrereleaseAccessAws(context);
   const hostedZone = validateHostedZoneAws(context);
   const certificates = validateCertificatesAws(context);
-  const preDeploymentState = captureStackState(context);
+  const preDeploymentState = captureStackState(context, { releaseMode, previousManifest });
   const perStack = context.stacks.map((stackName) => stackDiff(context, assembly, stackName));
   const output = perStack
     .map(({ output: stackOutput, stackName }) => `===== ${stackName} =====\n${stackOutput}`)
@@ -5004,6 +5025,7 @@ export const validatePreviousReleaseArtifact = async ({ flags }) => {
     config,
     freezeManifest,
   });
+  previousPublicationExpectation(previousManifest);
   try {
     validateStage7PreviousReleaseHandoff(previousManifest, {
       sourceProvenance: readLocalRollbackJson(
@@ -5295,10 +5317,131 @@ const verifyPreviousVersionedResourcesAws = (context, previousManifest) => {
   return { api, worker, web: { ...previous.web, objects } };
 };
 
-const verifyPreviousActiveBaselineAws = (context, previousManifest) => {
+const previousPublicationExpectation = (previousManifest) => {
+  const sourceKind = previousManifest?.handoff?.sourceKind;
+  if (sourceKind === 'BASELINE_BOOTSTRAP') {
+    return Object.freeze({
+      distributionEnabled: false,
+      publicationState: 'DISABLED',
+      schedulerState: 'DISABLED',
+      sourceKind,
+    });
+  }
+  if (sourceKind === 'RELEASE_SUCCESSOR') {
+    return Object.freeze({
+      distributionEnabled: true,
+      publicationState: 'ENABLED',
+      schedulerState: 'ENABLED',
+      sourceKind,
+    });
+  }
+  fail('E7_PREVIOUS_RELEASE_SOURCE_KIND_UNSUPPORTED');
+};
+
+const verifyApiPublicationPostureAws = (
+  context,
+  {
+    expectedFingerprint,
+    expectedIdentity,
+    expectedPublication,
+    expectedResources,
+    expectedVersions = expectedResources,
+    state,
+  },
+  {
+    readAlias = getAlias,
+    readHttpApi = getHttpApi,
+    readMappings = getApiMappings,
+    readSchedule = getSchedule,
+  } = {},
+) => {
+  const versions = apiVersionsFromOutputs(
+    context,
+    state.outputs,
+    'E7_VERSIONED_UPDATE_API_POSTURE_MISMATCH',
+  );
+  const activeApi = assertAliasWithoutWeightedRouting(readAlias(context, versions.api));
+  const activeWorker = assertAliasWithoutWeightedRouting(readAlias(context, versions.worker));
+  const schedule = readSchedule(context);
+  const httpApi = readHttpApi(context, state.outputs.HttpApiId);
+  const mappings = readMappings(context, context.config.domain.apiHostname);
+  const expectedMappingCount = expectedPublication.publicationState === 'ENABLED' ? 1 : 0;
+  if (
+    state.outputs.CandidateSha !== expectedIdentity.candidateSha ||
+    state.outputs.ReleaseId !== expectedIdentity.releaseId ||
+    state.parameters.PublicationState !== expectedPublication.publicationState ||
+    state.outputs.ApiPublicationStatus !== expectedPublication.publicationState ||
+    state.outputs.ApiCustomDomainName !== context.config.domain.apiHostname ||
+    versions.api.functionName !== expectedResources.api.functionName ||
+    versions.api.aliasName !== expectedResources.api.aliasName ||
+    versions.worker.functionName !== expectedResources.worker.functionName ||
+    versions.worker.aliasName !== expectedResources.worker.aliasName ||
+    (expectedVersions !== null &&
+      (versions.api.version !== expectedVersions.api.version ||
+        versions.worker.version !== expectedVersions.worker.version)) ||
+    activeApi.FunctionVersion !== versions.api.version ||
+    activeWorker.FunctionVersion !== versions.worker.version ||
+    schedule.State !== expectedPublication.schedulerState ||
+    httpApi.ApiId !== state.outputs.HttpApiId ||
+    httpApi.DisableExecuteApiEndpoint !== true ||
+    !Array.isArray(mappings) ||
+    mappings.length !== expectedMappingCount ||
+    (expectedMappingCount === 1 &&
+      (mappings[0]?.ApiId !== state.outputs.HttpApiId ||
+        mappings[0]?.Stage !== '$default' ||
+        (mappings[0]?.ApiMappingKey ?? '') !== '' ||
+        !API_MAPPING_ID.test(mappings[0]?.ApiMappingId ?? ''))) ||
+    (expectedFingerprint !== undefined &&
+      stackStateFingerprint(stackFor(context, 'api'), state) !== expectedFingerprint)
+  ) {
+    fail('E7_VERSIONED_UPDATE_API_POSTURE_MISMATCH');
+  }
+  validateScheduleTarget(context, state.outputs, schedule);
+  return versions;
+};
+
+const verifyWebPublicationPostureAws = (
+  context,
+  { expectedFingerprint, expectedIdentity, expectedPublication, expectedResources, state },
+  { readDistribution = getDistributionConfig, readMutableObjects = latestMutableWebObjects } = {},
+) => {
+  const currentObjects = readMutableObjects(context, expectedResources.web.bucketName);
+  const distribution = readDistribution(context, expectedResources.web.distributionId);
+  if (
+    state.outputs.CandidateSha !== expectedIdentity.candidateSha ||
+    state.outputs.ReleaseId !== expectedIdentity.releaseId ||
+    state.parameters.PublicationState !== expectedPublication.publicationState ||
+    state.outputs.WebPublicationStatus !== expectedPublication.publicationState ||
+    state.outputs.WebBucketName !== expectedResources.web.bucketName ||
+    state.outputs.DistributionId !== expectedResources.web.distributionId ||
+    JSON.stringify(currentObjects) !== JSON.stringify(expectedResources.web.objects) ||
+    distribution.DistributionConfig.Enabled !== expectedPublication.distributionEnabled ||
+    (expectedFingerprint !== undefined &&
+      stackStateFingerprint(stackFor(context, 'web'), state) !== expectedFingerprint)
+  ) {
+    fail('E7_VERSIONED_UPDATE_WEB_POSTURE_MISMATCH');
+  }
+  return currentObjects;
+};
+
+const verifyPreviousPublicationBaselineAws = (
+  context,
+  previousManifest,
+  {
+    readAlias = getAlias,
+    readDistribution = getDistributionConfig,
+    readHttpApi = getHttpApi,
+    readMappings = getApiMappings,
+    readMutableObjects = latestMutableWebObjects,
+    readSchedule = getSchedule,
+    readStack = (activeContext, suffix) =>
+      describeStack(activeContext, stackFor(activeContext, suffix)),
+  } = {},
+) => {
   const previous = previousManifest.resources;
+  const expectation = previousPublicationExpectation(previousManifest);
   const states = Object.fromEntries(
-    STACK_SUFFIXES.map((suffix) => [suffix, describeStack(context, stackFor(context, suffix))]),
+    STACK_SUFFIXES.map((suffix) => [suffix, readStack(context, suffix)]),
   );
   if (
     Object.values(states).some(
@@ -5308,35 +5451,280 @@ const verifyPreviousActiveBaselineAws = (context, previousManifest) => {
         state.outputs.CandidateSha !== previousManifest.previous.candidateSha ||
         state.outputs.ReleaseId !== previousManifest.previous.releaseId,
     ) ||
-    states.api.parameters.PublicationState !== 'ENABLED' ||
-    states.web.parameters.PublicationState !== 'ENABLED'
+    states.api.parameters.PublicationState !== expectation.publicationState ||
+    states.api.outputs.ApiPublicationStatus !== expectation.publicationState ||
+    states.web.parameters.PublicationState !== expectation.publicationState ||
+    states.web.outputs.WebPublicationStatus !== expectation.publicationState
   ) {
     fail('E7_VERSIONED_UPDATE_BASELINE_STACK_INVALID');
   }
-  const versions = apiVersionsFromOutputs(
-    context,
-    states.api.outputs,
-    'E7_VERSIONED_UPDATE_BASELINE_AWS_MISMATCH',
-  );
-  const activeApi = getAlias(context, previous.api);
-  const activeWorker = getAlias(context, previous.worker);
-  const currentObjects = latestMutableWebObjects(context, previous.web.bucketName);
-  if (
-    versions.api.functionName !== previous.api.functionName ||
-    versions.api.aliasName !== previous.api.aliasName ||
-    versions.api.version !== previous.api.version ||
-    versions.worker.functionName !== previous.worker.functionName ||
-    versions.worker.aliasName !== previous.worker.aliasName ||
-    versions.worker.version !== previous.worker.version ||
-    activeApi.FunctionVersion !== previous.api.version ||
-    activeWorker.FunctionVersion !== previous.worker.version ||
-    states.web.outputs.WebBucketName !== previous.web.bucketName ||
-    states.web.outputs.DistributionId !== previous.web.distributionId ||
-    JSON.stringify(currentObjects) !== JSON.stringify(previous.web.objects)
-  ) {
+  try {
+    verifyApiPublicationPostureAws(
+      context,
+      {
+        expectedIdentity: previousManifest.previous,
+        expectedPublication: expectation,
+        expectedResources: previous,
+        state: states.api,
+      },
+      { readAlias, readHttpApi, readMappings, readSchedule },
+    );
+    verifyWebPublicationPostureAws(
+      context,
+      {
+        expectedIdentity: previousManifest.previous,
+        expectedPublication: expectation,
+        expectedResources: previous,
+        state: states.web,
+      },
+      { readDistribution, readMutableObjects },
+    );
+  } catch (error) {
+    if (error?.code === 'E7_ROLLBACK_ALIAS_ROUTING_INVALID') throw error;
     fail('E7_VERSIONED_UPDATE_BASELINE_AWS_MISMATCH');
   }
   return states;
+};
+
+const selfTestPreviousPublicationExpectations = () => {
+  const accountId = '123456789012';
+  const region = 'us-east-1';
+  const environment = 'assessment-release';
+  const previousIdentity = {
+    candidateSha: 'a'.repeat(40),
+    releaseId: 'rel-20260816-1200-aaaaaaa',
+  };
+  const api = {
+    functionName: 'checkout-assessment-release-api',
+    aliasName: 'live',
+    version: '7',
+    codeSha256: '1'.repeat(64),
+  };
+  const worker = {
+    functionName: 'checkout-assessment-release-worker',
+    aliasName: 'live',
+    version: '8',
+    codeSha256: '2'.repeat(64),
+  };
+  const web = {
+    bucketName: 'checkout-assessment-release-web-123456789012',
+    distributionId: 'EDFDVBD6EXAMPLE',
+    objects: [
+      {
+        key: 'index.html',
+        versionId: 'index-version',
+        etagSha256: '3'.repeat(64),
+        contentSha256: '4'.repeat(64),
+        bytes: 100,
+      },
+      {
+        key: 'public-config.json',
+        versionId: 'config-version',
+        etagSha256: '5'.repeat(64),
+        contentSha256: '6'.repeat(64),
+        bytes: 101,
+      },
+    ],
+    mutableInvalidationPaths: [...VERSIONED_ROLLBACK_INVALIDATION_PATHS],
+  };
+  const manifestFor = (sourceKind) => ({
+    previous: previousIdentity,
+    resources: { api, worker, web },
+    handoff: { sourceKind },
+  });
+  const context = {
+    config: {
+      aws: { accountId, region },
+      domain: { apiHostname: 'api.example.test' },
+      environment,
+    },
+    stacks: expectedStacks(environment),
+  };
+  const fixtureFor = (
+    sourceKind,
+    { distributionEnabled, mappings: mappingOverride, schedulerState, weightedAlias = false } = {},
+  ) => {
+    const expectation = previousPublicationExpectation(manifestFor(sourceKind));
+    const publicationState = expectation.publicationState;
+    const apiOutputs = {
+      CandidateSha: previousIdentity.candidateSha,
+      ReleaseId: previousIdentity.releaseId,
+      ApiAliasArn: `arn:aws:lambda:${region}:${accountId}:function:${api.functionName}:${api.aliasName}`,
+      ApiFunctionVersion: api.version,
+      WorkerAliasArn: `arn:aws:lambda:${region}:${accountId}:function:${worker.functionName}:${worker.aliasName}`,
+      WorkerFunctionVersion: worker.version,
+      ApiPublicationStatus: publicationState,
+      ApiCustomDomainName: context.config.domain.apiHostname,
+      HttpApiId: 'a1b2c3d4e5',
+    };
+    const state = (outputs, parameters = {}) => ({
+      stackStatus: 'UPDATE_COMPLETE',
+      terminationProtection: true,
+      outputs: {
+        CandidateSha: previousIdentity.candidateSha,
+        ReleaseId: previousIdentity.releaseId,
+        ...outputs,
+      },
+      parameters,
+    });
+    const states = {
+      data: state({}),
+      api: state(apiOutputs, { PublicationState: publicationState }),
+      observability: state({}),
+      web: state(
+        {
+          WebBucketName: web.bucketName,
+          DistributionId: web.distributionId,
+          WebPublicationStatus: publicationState,
+        },
+        { PublicationState: publicationState },
+      ),
+    };
+    const schedule = {
+      Name: `checkout-${environment}-reconcile`,
+      State: schedulerState ?? expectation.schedulerState,
+      ScheduleExpression: 'rate(1 minute)',
+      FlexibleTimeWindow: { Mode: 'OFF' },
+      Target: {
+        Arn: apiOutputs.WorkerAliasArn,
+        RoleArn: `arn:aws:iam::${accountId}:role/checkout-assessment-release-scheduler`,
+        Input: JSON.stringify({ action: 'reconcile', mode: 'sandbox' }),
+        RetryPolicy: { MaximumEventAgeInSeconds: 300, MaximumRetryAttempts: 2 },
+      },
+    };
+    const mappings =
+      mappingOverride ??
+      (publicationState === 'ENABLED'
+        ? [
+            {
+              ApiId: apiOutputs.HttpApiId,
+              ApiMappingId: 'a1b2c3d4',
+              ApiMappingKey: '',
+              Stage: '$default',
+            },
+          ]
+        : []);
+    return {
+      manifest: manifestFor(sourceKind),
+      states,
+      readers: {
+        readAlias: (_activeContext, target) => ({
+          FunctionVersion: target.version,
+          RevisionId: `revision-${target.functionName}`,
+          ...(weightedAlias ? { RoutingConfig: { AdditionalVersionWeights: { 99: 0.1 } } } : {}),
+        }),
+        readDistribution: () => ({
+          ETag: 'etag',
+          DistributionConfig: {
+            Enabled: distributionEnabled ?? expectation.distributionEnabled,
+          },
+        }),
+        readHttpApi: () => ({ ApiId: apiOutputs.HttpApiId, DisableExecuteApiEndpoint: true }),
+        readMappings: () => mappings,
+        readMutableObjects: () => web.objects,
+        readSchedule: () => schedule,
+        readStack: (_activeContext, suffix) => states[suffix],
+      },
+    };
+  };
+  for (const sourceKind of ['BASELINE_BOOTSTRAP', 'RELEASE_SUCCESSOR']) {
+    const fixture = fixtureFor(sourceKind);
+    assert.equal(
+      Object.keys(verifyPreviousPublicationBaselineAws(context, fixture.manifest, fixture.readers))
+        .length,
+      STACK_SUFFIXES.length,
+    );
+    const expectation = previousPublicationExpectation(fixture.manifest);
+    assert.deepEqual(
+      verifyApiPublicationPostureAws(
+        context,
+        {
+          expectedFingerprint: stackStateFingerprint(stackFor(context, 'api'), fixture.states.api),
+          expectedIdentity: previousIdentity,
+          expectedPublication: expectation,
+          expectedResources: fixture.manifest.resources,
+          state: fixture.states.api,
+        },
+        fixture.readers,
+      ),
+      {
+        api: {
+          aliasName: api.aliasName,
+          functionName: api.functionName,
+          version: api.version,
+        },
+        worker: {
+          aliasName: worker.aliasName,
+          functionName: worker.functionName,
+          version: worker.version,
+        },
+      },
+    );
+    assert.deepEqual(
+      verifyWebPublicationPostureAws(
+        context,
+        {
+          expectedFingerprint: stackStateFingerprint(stackFor(context, 'web'), fixture.states.web),
+          expectedIdentity: previousIdentity,
+          expectedPublication: expectation,
+          expectedResources: fixture.manifest.resources,
+          state: fixture.states.web,
+        },
+        fixture.readers,
+      ),
+      web.objects,
+    );
+    assert.throws(
+      () =>
+        verifyApiPublicationPostureAws(
+          context,
+          {
+            expectedFingerprint: '0'.repeat(64),
+            expectedIdentity: previousIdentity,
+            expectedPublication: expectation,
+            expectedResources: fixture.manifest.resources,
+            state: fixture.states.api,
+          },
+          fixture.readers,
+        ),
+      (error) =>
+        error instanceof Stage7AwsError &&
+        error.code === 'E7_VERSIONED_UPDATE_API_POSTURE_MISMATCH',
+    );
+  }
+  for (const fixture of [
+    fixtureFor('BASELINE_BOOTSTRAP', { schedulerState: 'ENABLED' }),
+    fixtureFor('RELEASE_SUCCESSOR', { distributionEnabled: false }),
+    fixtureFor('BASELINE_BOOTSTRAP', {
+      mappings: [
+        { ApiId: 'foreign1234', ApiMappingId: 'a1b2c3d4', ApiMappingKey: '', Stage: '$default' },
+      ],
+    }),
+    fixtureFor('RELEASE_SUCCESSOR', {
+      mappings: [
+        { ApiId: 'foreign1234', ApiMappingId: 'a1b2c3d4', ApiMappingKey: '', Stage: '$default' },
+      ],
+    }),
+  ]) {
+    assert.throws(
+      () => verifyPreviousPublicationBaselineAws(context, fixture.manifest, fixture.readers),
+      (error) =>
+        error instanceof Stage7AwsError &&
+        error.code === 'E7_VERSIONED_UPDATE_BASELINE_AWS_MISMATCH',
+    );
+  }
+  const weighted = fixtureFor('RELEASE_SUCCESSOR', { weightedAlias: true });
+  assert.throws(
+    () => verifyPreviousPublicationBaselineAws(context, weighted.manifest, weighted.readers),
+    (error) =>
+      error instanceof Stage7AwsError && error.code === 'E7_ROLLBACK_ALIAS_ROUTING_INVALID',
+  );
+  assert.throws(
+    () => previousPublicationExpectation(manifestFor('UNKNOWN')),
+    (error) =>
+      error instanceof Stage7AwsError &&
+      error.code === 'E7_PREVIOUS_RELEASE_SOURCE_KIND_UNSUPPORTED',
+  );
 };
 
 const candidateVersionedResourcesAws = (context, previousManifest, { webRecordPath } = {}) => {
@@ -5434,6 +5822,27 @@ const validatePreviousCompatibilityArtifacts = (flags, previousManifest) => {
       allowDirectory: false,
     }),
   );
+  if (previousManifest.handoff.sourceKind === 'RELEASE_SUCCESSOR') {
+    let projection;
+    try {
+      projection = validatePreviousReleaseProjection(manifestDirectory);
+    } catch (error) {
+      if (
+        typeof error?.code === 'string' &&
+        error.code.startsWith('E7_PREVIOUS_RELEASE_PROJECTION_')
+      ) {
+        fail('E7_PREVIOUS_RELEASE_SUCCESSOR_PROJECTION_INVALID');
+      }
+      throw error;
+    }
+    if (objectSha256(projection.previousRelease) !== objectSha256(previousManifest)) {
+      fail('E7_PREVIOUS_RELEASE_SUCCESSOR_PROJECTION_IDENTITY_MISMATCH');
+    }
+    return;
+  }
+  if (previousManifest.handoff.sourceKind !== 'BASELINE_BOOTSTRAP') {
+    fail('E7_PREVIOUS_RELEASE_SOURCE_KIND_INVALID');
+  }
   const sourceProvenance = readLocalRollbackJson(
     path.join(manifestDirectory, 'previous-source-provenance.json'),
     'E7_PREVIOUS_RELEASE_SOURCE_PROVENANCE_MISSING',
@@ -5446,9 +5855,6 @@ const validatePreviousCompatibilityArtifacts = (flags, previousManifest) => {
     path.join(manifestDirectory, 'previous-final-disable-provenance.json'),
     'E7_PREVIOUS_RELEASE_FINAL_DISABLE_PROVENANCE_MISSING',
   );
-  if (previousManifest.handoff.sourceKind !== 'BASELINE_BOOTSTRAP') {
-    fail('E7_PREVIOUS_RELEASE_SUCCESSOR_PROVENANCE_UNSUPPORTED');
-  }
   validateBaselineSourceProvenance(sourceProvenance);
   validateBaselineFinalDisableProvenance(finalDisableProvenance);
   validateTargetCompatibilityEvidence(targetCompatibility, { previousManifest });
@@ -8107,14 +8513,17 @@ export const deployApi = async ({
     });
   assertDeployOrder(context, 'api');
   const stackName = stackFor(context, 'api');
-  const before = describeStack(context, stackName, { allowMissing: true });
+  let before = describeStack(context, stackName, { allowMissing: true });
   deployReleaseMode(flags);
+  const previousPublication =
+    releaseMode === 'VERSIONED_UPDATE' ? previousPublicationExpectation(previousManifest) : null;
   if (releaseMode === 'VERSIONED_UPDATE') {
     if (
       !before.exists ||
       before.outputs.CandidateSha !== previousManifest.previous.candidateSha ||
       before.outputs.ReleaseId !== previousManifest.previous.releaseId ||
-      before.parameters.PublicationState !== 'ENABLED'
+      before.parameters.PublicationState !== previousPublication.publicationState ||
+      before.outputs.ApiPublicationStatus !== previousPublication.publicationState
     ) {
       fail('E7_VERSIONED_UPDATE_BASELINE_STACK_INVALID');
     }
@@ -8129,11 +8538,30 @@ export const deployApi = async ({
   if (before.exists) {
     validateScheduleTarget(context, before.outputs);
     previousSchedulerState = getSchedule(context).State;
-    if (previousSchedulerState !== (releaseMode === 'VERSIONED_UPDATE' ? 'ENABLED' : 'DISABLED')) {
+    if (
+      previousSchedulerState !==
+      (releaseMode === 'VERSIONED_UPDATE' ? previousPublication.schedulerState : 'DISABLED')
+    ) {
       fail('E7_SCHEDULER_PREMATURE_ACTIVATION_DETECTED');
     }
   }
   const runtimeSecretReferenceSha256 = validateRuntimeSecretReferenceAws(context).bindingSha256;
+  if (releaseMode === 'VERSIONED_UPDATE') {
+    before = describeStack(context, stackName);
+    verifyApiPublicationPostureAws(context, {
+      expectedFingerprint: approvedPlan.preDeploymentStateSha256,
+      expectedIdentity: previousManifest.previous,
+      expectedPublication: previousPublication,
+      expectedResources: previousManifest.resources,
+      state: before,
+    });
+    verifyWebPublicationPostureAws(context, {
+      expectedIdentity: previousManifest.previous,
+      expectedPublication: previousPublication,
+      expectedResources: previousManifest.resources,
+      state: describeStack(context, stackFor(context, 'web')),
+    });
+  }
   const deployed = deployStack(context, assembly, 'api', {
     preDeploymentStateSha256: approvedPlan.preDeploymentStateSha256,
   });
@@ -8573,14 +9001,21 @@ export const deployWeb = async ({
     'E7_DEPLOYED_API_OUTPUT_INVALID',
   );
   const stackName = stackFor(context, 'web');
-  const before = describeStack(context, stackName, { allowMissing: true });
+  let before = describeStack(context, stackName, { allowMissing: true });
   deployReleaseMode(flags);
+  const previousPublication =
+    releaseMode === 'VERSIONED_UPDATE' ? previousPublicationExpectation(previousManifest) : null;
   if (releaseMode === 'VERSIONED_UPDATE') {
     if (
       !before.exists ||
       before.outputs.CandidateSha !== previousManifest.previous.candidateSha ||
       before.outputs.ReleaseId !== previousManifest.previous.releaseId ||
-      before.parameters.PublicationState !== 'ENABLED'
+      before.parameters.PublicationState !== previousPublication.publicationState ||
+      before.outputs.WebPublicationStatus !== previousPublication.publicationState ||
+      before.outputs.WebBucketName !== previousManifest.resources.web.bucketName ||
+      before.outputs.DistributionId !== previousManifest.resources.web.distributionId ||
+      getDistributionConfig(context, before.outputs.DistributionId).DistributionConfig.Enabled !==
+        previousPublication.distributionEnabled
     ) {
       fail('E7_VERSIONED_UPDATE_BASELINE_STACK_INVALID');
     }
@@ -8592,6 +9027,27 @@ export const deployWeb = async ({
     fail('E7_INITIAL_RELEASE_EXISTING_STACK_INVALID');
   }
   const previousObjects = previousManifest?.resources.web.objects ?? [];
+  if (releaseMode === 'VERSIONED_UPDATE') {
+    const candidateDisabledPublication = Object.freeze({
+      publicationState: 'DISABLED',
+      schedulerState: 'DISABLED',
+    });
+    verifyApiPublicationPostureAws(context, {
+      expectedIdentity: context.identity,
+      expectedPublication: candidateDisabledPublication,
+      expectedResources: previousManifest.resources,
+      expectedVersions: null,
+      state: describeStack(context, stackFor(context, 'api')),
+    });
+    before = describeStack(context, stackName);
+    verifyWebPublicationPostureAws(context, {
+      expectedFingerprint: approvedPlan.preDeploymentStateSha256,
+      expectedIdentity: previousManifest.previous,
+      expectedPublication: previousPublication,
+      expectedResources: previousManifest.resources,
+      state: before,
+    });
+  }
   const deployed = deployStack(context, assembly, 'web', {
     preDeploymentStateSha256: approvedPlan.preDeploymentStateSha256,
   });
@@ -12540,11 +12996,46 @@ const selfTestInitialRollbackResumption = async (config) => {
 };
 
 export const selfTestAwsOperations = async () => {
+  selfTestPreDeploymentIdentityCapture();
+  selfTestPreviousPublicationExpectations();
   for (const tool of ['cdk', 'tsx']) {
     const entrypoint = workspaceToolEntrypoint(tool);
     assert.equal(path.isAbsolute(entrypoint), true);
     assert.equal(path.relative(workspaceRoot, entrypoint).startsWith('..'), false);
   }
+  assert.equal(
+    cdkAppCommand(
+      [
+        'C:\\Node\\node.exe',
+        'C:\\Prueba Técnica\\node_modules\\tsx.mjs',
+        'C:\\Prueba Técnica\\infra\\app.ts',
+      ],
+      'win32',
+    ),
+    'C:\\Node\\node.exe "C:\\Prueba Técnica\\node_modules\\tsx.mjs" "C:\\Prueba Técnica\\infra\\app.ts"',
+  );
+  assert.equal(
+    cdkAppCommand(
+      [
+        'C:\\Program Files\\nodejs\\node.exe',
+        'C:\\Prueba Técnica\\node_modules\\tsx.mjs',
+        'C:\\Prueba Técnica\\infra\\app.ts',
+      ],
+      'win32',
+    ),
+    'call "C:\\Program Files\\nodejs\\node.exe" "C:\\Prueba Técnica\\node_modules\\tsx.mjs" "C:\\Prueba Técnica\\infra\\app.ts"',
+  );
+  assert.equal(
+    cdkAppCommand(
+      ['/opt/node/bin/node', '/work/repo/node_modules/tsx.mjs', '/work/repo/infra/app.ts'],
+      'linux',
+    ),
+    '/opt/node/bin/node /work/repo/node_modules/tsx.mjs /work/repo/infra/app.ts',
+  );
+  assert.throws(
+    () => cdkAppCommand(['/opt/node/bin/node', '/work/$(invalid)', '/work/app.ts'], 'linux'),
+    (error) => error instanceof Stage7AwsError && error.code === 'E7_CDK_APP_COMMAND_INVALID',
+  );
   assert.equal(
     RELEASE_RECONCILIATION_RECOVERY_FILE_BINDINGS.find(([flag]) => flag === 'approved-plan')?.[1],
     'approvedDiff',

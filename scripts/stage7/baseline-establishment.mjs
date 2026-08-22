@@ -13,6 +13,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -54,6 +55,7 @@ import {
   validateIamEffectivePermissionsEvidence,
 } from './iam-effective-permissions.mjs';
 import { validateStage6SourceProvenance } from './stage6-source-provenance.mjs';
+import { validatePublicReleaseIdentity } from './public-release-identity.mjs';
 
 const SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -112,6 +114,8 @@ export const BASELINE_FILE_LAYOUT = Object.freeze({
   evidence: Object.freeze([...BASELINE_EVIDENCE_FILENAMES]),
 });
 const BASELINE_REQUEST_LIMIT = 8;
+const ROLLBACK_MUTABLE_WEB_KEYS = new Set(['index.html', 'public-config.json']);
+const MAX_IMMUTABLE_WEB_FILES = 4_096;
 const SELF_TEST_CAPTURE_TOKEN = Symbol('stage7-baseline-capture-self-test');
 let commandExecutor = execFileSync;
 let requestExecutor = (...arguments_) => fetch(...arguments_);
@@ -236,6 +240,80 @@ const checkedPath = (candidate, { mustExist = true, directory = false } = {}) =>
     if (directory ? !stat.isDirectory() : !stat.isFile()) fail('E7_BASELINE_PATH_INVALID');
   }
   return absolute;
+};
+
+const validateImmutableWebInventory = (value) => {
+  if (
+    !exactKeys(value, ['files', 'totalFiles', 'totalBytes', 'digestSha256']) ||
+    !Array.isArray(value.files) ||
+    value.files.length < 1 ||
+    value.files.length > MAX_IMMUTABLE_WEB_FILES ||
+    value.totalFiles !== value.files.length ||
+    !Number.isSafeInteger(value.totalBytes) ||
+    value.totalBytes < 1 ||
+    value.digestSha256 !== objectSha256(value.files)
+  ) {
+    fail('E7_BASELINE_IMMUTABLE_WEB_INVENTORY_INVALID');
+  }
+  let previousPath = '';
+  let totalBytes = 0;
+  for (const file of value.files) {
+    if (
+      !exactKeys(file, ['path', 'bytes', 'sha256']) ||
+      typeof file.path !== 'string' ||
+      file.path.length === 0 ||
+      file.path.includes('\\') ||
+      path.posix.isAbsolute(file.path) ||
+      file.path
+        .split('/')
+        .some((segment) => segment === '' || segment === '.' || segment === '..') ||
+      ROLLBACK_MUTABLE_WEB_KEYS.has(file.path) ||
+      file.path <= previousPath ||
+      !Number.isSafeInteger(file.bytes) ||
+      file.bytes < 0 ||
+      !SHA256.test(file.sha256 ?? '')
+    ) {
+      fail('E7_BASELINE_IMMUTABLE_WEB_INVENTORY_INVALID');
+    }
+    previousPath = file.path;
+    totalBytes += file.bytes;
+  }
+  if (totalBytes !== value.totalBytes) fail('E7_BASELINE_IMMUTABLE_WEB_INVENTORY_INVALID');
+  return value;
+};
+
+const immutableWebInventory = (directory) => {
+  const root = checkedPath(directory, { directory: true });
+  const files = [];
+  const visit = (current, prefix = '') => {
+    for (const entry of readdirSync(current, { withFileTypes: true }).toSorted((left, right) =>
+      left.name.localeCompare(right.name),
+    )) {
+      const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
+      const absolute = path.join(current, entry.name);
+      if (entry.isSymbolicLink()) fail('E7_BASELINE_SYMLINK_FORBIDDEN');
+      if (entry.isDirectory()) {
+        visit(absolute, relative);
+      } else if (entry.isFile()) {
+        if (!ROLLBACK_MUTABLE_WEB_KEYS.has(relative)) {
+          const stat = lstatSync(absolute);
+          files.push({ path: relative, bytes: stat.size, sha256: fileSha256(absolute) });
+          if (files.length > MAX_IMMUTABLE_WEB_FILES) {
+            fail('E7_BASELINE_IMMUTABLE_WEB_INVENTORY_INVALID');
+          }
+        }
+      } else {
+        fail('E7_BASELINE_PATH_INVALID');
+      }
+    }
+  };
+  visit(root);
+  const body = {
+    files,
+    totalFiles: files.length,
+    totalBytes: files.reduce((total, file) => total + file.bytes, 0),
+  };
+  return validateImmutableWebInventory({ ...body, digestSha256: objectSha256(files) });
 };
 
 const readJson = (filename) =>
@@ -503,6 +581,7 @@ export const validateBaselineFreeze = (value) => {
       'openApiSha256',
       'generatedClientSha256',
       'publicConfigSha256',
+      'immutableWebInventory',
       'runtimeSecretVersionIdSha256',
       'artifacts',
       'assemblySha256',
@@ -561,6 +640,9 @@ export const validateBaselineFreeze = (value) => {
         Number.isSafeInteger(artifact.bytes) &&
         artifact.bytes > 0,
     ) ||
+    validateImmutableWebInventory(value.immutableWebInventory) !== value.immutableWebInventory ||
+    value.artifacts.web.files !== value.immutableWebInventory.totalFiles + 2 ||
+    value.artifacts.web.bytes <= value.immutableWebInventory.totalBytes ||
     value.artifacts.iac.sha256 !== value.assemblySha256 ||
     value.publicationState !== 'DISABLED' ||
     value.publicReleaseEffectsAllowed !== false ||
@@ -679,6 +761,7 @@ export const createBaselineFreeze = ({
     openApiSha256: fileSha256(checkedPath(openApi)),
     generatedClientSha256: fileSha256(checkedPath(generatedClient)),
     publicConfigSha256: fileSha256(checkedPath(publicConfig)),
+    immutableWebInventory: immutableWebInventory(artifacts.web),
     runtimeSecretVersionIdSha256: sha256(config.prereleaseAccess.originTokenSecretVersionId),
     artifacts: hashed,
     assemblySha256: hashed.iac.sha256,
@@ -1473,6 +1556,83 @@ export const validateBaselineFinalDisableProvenance = (value, { bundleIndex, cap
   return value;
 };
 
+export const validateTargetWebRollbackDelta = ({
+  baselineFreeze,
+  capture,
+  targetFreeze,
+  targetWebDirectory,
+}) => {
+  let directory;
+  let targetArtifact;
+  let targetIndexSha256;
+  let targetPublicConfigSha256;
+  let targetImmutableInventory;
+  let targetIndexSource;
+  let targetPublicConfigSource;
+  try {
+    directory = checkedPath(targetWebDirectory, { directory: true });
+    targetImmutableInventory = immutableWebInventory(directory);
+    targetArtifact = hashArtifactPath(directory, { rootDirectory: path.dirname(directory) });
+    targetIndexSource = readFileSync(checkedPath(path.join(directory, 'index.html')));
+    targetPublicConfigSource = readFileSync(
+      checkedPath(path.join(directory, 'public-config.json')),
+    );
+    targetIndexSha256 = sha256(targetIndexSource);
+    targetPublicConfigSha256 = sha256(targetPublicConfigSource);
+  } catch {
+    fail('E7_BASELINE_TARGET_WEB_ARTIFACT_INVALID');
+  }
+  const frozenWeb = targetFreeze.artifacts.find(({ name }) => name === 'web');
+  const baselineObjects = capture?.resources?.web?.objects;
+  const baselineIndex = Array.isArray(baselineObjects)
+    ? baselineObjects.find(({ key }) => key === 'index.html')
+    : undefined;
+  const baselinePublicConfig = Array.isArray(baselineObjects)
+    ? baselineObjects.find(({ key }) => key === 'public-config.json')
+    : undefined;
+  validateBaselineFreeze(baselineFreeze);
+  if (
+    !validatePublicReleaseIdentity({
+      indexSource: targetIndexSource,
+      publicConfigSource: targetPublicConfigSource,
+      releaseId: targetFreeze.releaseId,
+    })
+  ) {
+    fail('E7_BASELINE_TARGET_WEB_RELEASE_IDENTITY_INVALID');
+  }
+  if (
+    targetImmutableInventory.digestSha256 !== baselineFreeze.immutableWebInventory.digestSha256 ||
+    targetImmutableInventory.totalFiles !== baselineFreeze.immutableWebInventory.totalFiles ||
+    targetImmutableInventory.totalBytes !== baselineFreeze.immutableWebInventory.totalBytes ||
+    JSON.stringify(targetImmutableInventory.files) !==
+      JSON.stringify(baselineFreeze.immutableWebInventory.files)
+  ) {
+    fail('E7_BASELINE_TARGET_WEB_IMMUTABLE_CONTENT_CHANGED');
+  }
+  if (
+    frozenWeb === undefined ||
+    targetArtifact.kind !== frozenWeb.kind ||
+    targetArtifact.files !== frozenWeb.files ||
+    targetArtifact.bytes !== frozenWeb.bytes ||
+    targetArtifact.sha256 !== frozenWeb.sha256 ||
+    targetPublicConfigSha256 !== targetFreeze.publicConfigSha256 ||
+    baselineObjects?.length !== 2 ||
+    baselineIndex === undefined ||
+    baselinePublicConfig === undefined ||
+    !SHA256.test(baselineIndex.contentSha256 ?? '') ||
+    !SHA256.test(baselinePublicConfig.contentSha256 ?? '')
+  ) {
+    fail('E7_BASELINE_TARGET_WEB_ARTIFACT_INVALID');
+  }
+  if (
+    targetIndexSha256 === baselineIndex.contentSha256 ||
+    targetPublicConfigSha256 === baselinePublicConfig.contentSha256
+  ) {
+    fail('E7_BASELINE_TARGET_WEB_ROLLBACK_NOT_DISTINCT');
+  }
+  return Object.freeze({ targetIndexSha256, targetPublicConfigSha256 });
+};
+
 export const bindBaselineForTarget = ({
   capture,
   captureFilename,
@@ -1482,6 +1642,7 @@ export const bindBaselineForTarget = ({
   sourceProvenance,
   targetConfig,
   targetFreeze,
+  targetWebDirectory,
   targetCompatibilityOutput,
 }) => {
   if (fileSha256(checkedPath(captureFilename)) !== expectedCaptureSha256) {
@@ -1491,6 +1652,9 @@ export const bindBaselineForTarget = ({
   validateBaselineSourceProvenance(sourceProvenance, { bundleIndex, capture });
   validateStage7Config(targetConfig, { now: new Date(targetConfig.window.startsAtUtc) });
   validateFreezeManifest(targetFreeze);
+  const baselineFreeze = readJson(
+    path.join(evidenceDirectory, BASELINE_PROVENANCE_FILENAMES.freeze),
+  );
   const targetIac = targetFreeze.artifacts.find(({ name }) => name === 'iac');
   if (
     targetConfig.authorization.scope !== 'FULL_RELEASE_VERSIONED_UPDATE' ||
@@ -1527,6 +1691,12 @@ export const bindBaselineForTarget = ({
   ) {
     fail('E7_BASELINE_TARGET_BINDING_INVALID');
   }
+  validateTargetWebRollbackDelta({
+    baselineFreeze,
+    capture,
+    targetFreeze,
+    targetWebDirectory,
+  });
   const targetCompatibility = runTargetCompatibilityFocalTest({
     capture,
     targetFreeze,
@@ -4184,11 +4354,14 @@ const webObject = (bucketName, key) => {
     );
     const contents = readFileSync(temporary);
     return {
-      key,
-      versionId: matches[0].VersionId,
-      etagSha256: sha256(matches[0].ETag ?? ''),
-      contentSha256: sha256(contents),
-      bytes: contents.length,
+      record: {
+        key,
+        versionId: matches[0].VersionId,
+        etagSha256: sha256(matches[0].ETag ?? ''),
+        contentSha256: sha256(contents),
+        bytes: contents.length,
+      },
+      contents,
     };
   } finally {
     rmSync(temporary, { force: true });
@@ -4336,15 +4509,25 @@ export const captureBaselineAws = ({
     ) {
       fail('E7_BASELINE_CAPTURE_REQUIRES_DISABLED_STATE');
     }
+    const webObjects = ['index.html', 'public-config.json'].map((key) =>
+      webObject(webOutputs.WebBucketName, key),
+    );
+    if (
+      !validatePublicReleaseIdentity({
+        indexSource: webObjects[0].contents,
+        publicConfigSource: webObjects[1].contents,
+        releaseId: freeze.releaseId,
+      })
+    ) {
+      fail('E7_BASELINE_CAPTURE_WEB_RELEASE_IDENTITY_INVALID');
+    }
     resources = {
       api: lambdaTarget(apiOutputs.ApiAliasArn, apiOutputs.ApiFunctionVersion),
       worker: lambdaTarget(apiOutputs.WorkerAliasArn, apiOutputs.WorkerFunctionVersion),
       web: {
         bucketName: webOutputs.WebBucketName,
         distributionId: webOutputs.DistributionId,
-        objects: ['index.html', 'public-config.json'].map((key) =>
-          webObject(webOutputs.WebBucketName, key),
-        ),
+        objects: webObjects.map(({ record }) => record),
         mutableInvalidationPaths: ['/index.html', '/public-config.json'],
       },
     };
@@ -4456,6 +4639,23 @@ const baselineSecretReference = () =>
     'checkout/runtime-security-AbCdEf',
   ].join(':');
 const baselineSecretVersionId = () => 'a'.repeat(32);
+const BASELINE_IMMUTABLE_WEB_SELF_TEST_CONTENTS = Object.freeze([
+  Object.freeze({ path: 'assets/brand.svg', contents: '<svg><title>Brand</title></svg>\n' }),
+  Object.freeze({ path: 'legal/terms.html', contents: '<!doctype html><title>Terms</title>\n' }),
+]);
+const baselineImmutableWebSelfTestInventory = () => {
+  const files = BASELINE_IMMUTABLE_WEB_SELF_TEST_CONTENTS.map(({ path: filename, contents }) => ({
+    path: filename,
+    bytes: Buffer.byteLength(contents),
+    sha256: sha256(contents),
+  })).toSorted((left, right) => left.path.localeCompare(right.path));
+  return validateImmutableWebInventory({
+    files,
+    totalFiles: files.length,
+    totalBytes: files.reduce((total, file) => total + file.bytes, 0),
+    digestSha256: objectSha256(files),
+  });
+};
 
 export const createBaselineConfigSelfTestFixture = () => ({
   schemaVersion: 1,
@@ -4582,9 +4782,10 @@ export const createBaselineFreezeSelfTestFixture = (
       path.join(workspaceRoot, 'packages/contracts/src/generated/openapi.d.ts'),
     ),
     publicConfigSha256: '4'.repeat(64),
+    immutableWebInventory: baselineImmutableWebSelfTestInventory(),
     runtimeSecretVersionIdSha256: sha256(baselineSecretVersionId()),
     artifacts: {
-      web: { sha256: '5'.repeat(64), files: 2, bytes: 100 },
+      web: { sha256: '5'.repeat(64), files: 4, bytes: 200 },
       api: { sha256: '6'.repeat(64), files: 1, bytes: 101 },
       worker: { sha256: '7'.repeat(64), files: 1, bytes: 102 },
       iac: { sha256: '8'.repeat(64), files: 4, bytes: 103 },
@@ -4667,20 +4868,35 @@ const targetConfigFixture = () => ({
   containsSensitiveData: false,
 });
 
-const targetFreezeFixture = (config, baseline) => {
+const targetFreezeFixture = (config, baseline, { targetWebDirectory } = {}) => {
+  const targetWebArtifact =
+    targetWebDirectory === undefined
+      ? { kind: 'DIRECTORY', files: 2, bytes: 100, sha256: '5'.repeat(64) }
+      : hashArtifactPath(targetWebDirectory, { rootDirectory: path.dirname(targetWebDirectory) });
   const artifacts = [
-    ['web', 'output/release/build/web', '5'.repeat(64), 2, 100],
+    {
+      name: 'web',
+      sourcePath: 'output/release/build/web',
+      kind: targetWebArtifact.kind,
+      files: targetWebArtifact.files,
+      bytes: targetWebArtifact.bytes,
+      sha256: targetWebArtifact.sha256,
+    },
     ['api', 'output/release/build/api', '9'.repeat(64), 1, 101],
     ['worker', 'output/release/build/worker', 'a'.repeat(64), 1, 102],
     ['iac', 'output/release/cdk.out', 'b'.repeat(64), 4, 103],
-  ].map(([name, sourcePath, digest, files, bytes]) => ({
-    name,
-    sourcePath,
-    kind: 'DIRECTORY',
-    files,
-    bytes,
-    sha256: digest,
-  }));
+  ].map((entry) =>
+    Array.isArray(entry)
+      ? {
+          name: entry[0],
+          sourcePath: entry[1],
+          kind: 'DIRECTORY',
+          files: entry[3],
+          bytes: entry[4],
+          sha256: entry[2],
+        }
+      : entry,
+  );
   const body = {
     schemaVersion: 1,
     stage: 7,
@@ -4701,7 +4917,10 @@ const targetFreezeFixture = (config, baseline) => {
     lockfileSha256: 'e'.repeat(64),
     openApiSha256: baseline.openApiSha256,
     generatedClientSha256: baseline.generatedClientSha256,
-    publicConfigSha256: 'f'.repeat(64),
+    publicConfigSha256:
+      targetWebDirectory === undefined
+        ? 'f'.repeat(64)
+        : fileSha256(path.join(targetWebDirectory, 'public-config.json')),
     templateSha256: artifacts[3].sha256,
     stage6Gates: { 'GATE-E6-01': 'PASS', 'GATE-E6-02': 'PASS', 'GATE-E6-03': 'PASS' },
     toolchain: {
@@ -5447,7 +5666,137 @@ export const selfTestBaselineEstablishment = () => {
     assert.equal(bundle.index.artifactName, 'stage7-previous-release');
     const bundleCaptureFilename = path.join(bundleDirectory, BASELINE_CAPTURE_FILENAME);
     const targetConfig = validateStage7Config(targetConfigFixture(), { now });
-    const targetFreeze = targetFreezeFixture(targetConfig, capture.baseline);
+    const targetWebDirectory = path.join(temporary, 'target-web');
+    mkdirSync(targetWebDirectory, { mode: 0o700 });
+    writeFileSync(
+      path.join(targetWebDirectory, 'index.html'),
+      '<!doctype html><meta name="stage7-release-id" content="rel-20260818-1300-ccccccc">\n',
+      { encoding: 'utf8', flag: 'wx', mode: 0o600 },
+    );
+    writeFileSync(
+      path.join(targetWebDirectory, 'public-config.json'),
+      `${JSON.stringify({
+        apiBaseUrl: '/api/v1',
+        productId: 'product-demo-001',
+        releaseId: 'rel-20260818-1300-ccccccc',
+      })}\n`,
+      { encoding: 'utf8', flag: 'wx', mode: 0o600 },
+    );
+    for (const { path: relative, contents } of BASELINE_IMMUTABLE_WEB_SELF_TEST_CONTENTS) {
+      const filename = path.join(targetWebDirectory, ...relative.split('/'));
+      mkdirSync(path.dirname(filename), { recursive: true, mode: 0o700 });
+      writeFileSync(filename, contents, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    }
+    const targetFreeze = targetFreezeFixture(targetConfig, capture.baseline, {
+      targetWebDirectory,
+    });
+    const targetWebDelta = validateTargetWebRollbackDelta({
+      baselineFreeze: freeze,
+      capture,
+      targetFreeze,
+      targetWebDirectory,
+    });
+    assert.notEqual(
+      targetWebDelta.targetIndexSha256,
+      capture.resources.web.objects.find(({ key }) => key === 'index.html').contentSha256,
+    );
+    assert.notEqual(
+      targetWebDelta.targetPublicConfigSha256,
+      capture.resources.web.objects.find(({ key }) => key === 'public-config.json').contentSha256,
+    );
+    const targetIndexFixture = readFileSync(path.join(targetWebDirectory, 'index.html'));
+    const targetPublicConfigFixture = readFileSync(
+      path.join(targetWebDirectory, 'public-config.json'),
+    );
+    const assertTargetReleaseIdentityRejected = (basename, contents) => {
+      const filename = path.join(targetWebDirectory, basename);
+      writeFileSync(filename, contents, { mode: 0o600 });
+      assert.throws(
+        () =>
+          validateTargetWebRollbackDelta({
+            baselineFreeze: freeze,
+            capture,
+            targetFreeze,
+            targetWebDirectory,
+          }),
+        /E7_BASELINE_TARGET_WEB_RELEASE_IDENTITY_INVALID/u,
+      );
+      writeFileSync(
+        filename,
+        basename === 'index.html' ? targetIndexFixture : targetPublicConfigFixture,
+        { mode: 0o600 },
+      );
+    };
+    assertTargetReleaseIdentityRejected('index.html', '<!doctype html><div id="root"></div>\n');
+    assertTargetReleaseIdentityRejected(
+      'index.html',
+      `${targetIndexFixture.toString('utf8')}<meta name="stage7-release-id" content="rel-20260818-1300-ccccccc">\n`,
+    );
+    assertTargetReleaseIdentityRejected(
+      'index.html',
+      targetIndexFixture
+        .toString('utf8')
+        .replace('rel-20260818-1300-ccccccc', 'rel-20260818-1300-ddddddd'),
+    );
+    assertTargetReleaseIdentityRejected(
+      'public-config.json',
+      `${JSON.stringify({
+        apiBaseUrl: '/api/v1',
+        productId: 'product-demo-001',
+        releaseId: 'rel-20260818-1300-ddddddd',
+      })}\n`,
+    );
+    assertTargetReleaseIdentityRejected(
+      'public-config.json',
+      `${JSON.stringify({
+        apiBaseUrl: '/api/v1',
+        productId: 'product-demo-001',
+        releaseId: 'rel-20260818-1300-ccccccc',
+        unexpected: true,
+      })}\n`,
+    );
+    for (const { path: relative, contents } of BASELINE_IMMUTABLE_WEB_SELF_TEST_CONTENTS) {
+      const filename = path.join(targetWebDirectory, ...relative.split('/'));
+      writeFileSync(filename, `${contents}changed\n`, { encoding: 'utf8', mode: 0o600 });
+      assert.throws(
+        () =>
+          validateTargetWebRollbackDelta({
+            baselineFreeze: freeze,
+            capture,
+            targetFreeze,
+            targetWebDirectory,
+          }),
+        /E7_BASELINE_TARGET_WEB_IMMUTABLE_CONTENT_CHANGED/u,
+      );
+      writeFileSync(filename, contents, { encoding: 'utf8', mode: 0o600 });
+    }
+    for (const [key, contentSha256] of [
+      ['index.html', targetWebDelta.targetIndexSha256],
+      ['public-config.json', targetWebDelta.targetPublicConfigSha256],
+    ]) {
+      const sameContentCapture = {
+        ...capture,
+        resources: {
+          ...capture.resources,
+          web: {
+            ...capture.resources.web,
+            objects: capture.resources.web.objects.map((entry) =>
+              entry.key === key ? { ...entry, contentSha256 } : entry,
+            ),
+          },
+        },
+      };
+      assert.throws(
+        () =>
+          validateTargetWebRollbackDelta({
+            baselineFreeze: freeze,
+            capture: sameContentCapture,
+            targetFreeze,
+            targetWebDirectory,
+          }),
+        /E7_BASELINE_TARGET_WEB_ROLLBACK_NOT_DISTINCT/u,
+      );
+    }
     const sourceProvenanceBodyFixture = {
       schemaVersion: 1,
       stage: 7,
@@ -5518,6 +5867,7 @@ export const selfTestBaselineEstablishment = () => {
       sourceProvenance,
       targetConfig,
       targetFreeze,
+      targetWebDirectory,
       targetCompatibilityOutput: path.join(temporary, 'baseline-target-compatibility.json'),
     });
     validateStage7PreviousReleaseManifest(bound.previousRelease);
@@ -5589,8 +5939,8 @@ export const selfTestBaselineEstablishment = () => {
     }
     selfTestResult = {
       status: 'PASS',
-      assertions: 40,
-      focalTests: 119,
+      assertions: 46,
+      focalTests: 125,
       externalRequests: 0,
       mutationsPerformed: 0,
     };

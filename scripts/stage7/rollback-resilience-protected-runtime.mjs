@@ -10,6 +10,10 @@ import { gunzipSync, gzipSync } from 'node:zlib';
 
 import { parseStrictJsonSource } from '../stage6/strict-json.mjs';
 import { canonicalJson, objectSha256, workspaceRoot } from './core.mjs';
+import {
+  validateIndexReleaseIdentity,
+  validatePublicConfigReleaseIdentity,
+} from './public-release-identity.mjs';
 
 const SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -1714,7 +1718,7 @@ const validateReadinessResponse = ({ response, bytes }) => {
   };
 };
 
-const validateStaticResponse = ({ response, bytes, path: pathname }) => {
+const validateStaticResponse = ({ response, bytes, path: pathname, releaseId }) => {
   const contentType = response.headers.get('content-type');
   const headers = requiredSecurityHeaders(response);
   if (response.status !== 200) fail('E7_PROTECTED_STATIC_RESPONSE_INVALID');
@@ -1722,22 +1726,15 @@ const validateStaticResponse = ({ response, bytes, path: pathname }) => {
     const body = bytes.toString('utf8');
     if (
       !/^text\/html(?:;|$)/iu.test(contentType ?? '') ||
-      !/<div[^>]+id=["']root["']/iu.test(body)
+      !/<div[^>]+id=["']root["']/iu.test(body) ||
+      !validateIndexReleaseIdentity({ indexSource: bytes, releaseId })
     ) {
       fail('E7_PROTECTED_STATIC_RESPONSE_INVALID');
     }
   } else {
-    let body;
-    try {
-      body = JSON.parse(bytes.toString('utf8'));
-    } catch {
-      fail('E7_PROTECTED_STATIC_RESPONSE_INVALID');
-    }
     if (
       !/^application\/json(?:;|$)/iu.test(contentType ?? '') ||
-      !exactKeys(body, ['apiBaseUrl', 'productId']) ||
-      body.apiBaseUrl !== '/api/v1' ||
-      body.productId !== 'product-demo-001'
+      !validatePublicConfigReleaseIdentity({ publicConfigSource: bytes, releaseId })
     ) {
       fail('E7_PROTECTED_STATIC_RESPONSE_INVALID');
     }
@@ -1779,7 +1776,7 @@ const runReadSmoke = async ({ inputs, releaseId, registerExternalRequest }) => {
     const responseContract =
       check.object === null
         ? validateReadinessResponse({ response, bytes })
-        : validateStaticResponse({ response, bytes, path: check.path });
+        : validateStaticResponse({ response, bytes, path: check.path, releaseId });
     if (
       response.status !== 200 ||
       (check.object !== null &&
@@ -2610,19 +2607,28 @@ export const selfTestProtectedRollbackRuntime = () => {
       }),
     (error) => error.code === 'E7_PROTECTED_READINESS_RESPONSE_INVALID',
   );
+  const releaseId = 'rel-20260817-1200-aaaaaaa';
+  const validIndex = `<!doctype html><head><meta name="stage7-release-id" content="${releaseId}"></head><div id="root"></div>`;
+  const validPublicConfig = JSON.stringify({
+    apiBaseUrl: '/api/v1',
+    productId: 'product-demo-001',
+    releaseId,
+  });
   assert.equal(
     validateStaticResponse({
       response: response(200, { ...securityHeaders, 'content-type': 'text/html; charset=utf-8' }),
-      bytes: Buffer.from('<!doctype html><div id="root"></div>'),
+      bytes: Buffer.from(validIndex),
       path: '/index.html',
+      releaseId,
     }).contentType,
     'text/html; charset=utf-8',
   );
   assert.equal(
     validateStaticResponse({
       response: response(200, { ...securityHeaders, 'content-type': 'application/json' }),
-      bytes: Buffer.from(JSON.stringify({ apiBaseUrl: '/api/v1', productId: 'product-demo-001' })),
+      bytes: Buffer.from(validPublicConfig),
       path: '/public-config.json',
+      releaseId,
     }).contentType,
     'application/json',
   );
@@ -2630,11 +2636,56 @@ export const selfTestProtectedRollbackRuntime = () => {
     () =>
       validateStaticResponse({
         response: response(200, { ...securityHeaders, 'cache-control': 'public,max-age=60' }),
-        bytes: Buffer.from('<div id="root"></div>'),
+        bytes: Buffer.from(validIndex),
         path: '/index.html',
+        releaseId,
       }),
     (error) => error.code === 'E7_PROTECTED_STATIC_SECURITY_HEADERS_INVALID',
   );
+  for (const invalidIndex of [
+    '<!doctype html><div id="root"></div>',
+    `${validIndex}<meta name="stage7-release-id" content="${releaseId}">`,
+    validIndex.replace(releaseId, 'rel-20260817-1200-bbbbbbb'),
+  ]) {
+    assert.throws(
+      () =>
+        validateStaticResponse({
+          response: response(200, {
+            ...securityHeaders,
+            'content-type': 'text/html; charset=utf-8',
+          }),
+          bytes: Buffer.from(invalidIndex),
+          path: '/index.html',
+          releaseId,
+        }),
+      (error) => error.code === 'E7_PROTECTED_STATIC_RESPONSE_INVALID',
+    );
+  }
+  for (const invalidPublicConfig of [
+    JSON.stringify({ apiBaseUrl: '/api/v1', productId: 'product-demo-001' }),
+    JSON.stringify({
+      apiBaseUrl: '/api/v1',
+      productId: 'product-demo-001',
+      releaseId: 'rel-20260817-1200-bbbbbbb',
+    }),
+    JSON.stringify({
+      apiBaseUrl: '/api/v1',
+      productId: 'product-demo-001',
+      releaseId,
+      unexpected: true,
+    }),
+  ]) {
+    assert.throws(
+      () =>
+        validateStaticResponse({
+          response: response(200, { ...securityHeaders, 'content-type': 'application/json' }),
+          bytes: Buffer.from(invalidPublicConfig),
+          path: '/public-config.json',
+          releaseId,
+        }),
+      (error) => error.code === 'E7_PROTECTED_STATIC_RESPONSE_INVALID',
+    );
+  }
   const stateBody = {
     schemaVersion: 1,
     stage: 7,

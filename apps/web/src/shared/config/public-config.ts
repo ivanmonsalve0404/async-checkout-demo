@@ -1,11 +1,17 @@
 export interface PublicConfig {
   readonly apiBaseUrl: string;
   readonly productId: string;
+  readonly releaseId: string;
 }
 
 const productIdPattern = /^[A-Za-z0-9_-]{8,128}$/;
 const apiBaseUrlPattern = /^\/api\/v1$/;
-const defaultConfig = Object.freeze({ apiBaseUrl: '/api/v1', productId: 'product-demo-001' });
+const releaseIdPattern = /^rel-[0-9]{8}-[0-9]{4}-[0-9a-f]{7}$/;
+const defaultConfig = Object.freeze({
+  apiBaseUrl: '/api/v1',
+  productId: 'product-demo-001',
+  releaseId: 'rel-19700101-0000-0000000',
+});
 let activeConfig: PublicConfig = defaultConfig;
 
 const parsePublicConfig = (value: unknown): PublicConfig => {
@@ -14,25 +20,36 @@ const parsePublicConfig = (value: unknown): PublicConfig => {
   }
   const record = value as Record<string, unknown>;
   if (
-    Object.keys(record).length !== 2 ||
+    Object.keys(record).length !== 3 ||
     !Object.hasOwn(record, 'apiBaseUrl') ||
     !Object.hasOwn(record, 'productId') ||
+    !Object.hasOwn(record, 'releaseId') ||
     typeof record.apiBaseUrl !== 'string' ||
     !apiBaseUrlPattern.test(record.apiBaseUrl) ||
     typeof record.productId !== 'string' ||
-    !productIdPattern.test(record.productId)
+    !productIdPattern.test(record.productId) ||
+    typeof record.releaseId !== 'string' ||
+    !releaseIdPattern.test(record.releaseId)
   ) {
     throw new Error('Public configuration is invalid');
   }
-  return Object.freeze({ apiBaseUrl: record.apiBaseUrl, productId: record.productId });
+  return Object.freeze({
+    apiBaseUrl: record.apiBaseUrl,
+    productId: record.productId,
+    releaseId: record.releaseId,
+  });
 };
 
 export const readPublicConfig = (environment: Record<string, string | undefined>): PublicConfig => {
   const productId = environment.VITE_PRODUCT_ID ?? 'product-demo-001';
+  const releaseId = environment.VITE_STAGE7_RELEASE_ID ?? defaultConfig.releaseId;
   if (!productIdPattern.test(productId)) {
     throw new Error('VITE_PRODUCT_ID must be an opaque public identifier');
   }
-  return { apiBaseUrl: '/api/v1', productId };
+  if (!releaseIdPattern.test(releaseId)) {
+    throw new Error('VITE_STAGE7_RELEASE_ID must be a public release identifier');
+  }
+  return { apiBaseUrl: '/api/v1', productId, releaseId };
 };
 
 export const loadRuntimePublicConfig = async (

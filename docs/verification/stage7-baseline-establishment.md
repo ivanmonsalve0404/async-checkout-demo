@@ -1,7 +1,9 @@
 # Stage 7 closed baseline establishment
 
 This run creates the first real N-1 recovery baseline without publishing a public release. It is
-separate from the normal release workflow and must remain fail-closed.
+separate from the normal release workflow and must remain fail-closed. Its candidate A must be
+different from the later public target B: establish A while A is current `master`, preserve its
+bundle, and only then advance `master` to B.
 
 ## One-time protected-environment setup
 
@@ -83,9 +85,12 @@ The successful closeout summary provides:
 - final artifact ID and GitHub digest;
 - canonical bundle SHA-256.
 
-Provide those four values to the normal `Stage 7 Release` workflow. It downloads and validates the
-bundle and its GitHub provenance directly. Do not create `STAGE7_PREVIOUS_*_B64` variables and do
-not reconstruct the manifest or compatibility evidence manually.
+Provide those four values to the normal `Stage 7 Release` workflow for a later successor B. It
+downloads and validates the bundle and its GitHub provenance directly. B must have a distinct SHA,
+release ID, and tag from A while retaining the exact compatible OpenAPI and generated-client
+hashes. Re-run every SHA-bound bootstrap, configuration, manual evidence, prerelease, and Stage 6
+gate for B. Do not create `STAGE7_PREVIOUS_*_B64` variables and do not reconstruct the manifest or
+compatibility evidence manually.
 
 ## What this run never authorizes
 

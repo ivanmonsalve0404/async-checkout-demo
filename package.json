@@ -94,6 +94,7 @@
     "stage7:cli-arguments:self-test": "node scripts/stage7/cli-arguments-self-test.mjs",
     "stage7:config:author": "node scripts/stage7/config-authoring.mjs author",
     "stage7:config:author:self-test": "node scripts/stage7/config-authoring-self-test.mjs",
+    "stage7:synth-contract:self-test": "node scripts/stage7/synth-contract-self-test.mjs",
     "stage7:runtime-secrets": "node scripts/stage7/runtime-secrets.mjs",
     "stage7:runtime-secrets:self-test": "node scripts/stage7/runtime-secrets-self-test.mjs",
     "release:baseline": "node scripts/stage7/baseline-cli.mjs",
@@ -107,7 +108,7 @@
     "security:secrets": "node scripts/security/scan-repository.mjs --history --evidence output/evidence/runtime/stage-5-secrets.json",
     "security:dependencies": "node scripts/security/audit-dependencies.mjs",
     "security:dependencies:all": "pnpm audit --audit-level high --json",
-    "verify": "pnpm workspace:check && pnpm traceability:check && pnpm test:focus-check && pnpm format:check && pnpm lint && pnpm boundaries && pnpm typecheck && pnpm openapi:lint && pnpm contracts:check && pnpm stage7:cli-arguments:self-test && pnpm stage7:config:author:self-test && pnpm stage7:runtime-secrets:self-test && pnpm test:coverage && pnpm test:contract && pnpm --filter @checkout/infra test && pnpm build && pnpm infra:synth && pnpm security:secrets && pnpm security:dependencies && pnpm test:integration && pnpm test:smoke && pnpm evidence:check"
+    "verify": "pnpm workspace:check && pnpm traceability:check && pnpm test:focus-check && pnpm format:check && pnpm lint && pnpm boundaries && pnpm typecheck && pnpm openapi:lint && pnpm contracts:check && pnpm stage7:cli-arguments:self-test && pnpm stage7:config:author:self-test && pnpm stage7:runtime-secrets:self-test && pnpm test:coverage && pnpm test:contract && pnpm --filter @checkout/infra test && pnpm build && pnpm stage7:synth-contract:self-test && pnpm infra:synth && pnpm security:secrets && pnpm security:dependencies && pnpm test:integration && pnpm test:smoke && pnpm evidence:check"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

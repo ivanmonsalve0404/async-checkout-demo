@@ -134,6 +134,10 @@ import {
   validateBaselineFreeze,
 } from './baseline-establishment.mjs';
 import {
+  validateIndexReleaseIdentity,
+  validatePublicConfigReleaseIdentity,
+} from './public-release-identity.mjs';
+import {
   revalidateConsumedSandboxExecutionClaim,
   sanitizedSandboxExecutionBinding,
   validateSandboxExecutionClaim,
@@ -6165,7 +6169,16 @@ const runVersionedRollbackReadSmoke = async (flags) => {
       oracle =
         response.status === 200 &&
         /text\/html/iu.test(response.headers.get('content-type') ?? '') &&
-        /<div[^>]+id=["']root["']/iu.test(text);
+        /<div[^>]+id=["']root["']/iu.test(text) &&
+        validateIndexReleaseIdentity({ indexSource: text, releaseId: targetReleaseId });
+    } else if (check.id === 'RB-SMK-E7-V02') {
+      oracle =
+        response.status === 200 &&
+        /^application\/json(?:;|$)/iu.test(response.headers.get('content-type') ?? '') &&
+        validatePublicConfigReleaseIdentity({
+          publicConfigSource: text,
+          releaseId: targetReleaseId,
+        });
     } else {
       let parsed;
       try {
@@ -6174,17 +6187,12 @@ const runVersionedRollbackReadSmoke = async (flags) => {
         fail('E7_VERSIONED_ROLLBACK_SMOKE_JSON_INVALID');
       }
       oracle =
-        check.id === 'RB-SMK-E7-V02'
-          ? response.status === 200 &&
-            exactKeys(parsed, ['apiBaseUrl', 'productId']) &&
-            parsed.apiBaseUrl === '/api/v1' &&
-            parsed.productId === 'product-demo-001'
-          : response.status === 200 &&
-            exactKeys(parsed, ['status', 'checkedAt']) &&
-            parsed.status === 'ok' &&
-            Number.isFinite(Date.parse(parsed.checkedAt ?? '')) &&
-            /^[0-9a-f-]{36}$/u.test(response.headers.get('x-correlation-id') ?? '') &&
-            /^no-store(?:,|$)/iu.test(response.headers.get('cache-control') ?? '');
+        response.status === 200 &&
+        exactKeys(parsed, ['status', 'checkedAt']) &&
+        parsed.status === 'ok' &&
+        Number.isFinite(Date.parse(parsed.checkedAt ?? '')) &&
+        /^[0-9a-f-]{36}$/u.test(response.headers.get('x-correlation-id') ?? '') &&
+        /^no-store(?:,|$)/iu.test(response.headers.get('cache-control') ?? '');
     }
     if (!oracle) fail('E7_VERSIONED_ROLLBACK_SMOKE_ORACLE_FAILED');
     results.push({
@@ -12956,6 +12964,56 @@ export const selfTestStage7Control = async () => {
   selfTestExternalEvidence();
   selfTestDeployedSmoke();
   selfTestDeployedQuality();
+  const releaseIdentity = 'rel-20260818-1300-aaaaaaa';
+  const validIndex = `<!doctype html><head><meta name="stage7-release-id" content="${releaseIdentity}"></head><div id="root"></div>`;
+  const validPublicConfig = JSON.stringify({
+    apiBaseUrl: '/api/v1',
+    productId: 'product-demo-001',
+    releaseId: releaseIdentity,
+  });
+  assert.equal(
+    validateIndexReleaseIdentity({ indexSource: validIndex, releaseId: releaseIdentity }),
+    true,
+  );
+  assert.equal(
+    validatePublicConfigReleaseIdentity({
+      publicConfigSource: validPublicConfig,
+      releaseId: releaseIdentity,
+    }),
+    true,
+  );
+  for (const invalidIndex of [
+    '<!doctype html><div id="root"></div>',
+    `${validIndex}<meta name="stage7-release-id" content="${releaseIdentity}">`,
+    validIndex.replace(releaseIdentity, 'rel-20260818-1300-bbbbbbb'),
+  ]) {
+    assert.equal(
+      validateIndexReleaseIdentity({ indexSource: invalidIndex, releaseId: releaseIdentity }),
+      false,
+    );
+  }
+  for (const invalidPublicConfig of [
+    JSON.stringify({ apiBaseUrl: '/api/v1', productId: 'product-demo-001' }),
+    JSON.stringify({
+      apiBaseUrl: '/api/v1',
+      productId: 'product-demo-001',
+      releaseId: 'rel-20260818-1300-bbbbbbb',
+    }),
+    JSON.stringify({
+      apiBaseUrl: '/api/v1',
+      productId: 'product-demo-001',
+      releaseId: releaseIdentity,
+      unexpected: true,
+    }),
+  ]) {
+    assert.equal(
+      validatePublicConfigReleaseIdentity({
+        publicConfigSource: invalidPublicConfig,
+        releaseId: releaseIdentity,
+      }),
+      false,
+    );
+  }
   assert.equal(
     readFileSync(path.join(workspaceRoot, '.gitignore'), 'utf8')
       .split(/\r?\n/u)

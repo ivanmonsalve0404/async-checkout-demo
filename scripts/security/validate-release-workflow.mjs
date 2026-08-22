@@ -2904,6 +2904,9 @@ export function validateReleaseWorkflow(name, input) {
   const previousUpload = stepBlocks(infraDiff).find((step) =>
     step.includes('name: Upload the exact immutable N-1 recovery contract'),
   );
+  const preOidcRead = stepBlocks(infraDiff).find((step) =>
+    step.includes('name: Assume the allowlisted read role through OIDC after config validation'),
+  );
   const previousReadinessFlags = [
     '--previous-manifest .stage7/previous/previous-release-manifest.json',
     '--previous-source-provenance .stage7/previous/previous-source-provenance.json',
@@ -2929,6 +2932,13 @@ export function validateReleaseWorkflow(name, input) {
     )
   ) {
     fail('infra-diff must materialize, validate, scan, and upload the exact 8-file N-1 projection');
+  }
+  if (
+    !previousBind?.includes('--target-web .stage7/candidate/web') ||
+    preOidcRead === undefined ||
+    infraDiff.indexOf(previousBind) >= infraDiff.indexOf(preOidcRead)
+  ) {
+    fail('infra-diff must reject a non-distinct mutable web target before OIDC');
   }
   for (const fragment of [
     'name: stage7-release-plan',
@@ -4890,6 +4900,13 @@ const selfTestRelease = (source) =>
             ' --previous-target-compatibility .stage7/previous/previous-target-compatibility.json',
             '',
           ),
+        ),
+    },
+    {
+      expected: 'non-distinct mutable web target before OIDC',
+      mutate: (value) =>
+        replaceJob(value, 'infra-diff', (block) =>
+          block.replace(' --target-web .stage7/candidate/web', ''),
         ),
     },
     {
