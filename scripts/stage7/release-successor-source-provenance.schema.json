@@ -59,7 +59,12 @@
       "type": "string",
       "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-rc\\.[1-9][0-9]*)?$"
     },
-    "sourceKind": { "const": "RELEASE_SUCCESSOR_POST_SUCCESS" },
+    "sourceKind": {
+      "enum": [
+        "RELEASE_SUCCESSOR_POST_SUCCESS",
+        "RELEASE_SUCCESSOR_POST_SUCCESS_COMPOSITE_RECOVERY"
+      ]
+    },
     "predecessorManifestSha256": { "$ref": "#/$defs/sha256" },
     "candidateRecordSha256": { "$ref": "#/$defs/sha256" },
     "rollbackRehearsalSha256": { "$ref": "#/$defs/sha256" },
@@ -218,7 +223,10 @@
       "additionalProperties": false,
       "required": ["path", "sha256", "bytes"],
       "properties": {
-        "path": { "type": "string", "pattern": "^release-successor-.+\\.(?:json|txt)$" },
+        "path": {
+          "type": "string",
+          "pattern": "^(?:release-successor-.+\\.(?:json|txt)|stage7-release-journal-role-effective-permissions\\.json|stage7-release-reconciliation-recovery-role-effective-permissions\\.json|release-reconciliation-journal-snapshot\\.json)$"
+        },
         "sha256": { "$ref": "#/$defs/sha256" },
         "bytes": { "type": "integer", "minimum": 1, "maximum": 16777216 }
       }

@@ -204,9 +204,14 @@ $env:STAGE7_CANDIDATE_SHA = (git rev-parse HEAD).Trim()
 # repetir la síntesis PRERELEASE y aplicarla en su región.
 ```
 
-No basta con conservar la plantilla provisional: aunque los ARN sean estables, sus policies deben quedar ligadas al SHA final. Verificar los outputs/readback de las dos actualizaciones antes de copiar variables a GitHub.
+No basta con conservar la plantilla provisional: aunque los ARN sean estables, sus policies deben quedar ligadas al SHA exacto de cada candidato. Verificar los outputs/readback de las dos actualizaciones antes de copiar variables a GitHub.
 
-Esperar todos los checks del SHA final, ejecutar el [protocolo manual de accesibilidad](manual-accessibility.md) con NVDA o Narrator y regenerar `STAGE6_A11Y_MANUAL_EVIDENCE_B64` para ese SHA exacto. Desde ese momento no modificar el candidato durante prerelease, Stage 6, baseline y release.
+La primera publicación FULL requiere dos candidatos congelados y distintos:
+
+- **A (N-1)**: candidato de baseline cerrado. Sus bootstraps, configuración baseline, evidencias manuales y Stage 6 deben estar ligados a A. El workflow baseline sólo puede ejecutarse mientras A sea el `master` actual.
+- **B (N)**: sucesor público. Sólo después del closeout exitoso de A se avanza `master` a B. Se regeneran y vuelven a aplicar los bootstraps, configuraciones FULL/PRERELEASE y evidencias para B. B debe diferir de A y conservar el mismo contrato OpenAPI y cliente generado.
+
+Ejecutar el [protocolo manual de accesibilidad](manual-accessibility.md) con NVDA o Narrator y regenerar `STAGE6_A11Y_MANUAL_EVIDENCE_B64` para cada SHA que vaya a cruzar Stage 6. No reutilizar evidencia ligada a A para B. Una vez iniciado cada tramo, no modificar ese candidato durante su prerelease, Stage 6 y workflow protegido.
 
 ## 6. Configurar GitHub
 
@@ -297,14 +302,14 @@ SHA-1, ausencia de la cuarta cookie, IDs intercambiados o payload con doble base
 
 ## 7. Ejecutar la cadena causal
 
-1. Ejecutar **Stage 7 Conditional Prerelease** para el SHA final.
-2. Aprobar el diff IAM, confirmar SNS, cargar las tres autorizaciones externas y aprobar el claim Sandbox.
-3. Verificar cleanup del prerelease o su watchdog.
-4. Descargar `stage6-authorized-external-evidence` y cargarlo como `STAGE6_EXTERNAL_EVIDENCE_B64`.
-5. Reevaluar CI sobre el mismo SHA hasta obtener `GATE-E6-03=PASS`.
-6. Ejecutar **Stage 7 Closed Baseline** y conservar run ID, artifact ID/digest y bundle SHA.
-7. Crear un tag semántico inmutable sobre ese mismo SHA.
-8. Ejecutar **Stage 7 Release** con los identificadores exactos de Stage 6 y baseline.
+1. Congelar A y obtener `GATE-E6-03=PASS` para A. Si requiere evidencia externa, ejecutar **Stage 7 Conditional Prerelease** para A, completar sus aprobaciones, verificar cleanup y cargar su `stage6-authorized-external-evidence` antes de reevaluar CI.
+2. Mientras A siga siendo el `master` actual, ejecutar **Stage 7 Closed Baseline** para A y conservar exactamente run ID, artifact ID/digest y bundle SHA. No crear tag público para A.
+3. Crear y fusionar el sucesor B; comprobar explícitamente `A != B`. Regenerar para B bootstraps, configuración, autorizaciones y evidencia manual ligadas al SHA.
+4. Ejecutar **Stage 7 Conditional Prerelease** para B.
+5. Aprobar el diff IAM, confirmar SNS, cargar las tres autorizaciones externas y aprobar el claim Sandbox de B.
+6. Verificar cleanup del prerelease de B o su watchdog, cargar su `STAGE6_EXTERNAL_EVIDENCE_B64` y reevaluar CI de B hasta obtener `GATE-E6-03=PASS`.
+7. Crear el tag semántico inmutable sobre B, nunca sobre A.
+8. Ejecutar **Stage 7 Release** para B con los identificadores exactos de Stage 6 de B y del baseline A. FULL permanece exclusivamente en modo `VERSIONED_UPDATE`; `INITIAL` no está autorizado.
 9. Aprobar diff, alertas/autorizaciones externas y Sandbox cuando el workflow lo solicite.
 10. Aprobar el post-success para preservación, closeout y cleanup del journal.
 

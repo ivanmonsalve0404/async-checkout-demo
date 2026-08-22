@@ -1,4 +1,5 @@
 {
   "apiBaseUrl": "/api/v1",
-  "productId": "product-demo-001"
+  "productId": "product-demo-001",
+  "releaseId": "rel-19700101-0000-0000000"
 }

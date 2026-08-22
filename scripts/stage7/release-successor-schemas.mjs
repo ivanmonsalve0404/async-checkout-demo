@@ -7,7 +7,10 @@ import { fileURLToPath } from 'node:url';
 import Ajv2020 from '@redocly/ajv/dist/2020.js';
 
 import { PREVIOUS_RELEASE_PROJECTION_FILENAMES } from './previous-release-projection.mjs';
-import { RELEASE_SUCCESSOR_SOURCE_LAYOUT } from './release-successor-contract.mjs';
+import {
+  RELEASE_SUCCESSOR_SOURCE_LAYOUT,
+  RELEASE_SUCCESSOR_SOURCE_PAYLOAD_FILENAMES,
+} from './release-successor-contract.mjs';
 import { RELEASE_SUCCESSOR_JOURNAL_ROLE_EFFECTIVE_PERMISSIONS_KIND } from './release-successor-iam-authority.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -36,12 +39,23 @@ export const selfTestReleaseSuccessorSchemas = () => {
   assert.equal(provenance.properties.artifactOriginsByPath.minProperties, payloadCount);
   assert.equal(provenance.properties.artifactOriginsByPath.maxProperties, payloadCount);
   const ajv = new Ajv2020({ allErrors: true, strict: true });
+  ajv.addFormat('date-time', {
+    type: 'string',
+    validate: (value) =>
+      typeof value === 'string' &&
+      !Number.isNaN(Date.parse(value)) &&
+      new Date(value).toISOString() === value,
+  });
   const canonicalSha256ByPathValidator = ajv.compile({
     ...provenance.properties.canonicalSha256ByPath,
     $defs: provenance.$defs,
   });
   const artifactOriginsByPathValidator = ajv.compile({
     ...provenance.properties.artifactOriginsByPath,
+    $defs: provenance.$defs,
+  });
+  const rawFileValidator = ajv.compile({
+    ...provenance.$defs.rawFile,
     $defs: provenance.$defs,
   });
   const canonicalSha256ByPathEntries = Array.from({ length: payloadCount - 1 }, (_, index) => [
@@ -52,6 +66,97 @@ export const selfTestReleaseSuccessorSchemas = () => {
     `artifact-${index}.json`,
     `release-successor-source-${index}`,
   ]);
+  const provenanceValidator = ajv.compile(provenance);
+  const provenanceDocument = {
+    schemaVersion: 1,
+    stage: 7,
+    kind: 'RELEASE_SUCCESSOR_SOURCE_PROVENANCE',
+    status: 'PASS',
+    artifactName: 'stage7-release-successor-source',
+    repository: 'ivanmonsalve0404/async-checkout-demo',
+    workflowPath: '.github/workflows/release.yml',
+    sourceEvent: 'workflow_dispatch',
+    sourceRef: 'refs/heads/master',
+    sourceRunId: '32524629359',
+    sourceRunAttempt: 1,
+    headSha: 'a'.repeat(40),
+    releaseId: 'rel-20260822-1200-aaaaaaa',
+    releaseTag: 'v2026.8.22',
+    sourceKind: 'RELEASE_SUCCESSOR_POST_SUCCESS',
+    predecessorManifestSha256: '1'.repeat(64),
+    candidateRecordSha256: '2'.repeat(64),
+    rollbackRehearsalSha256: '3'.repeat(64),
+    journalLifecycleSha256: '4'.repeat(64),
+    reconciliationJournalAuthority: {
+      schemaVersion: 1,
+      stage: 7,
+      kind: 'STAGE7_RELEASE_RECONCILIATION_JOURNAL_AUTHORITY',
+      status: 'PRESERVE_THEN_DELETE_EXACT_SET',
+      source: {},
+      cleanupParameterNames: [
+        '/checkout/stage7/rollback/one',
+        '/checkout/stage7/rollback/two',
+        '/checkout/stage7/rollback/three',
+        '/checkout/stage7/rollback/four',
+      ],
+      cleanupParameterCount: 4,
+      requiredResidualCount: 0,
+      containsSensitiveData: false,
+      journalAuthoritySha256: '5'.repeat(64),
+    },
+    reconciliationJournalAuthoritySha256: '5'.repeat(64),
+    reconciliationEvidenceBindings: {
+      rollbackCheck: {
+        path: 'release-successor-rollback-check.json',
+        artifactName: 'stage7-release-reconciliation',
+        rawSha256: '6'.repeat(64),
+        canonicalSha256: '7'.repeat(64),
+        bytes: 2,
+        receiptSha256: '8'.repeat(64),
+      },
+      rollbackResilience: {
+        path: 'release-successor-rollback-resilience.json',
+        artifactName: 'stage7-release-reconciliation',
+        rawSha256: '9'.repeat(64),
+        canonicalSha256: 'a'.repeat(64),
+        bytes: 2,
+        receiptSha256: 'b'.repeat(64),
+      },
+      preFenceGate: {
+        path: 'release-successor-pre-fence-gate.json',
+        artifactName: 'stage7-release-reconciliation',
+        rawSha256: 'c'.repeat(64),
+        canonicalSha256: 'd'.repeat(64),
+        bytes: 2,
+        gateSha256: 'e'.repeat(64),
+      },
+    },
+    releaseFenceAuthoritySetSha256: 'f'.repeat(64),
+    journalSnapshotBinding: {
+      path: 'release-reconciliation-journal-snapshot.json',
+      rawSha256: '1'.repeat(64),
+      canonicalSha256: '2'.repeat(64),
+      bytes: 2,
+      snapshotSha256: '3'.repeat(64),
+      targetNameSetSha256: '4'.repeat(64),
+      entryCount: 3,
+    },
+    releaseEvidenceSetSha256: '5'.repeat(64),
+    finalDisableEvidenceSha256: '6'.repeat(64),
+    files: RELEASE_SUCCESSOR_SOURCE_PAYLOAD_FILENAMES.map((pathName) => ({
+      path: pathName,
+      sha256: '7'.repeat(64),
+      bytes: 2,
+    })),
+    canonicalSha256ByPath: Object.fromEntries(canonicalSha256ByPathEntries),
+    artifactOriginsByPath: Object.fromEntries(artifactOriginsByPathEntries),
+    bundleSha256: '8'.repeat(64),
+    capturedAtUtc: '2026-08-22T17:00:00.000Z',
+    externalRequests: 3,
+    mutationsPerformed: 0,
+    containsSensitiveData: false,
+    provenanceSha256: '9'.repeat(64),
+  };
   assert.equal(
     canonicalSha256ByPathValidator(Object.fromEntries(canonicalSha256ByPathEntries)),
     true,
@@ -81,6 +186,33 @@ export const selfTestReleaseSuccessorSchemas = () => {
         ['unexpected.json', 'release-successor-source-extra'],
       ]),
     ),
+    false,
+  );
+  assert.deepEqual(
+    provenanceDocument.files.filter((entry) => !rawFileValidator(entry)),
+    [],
+  );
+  assert.equal(
+    rawFileValidator({
+      path: 'stage7-release-journal-role-effective-permissions-tampered.json',
+      sha256: '7'.repeat(64),
+      bytes: 2,
+    }),
+    false,
+  );
+  assert.equal(provenanceValidator(provenanceDocument), true);
+  assert.equal(
+    provenanceValidator({
+      ...provenanceDocument,
+      sourceKind: 'RELEASE_SUCCESSOR_POST_SUCCESS_COMPOSITE_RECOVERY',
+    }),
+    true,
+  );
+  assert.equal(
+    provenanceValidator({
+      ...provenanceDocument,
+      sourceKind: 'RELEASE_SUCCESSOR_POST_SUCCESS_TAMPERED',
+    }),
     false,
   );
   assert.equal(
@@ -143,7 +275,7 @@ export const selfTestReleaseSuccessorSchemas = () => {
     rollbackJournal.$defs.owner.required.includes('premutationAuthorityRawSha256'),
     true,
   );
-  return { status: 'PASS', canaries: 46, externalRequests: 0 };
+  return { status: 'PASS', canaries: 51, externalRequests: 0 };
 };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

@@ -55,7 +55,12 @@ const WEB_EXTENSIONS = new Set([
 const FORBIDDEN_RELEASE_PATH =
   /(?:^|\/)(?:__tests__|coverage|node_modules|tests?)(?:\/|$)|(?:^|\/)(?:credentials?|secrets?)(?:[._/-]|$)|(?:^|\/)\.env(?:\.|$)|\.(?:key|map|p12|pem|pfx)$/iu;
 const HASHED_WEB_ASSET = /^assets\/[^/]+-[A-Za-z0-9_-]+\.(?:css|js)$/u;
-const PUBLIC_CONFIG = Object.freeze({ apiBaseUrl: '/api/v1', productId: 'product-demo-001' });
+const CANDIDATE_SHA = /^[0-9a-f]{40}$/u;
+const RELEASE_ID = /^rel-[0-9]{8}-[0-9]{4}-([0-9a-f]{7})$/u;
+const PUBLIC_CONFIG_BASE = Object.freeze({
+  apiBaseUrl: '/api/v1',
+  productId: 'product-demo-001',
+});
 const OPTIONAL_NEST_PACKAGES = [
   '@nestjs/microservices',
   '@nestjs/microservices/microservices-module',
@@ -69,6 +74,28 @@ const fail = (code) => {
 };
 
 const stableCompare = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
+
+const releaseIdentity = (requested) => {
+  if (
+    requested !== undefined &&
+    (requested === null ||
+      typeof requested !== 'object' ||
+      Array.isArray(requested) ||
+      Object.keys(requested).toSorted().join('\0') !== 'candidateSha\0releaseId')
+  ) {
+    fail('E7_BUILD_RELEASE_IDENTITY_INVALID');
+  }
+  const candidateSha = requested?.candidateSha ?? process.env.STAGE7_CANDIDATE_SHA;
+  const releaseId = requested?.releaseId ?? process.env.STAGE7_RELEASE_ID;
+  const match = RELEASE_ID.exec(releaseId ?? '');
+  if (!CANDIDATE_SHA.test(candidateSha ?? '') || match?.[1] !== candidateSha.slice(0, 7)) {
+    fail('E7_BUILD_RELEASE_IDENTITY_INVALID');
+  }
+  return Object.freeze({ candidateSha, releaseId });
+};
+
+const publicConfigForRelease = ({ releaseId }) =>
+  Object.freeze({ ...PUBLIC_CONFIG_BASE, releaseId });
 
 const assertSupportedNode = () => {
   const [major, minor] = process.versions.node.split('.').map(Number);
@@ -191,6 +218,17 @@ const decodeText = (buffer) => {
   } catch {
     fail('E7_BUILD_TEXT_ENCODING_INVALID');
   }
+};
+
+const sealIndexHtml = (contents, { releaseId }) => {
+  const source = decodeText(contents);
+  if (/stage7-release-id/iu.test(source)) fail('E7_BUILD_WEB_RELEASE_IDENTITY_DUPLICATE');
+  const heads = [...source.matchAll(/<head(?:\s[^>]*)?>/giu)];
+  if (heads.length !== 1) fail('E7_BUILD_WEB_HEAD_INVALID');
+  const head = heads[0];
+  const insertion = (head.index ?? 0) + head[0].length;
+  const marker = `\n    <meta name="stage7-release-id" content="${releaseId}">`;
+  return Buffer.from(`${source.slice(0, insertion)}${marker}${source.slice(insertion)}`, 'utf8');
 };
 
 const scanText = (label, value) => {
@@ -321,8 +359,12 @@ const publishStagedBuild = async (workspaceRoot, destinations, staged) => {
   await rename(staged.publicConfig, destinations.publicConfig);
 };
 
-export const buildReleaseArtifacts = async ({ workspaceRoot: requestedRoot } = {}) => {
+export const buildReleaseArtifacts = async ({
+  workspaceRoot: requestedRoot,
+  releaseIdentity: requestedIdentity,
+} = {}) => {
   assertSupportedNode();
+  const identity = releaseIdentity(requestedIdentity);
   const workspaceRoot = await realpath(
     path.resolve(
       requestedRoot ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..'),
@@ -355,10 +397,20 @@ export const buildReleaseArtifacts = async ({ workspaceRoot: requestedRoot } = {
     loadWebFiles(workspaceRoot, sources.web),
   ]);
   scanBufferIfText('api/openapi.yaml', openapi);
-  const publicConfig = Buffer.from(`${JSON.stringify(PUBLIC_CONFIG, null, 2)}\n`, 'utf8');
+  const publicConfigValue = publicConfigForRelease(identity);
+  const publicConfig = Buffer.from(`${JSON.stringify(publicConfigValue, null, 2)}\n`, 'utf8');
   scanBufferIfText('public-config.json', publicConfig);
+  const sealedWeb = web.map((file) =>
+    file.relative === 'index.html'
+      ? { ...file, contents: sealIndexHtml(file.contents, identity) }
+      : file,
+  );
+  scanBufferIfText(
+    'web/index.html',
+    sealedWeb.find(({ relative }) => relative === 'index.html').contents,
+  );
   const releaseWeb = [
-    ...web.filter(({ relative }) => relative !== 'public-config.json'),
+    ...sealedWeb.filter(({ relative }) => relative !== 'public-config.json'),
     { relative: 'public-config.json', contents: publicConfig },
   ].sort((left, right) => stableCompare(left.relative, right.relative));
 
@@ -423,7 +475,7 @@ const writeFixture = async (workspaceRoot) => {
     ],
     [
       'apps/web/dist/index.html',
-      '<!doctype html><script src="/assets/index-deadbeef.js"></script>\n',
+      '<!doctype html><html><head><title>Fixture</title></head><body><script src="/assets/index-deadbeef.js"></script></body></html>\n',
     ],
     [
       'apps/web/dist/assets/index-deadbeef.js',
@@ -455,11 +507,33 @@ export const selfTestReleaseBuild = async () => {
   await mkdir(runnerTemporary, { recursive: true });
   const temporary = await mkdtemp(path.join(runnerTemporary, 'stage7-release-build-self-test-'));
   try {
+    const firstIdentity = Object.freeze({
+      candidateSha: 'a'.repeat(40),
+      releaseId: 'rel-20260818-1300-aaaaaaa',
+    });
+    const secondIdentity = Object.freeze({
+      candidateSha: 'b'.repeat(40),
+      releaseId: 'rel-20260818-1301-bbbbbbb',
+    });
     await writeFixture(temporary);
-    const first = await buildReleaseArtifacts({ workspaceRoot: temporary });
+    const first = await buildReleaseArtifacts({
+      workspaceRoot: temporary,
+      releaseIdentity: firstIdentity,
+    });
     assert.deepEqual(first, { apiFiles: 2, workerFiles: 2, webFiles: 4, publicConfigFiles: 1 });
     const firstDigest = await digestBuild(temporary);
-    await buildReleaseArtifacts({ workspaceRoot: temporary });
+    const firstMutableHashes = {
+      index: createHash('sha256')
+        .update(await readFile(path.join(temporary, 'output/release/build/web/index.html')))
+        .digest('hex'),
+      publicConfig: createHash('sha256')
+        .update(await readFile(path.join(temporary, 'output/release/build/web/public-config.json')))
+        .digest('hex'),
+    };
+    await buildReleaseArtifacts({
+      workspaceRoot: temporary,
+      releaseIdentity: firstIdentity,
+    });
     assert.equal(await digestBuild(temporary), firstDigest);
 
     const required = [
@@ -479,22 +553,54 @@ export const selfTestReleaseBuild = async () => {
     }
     assert.deepEqual(
       JSON.parse(await readFile(path.join(temporary, 'output/release/build/public-config.json'))),
-      PUBLIC_CONFIG,
+      publicConfigForRelease(firstIdentity),
     );
     assert.deepEqual(
       JSON.parse(
         await readFile(path.join(temporary, 'output/release/build/web/public-config.json')),
       ),
-      PUBLIC_CONFIG,
+      publicConfigForRelease(firstIdentity),
     );
+    assert.match(
+      await readFile(path.join(temporary, 'output/release/build/web/index.html'), 'utf8'),
+      /<meta name="stage7-release-id" content="rel-20260818-1300-aaaaaaa">/u,
+    );
+
+    await buildReleaseArtifacts({
+      workspaceRoot: temporary,
+      releaseIdentity: secondIdentity,
+    });
+    const secondDigest = await digestBuild(temporary);
+    const secondMutableHashes = {
+      index: createHash('sha256')
+        .update(await readFile(path.join(temporary, 'output/release/build/web/index.html')))
+        .digest('hex'),
+      publicConfig: createHash('sha256')
+        .update(await readFile(path.join(temporary, 'output/release/build/web/public-config.json')))
+        .digest('hex'),
+    };
+    assert.notEqual(secondDigest, firstDigest);
+    assert.notEqual(secondMutableHashes.index, firstMutableHashes.index);
+    assert.notEqual(secondMutableHashes.publicConfig, firstMutableHashes.publicConfig);
+    await assert.rejects(
+      buildReleaseArtifacts({
+        workspaceRoot: temporary,
+        releaseIdentity: {
+          candidateSha: secondIdentity.candidateSha,
+          releaseId: firstIdentity.releaseId,
+        },
+      }),
+      /E7_BUILD_RELEASE_IDENTITY_INVALID/u,
+    );
+    assert.equal(await digestBuild(temporary), secondDigest);
 
     const unsafe = ['private', '_key=', 'sensitivevalue123456'].join('');
     await writeFile(path.join(temporary, 'apps/web/dist/unsafe.html'), unsafe, 'utf8');
     await assert.rejects(
-      buildReleaseArtifacts({ workspaceRoot: temporary }),
+      buildReleaseArtifacts({ workspaceRoot: temporary, releaseIdentity: secondIdentity }),
       /E7_BUILD_UNSAFE_TEXT_REJECTED/u,
     );
-    assert.equal(await digestBuild(temporary), firstDigest);
+    assert.equal(await digestBuild(temporary), secondDigest);
 
     await rm(path.join(temporary, 'apps/web/dist/unsafe.html'));
     const executableSecret = ['api', '_key = ', 'sensitivevalue123456'].join('');
@@ -504,10 +610,10 @@ export const selfTestReleaseBuild = async () => {
       'utf8',
     );
     await assert.rejects(
-      buildReleaseArtifacts({ workspaceRoot: temporary }),
+      buildReleaseArtifacts({ workspaceRoot: temporary, releaseIdentity: secondIdentity }),
       /E7_BUILD_UNSAFE_TEXT_REJECTED/u,
     );
-    assert.equal(await digestBuild(temporary), firstDigest);
+    assert.equal(await digestBuild(temporary), secondDigest);
   } finally {
     await rm(temporary, { force: true, recursive: true });
   }
